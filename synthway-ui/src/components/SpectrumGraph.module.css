@@ -1,0 +1,140 @@
+.box {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.svg {
+  display: block;
+  user-select: none;
+  touch-action: none;
+}
+
+.svg[data-dragging] {
+  cursor: grabbing;
+}
+
+.plot {
+  fill: transparent;
+}
+
+.gridLine {
+  stroke: rgba(150, 125, 255, 0.08);
+}
+
+.harmonicLine {
+  stroke: rgba(150, 125, 255, 0.11);
+  stroke-dasharray: 2 4;
+}
+
+.axis {
+  stroke: rgba(170, 140, 255, 0.3);
+}
+
+.tick {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  fill: var(--text-3);
+}
+
+.hidden {
+  stroke-width: 1.5;
+  stroke-dasharray: 2 3;
+  pointer-events: none;
+}
+
+.partial {
+  cursor: grab;
+  outline: none;
+}
+
+.svg[data-dragging] .partial {
+  cursor: grabbing;
+}
+
+.svg[data-locked] .partial,
+.partial[data-locked] {
+  cursor: pointer;
+}
+
+.lockMark {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.3;
+  pointer-events: none;
+}
+
+.lockMark rect {
+  fill: var(--bg-1);
+}
+
+.hit {
+  stroke: transparent;
+  stroke-width: 16;
+}
+
+.bar {
+  stroke-width: 3;
+  stroke-linecap: round;
+  opacity: 0.8;
+  filter: drop-shadow(0 0 4px currentColor);
+}
+
+.handle {
+  stroke: rgba(0, 0, 8, 0.6);
+  stroke-width: 1.5;
+  filter: drop-shadow(0 0 5px currentColor);
+}
+
+.partial[data-selected] .bar {
+  stroke-width: 4;
+  opacity: 1;
+}
+
+.partial[data-selected] .handle {
+  stroke: #fff;
+  stroke-width: 2;
+}
+
+/* Inactive: faded and dashed, still selectable */
+.partial[data-muted] .bar {
+  stroke-dasharray: 3 4;
+  opacity: 0.35;
+  filter: none;
+}
+
+.partial[data-muted] .handle {
+  opacity: 0.4;
+  filter: none;
+}
+
+.partial:focus-visible .handle {
+  stroke: var(--neon-pink);
+  stroke-width: 3;
+}
+
+.alias {
+  fill: none;
+  stroke: var(--warn);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 2;
+  pointer-events: none;
+}
+
+.label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  pointer-events: none;
+  paint-order: stroke;
+  stroke: var(--bg-1);
+  stroke-width: 4;
+}
+
+.gridLine,
+.harmonicLine,
+.axis,
+.tick {
+  pointer-events: none;
+}

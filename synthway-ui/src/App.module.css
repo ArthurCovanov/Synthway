@@ -1,0 +1,50 @@
+.app {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  height: 100%;
+  min-width: 1024px;
+}
+
+/* Neon haze, like city lights in fog */
+.app::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  pointer-events: none;
+  background:
+    radial-gradient(55% 45% at 88% -8%, rgba(255, 26, 168, 0.17), transparent 70%),
+    radial-gradient(50% 45% at 12% 108%, rgba(46, 77, 255, 0.2), transparent 70%),
+    radial-gradient(40% 35% at 55% 55%, rgba(163, 28, 255, 0.06), transparent 75%),
+    var(--bg-0);
+}
+
+.main {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  /* clip, not hidden: the tilted horizon grid overflows, and a hidden
+     overflow would still let focus scroll the whole screen */
+  overflow: clip;
+}
+
+/* Synthwave horizon grid fading into the haze */
+.main::before {
+  content: '';
+  position: absolute;
+  left: -25%;
+  right: -25%;
+  bottom: -2%;
+  height: 46%;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(163, 28, 255, 0.2) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(46, 77, 255, 0.16) 1px, transparent 1px);
+  background-size: 56px 56px;
+  transform: perspective(420px) rotateX(64deg);
+  transform-origin: bottom;
+  mask-image: linear-gradient(to top, rgba(0, 0, 0, 0.85), transparent 80%);
+}

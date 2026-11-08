@@ -1,0 +1,232 @@
+.body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  grid-template-columns: minmax(280px, 330px) minmax(0, 1fr);
+  grid-template-areas:
+    'source source'
+    'tuner spectrum'
+    'partials partials';
+  align-content: start;
+  gap: 16px;
+  padding: 8px 24px 24px;
+}
+
+/* Same inner margin as the Instrument Creator's panels */
+.source,
+.tunerPanel,
+.spectrumPanel,
+.partialsPanel {
+  min-width: 0;
+  padding: 16px;
+}
+
+.source {
+  grid-area: source;
+}
+
+.tunerPanel {
+  grid-area: tuner;
+}
+
+.spectrumPanel {
+  grid-area: spectrum;
+}
+
+.partialsPanel {
+  grid-area: partials;
+}
+
+.spectrum {
+  height: 300px;
+}
+
+.micRow {
+  display: grid;
+  grid-template-columns: minmax(0, 420px) max-content;
+  justify-content: start;
+  align-items: end;
+  gap: 14px;
+}
+
+.note {
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+
+.error {
+  font-size: 12.5px;
+  color: var(--danger);
+}
+
+/* File: drop zone, then the waveform */
+.drop {
+  height: 170px;
+  border-radius: var(--radius-m);
+  border: 1px dashed transparent;
+  transition: border-color 120ms var(--ease), background 120ms var(--ease);
+}
+
+.drop[data-dropping] {
+  border-color: var(--neon-pink);
+  background: rgba(255, 26, 168, 0.06);
+}
+
+.dropHint {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 100%;
+  border-radius: var(--radius-m);
+  border: 1px dashed var(--line-strong);
+  color: var(--text-1);
+  text-align: center;
+  font-size: 13px;
+}
+
+.dropHint svg {
+  color: var(--neon-blue-soft);
+}
+
+.a4 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.a4 input {
+  width: 72px;
+  padding: 4px 6px;
+  text-align: right;
+}
+
+.soon {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+/* Partials */
+.tableWrap {
+  max-height: 360px;
+  overflow: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 6px 10px;
+  background: var(--bg-2);
+  text-align: left;
+  font-weight: 500;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.table td {
+  padding: 5px 10px;
+  border-top: 1px solid var(--line);
+  color: var(--text-1);
+  white-space: nowrap;
+}
+
+.table td[data-kind='harmonic'] {
+  color: var(--neon-green);
+}
+
+.table td[data-kind='inharmonic'] {
+  color: var(--neon-yellow);
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+.swatch {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 8px;
+  border-radius: 50%;
+  box-shadow: 0 0 6px currentColor;
+}
+
+.amplitude {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.amplitudeBar {
+  width: 120px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-4);
+  overflow: hidden;
+}
+
+.amplitudeBar > span {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+}
+
+@media (max-width: 900px) {
+  .body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      'source'
+      'tuner'
+      'spectrum'
+      'partials';
+  }
+
+  .micRow {
+    grid-template-columns: minmax(0, 1fr) max-content;
+  }
+}
+
+.warning {
+  font-size: 12.5px;
+  color: var(--warn);
+}
+
+.gateRow {
+  display: grid;
+  grid-template-columns: minmax(200px, 320px) minmax(0, 1fr);
+  align-items: center;
+  gap: 16px;
+  margin-top: 10px;
+}
+
+@media (max-width: 900px) {
+  .gateRow {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Under the field of the anti-noise popup */
+.gateExtra {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11.5px;
+  color: var(--text-2);
+}

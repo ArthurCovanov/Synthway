@@ -1,0 +1,67 @@
+.box {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.svg {
+  display: block;
+  user-select: none;
+  touch-action: none;
+  cursor: text;
+  outline: none;
+}
+
+.svg[data-dragging] {
+  cursor: ew-resize;
+}
+
+.svg:focus-visible .plot {
+  stroke: var(--neon-pink);
+}
+
+.plot {
+  fill: rgba(17, 16, 51, 0.5);
+  stroke: var(--line);
+}
+
+.gridLine {
+  stroke: rgba(150, 125, 255, 0.07);
+}
+
+.tick,
+.noteTick {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  fill: var(--text-3);
+}
+
+.noteTick {
+  fill: var(--neon-pink-soft);
+}
+
+.wave {
+  stroke: var(--neon-blue-soft);
+  stroke-width: 1;
+  opacity: 0.55;
+}
+
+.notePoint {
+  fill: var(--neon-pink);
+  pointer-events: none;
+}
+
+.cursor {
+  stroke: var(--neon-white);
+  stroke-width: 1.5;
+  filter: drop-shadow(0 0 4px var(--neon-pink));
+  pointer-events: none;
+}
+
+.cursorLabel {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  fill: var(--text-0);
+  pointer-events: none;
+}

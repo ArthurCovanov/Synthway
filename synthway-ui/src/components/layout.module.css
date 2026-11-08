@@ -1,0 +1,95 @@
+/* Shared screen skeleton: header, body, dock (Voicebox-like) */
+
+.screen {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 22px 24px 18px;
+}
+
+.headerText {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+
+.eyebrowIndex {
+  color: var(--neon-pink-soft);
+  text-shadow: 0 0 8px rgba(255, 26, 168, 0.6);
+}
+
+.eyebrowIndex::after {
+  content: '';
+  display: inline-block;
+  width: 22px;
+  height: 1px;
+  margin-left: 10px;
+  vertical-align: middle;
+  background: var(--grad-neon);
+}
+
+.title {
+  font-family: var(--font-display);
+  font-size: 21px;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-0);
+  text-shadow: 0 0 22px rgba(163, 28, 255, 0.45);
+}
+
+.subtitle {
+  color: var(--text-2);
+  font-size: 13px;
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+/* Bottom bar shared by the screens (keyboard, transport) */
+.dock {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin: 0 24px 20px;
+  padding: 12px 18px;
+  border-radius: 16px;
+  position: relative;
+  overflow: hidden;
+}
+
+.dock::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 1px;
+  background: var(--grad-neon);
+  opacity: 0.55;
+}

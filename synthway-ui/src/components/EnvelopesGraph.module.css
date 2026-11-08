@@ -1,0 +1,43 @@
+.box {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.grid {
+  stroke: rgba(150, 125, 255, 0.08);
+  vector-effect: non-scaling-stroke;
+}
+
+.noteOff {
+  stroke: rgba(170, 140, 255, 0.35);
+  stroke-dasharray: 3 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.noteOffLabel,
+.duration {
+  position: absolute;
+  top: 6px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+  pointer-events: none;
+}
+
+.noteOffLabel {
+  margin-left: 5px;
+}
+
+.duration {
+  right: 8px;
+  top: auto;
+  bottom: 4px;
+}

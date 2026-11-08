@@ -1,0 +1,156 @@
+.dock {
+  height: 126px;
+}
+
+.powerGroup {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.power {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 1px solid var(--line-strong);
+  background: var(--bg-3);
+  color: var(--text-2);
+  transition:
+    color 0.15s,
+    border-color 0.15s,
+    box-shadow 0.2s,
+    filter 0.15s;
+}
+
+.power:hover:not(:disabled) {
+  color: var(--text-0);
+  border-color: rgba(255, 124, 198, 0.5);
+}
+
+.powerOn {
+  border-color: transparent;
+  color: #fff;
+  background: var(--grad-neon);
+  box-shadow: var(--glow-pink);
+}
+
+.powerOn:hover:not(:disabled) {
+  filter: brightness(1.12);
+}
+
+.power:disabled {
+  opacity: 0.4;
+}
+
+.powerText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 58px;
+}
+
+.powerLabel {
+  font-family: var(--font-display);
+  font-size: 9.5px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+
+.powerState {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-1);
+}
+
+.powerStateOn {
+  color: var(--ok);
+  text-shadow: 0 0 8px rgba(47, 243, 201, 0.6);
+}
+
+.readout {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 112px;
+  padding-left: 18px;
+  border-left: 1px solid var(--line);
+}
+
+.readoutNote {
+  font-family: var(--font-display);
+  font-size: 22px;
+  letter-spacing: 0.06em;
+  color: var(--text-0);
+  text-shadow: 0 0 14px rgba(255, 26, 168, 0.55);
+}
+
+.readoutIdle {
+  color: var(--text-3);
+  text-shadow: none;
+}
+
+.readoutFreq {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+
+.keys {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+}
+
+.blocker {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  border-radius: 8px;
+  background: rgba(5, 5, 26, 0.6);
+  backdrop-filter: blur(1.5px);
+  font-family: var(--font-display);
+  font-size: 10.5px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--text-1);
+  text-shadow: 0 0 10px rgba(163, 28, 255, 0.85);
+}
+
+.octave {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding-left: 18px;
+  border-left: 1px solid var(--line);
+}
+
+.octaveRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.octaveValue {
+  min-width: 46px;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-0);
+}
+
+.octaveHint {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-3);
+}

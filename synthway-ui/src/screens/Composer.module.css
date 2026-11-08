@@ -1,0 +1,525 @@
+.body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 250px minmax(0, 1fr);
+  gap: 16px;
+  padding: 0 24px 16px;
+}
+
+.panelTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--text-1);
+}
+
+.count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0;
+  color: var(--neon-pink-soft);
+}
+
+.bpmField {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-2);
+}
+
+.bpmField input {
+  width: 70px;
+  font-family: var(--font-mono);
+}
+
+.rangeField {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-2);
+}
+
+.rangeField input {
+  width: 76px;
+  font-family: var(--font-mono);
+}
+
+/* ---------- Tracks ---------- */
+
+.tracks {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 14px;
+}
+
+.tracksHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.trackList {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 2px;
+}
+
+.track {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 11px;
+  border: 1px solid var(--line);
+  background: rgba(17, 16, 51, 0.55);
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background 0.15s,
+    box-shadow 0.2s;
+}
+
+.track:hover {
+  border-color: var(--line-strong);
+}
+
+.trackDragging {
+  opacity: 0.55;
+}
+
+.trackDropTarget {
+  border-color: var(--neon-blue);
+  box-shadow: 0 0 0 1px var(--neon-blue), 0 0 14px rgba(95, 120, 255, 0.28);
+}
+
+.trackSelected,
+.trackSelected:hover {
+  border-color: transparent;
+  background:
+    linear-gradient(rgba(19, 17, 54, 0.96), rgba(19, 17, 54, 0.96)) padding-box,
+    linear-gradient(135deg, var(--hue), var(--neon-blue)) border-box;
+  box-shadow: 0 0 18px color-mix(in srgb, var(--hue) 30%, transparent);
+}
+
+.trackMuted {
+  opacity: 0.55;
+}
+
+.trackTop {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.trackDot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--hue);
+  box-shadow: 0 0 8px var(--hue);
+}
+
+.dragHandle {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 24px;
+  margin: 0 -5px 0 -4px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-3);
+  cursor: grab;
+}
+
+.dragHandle:hover {
+  color: var(--text-1);
+  background: var(--bg-5);
+}
+
+.dragHandle:active {
+  cursor: grabbing;
+}
+
+.trackName {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 4px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  font-weight: 600;
+  color: var(--text-0);
+}
+
+.trackName:focus {
+  outline: none;
+  border-color: var(--neon-pink);
+}
+
+.trackLock {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-3);
+}
+
+.trackLock:hover {
+  color: var(--neon-pink-soft);
+  background: var(--bg-5);
+}
+
+.trackLock[aria-pressed='true'] {
+  border-color: color-mix(in srgb, var(--neon-pink) 55%, transparent);
+  color: var(--neon-pink-soft);
+}
+
+.ms {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid var(--line-strong);
+  background: transparent;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-2);
+}
+
+.ms:hover {
+  color: var(--text-0);
+}
+
+.ms:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.ms[data-kind='mute'][aria-pressed='true'] {
+  color: var(--warn);
+  border-color: rgba(255, 176, 46, 0.55);
+  background: rgba(255, 176, 46, 0.14);
+}
+
+.ms[data-kind='solo'][aria-pressed='true'] {
+  color: var(--ok);
+  border-color: rgba(47, 243, 201, 0.5);
+  background: rgba(47, 243, 201, 0.12);
+}
+
+.trackInstrument {
+  width: 100%;
+  height: 30px;
+  font-size: 12.5px;
+}
+
+.trackMeta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+
+.miniBtn {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-3);
+}
+
+.miniBtn:hover:not(:disabled) {
+  color: var(--danger);
+  background: var(--bg-5);
+}
+
+.miniBtn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* ---------- Piano roll ---------- */
+
+.roll {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: 14px 14px 10px;
+}
+
+.rollHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.rollHint {
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.rollScroll {
+  flex: 1;
+  min-height: 0;
+  overflow: scroll;
+  overscroll-behavior: contain;
+  cursor: grab;
+  scrollbar-gutter: stable;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--bg-1);
+}
+
+.rollScroll:active {
+  cursor: grabbing;
+}
+
+.rollGrid {
+  display: grid;
+  grid-template-columns: 56px var(--grid-width);
+  grid-template-rows: 24px var(--grid-height);
+  width: max-content;
+}
+
+.corner {
+  position: sticky;
+  top: 0;
+  left: 0;
+  z-index: 4;
+  background: var(--bg-2);
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.ruler {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--line);
+}
+
+.rulerBar {
+  flex: none;
+  position: relative;
+  padding: 5px 6px;
+  border-left: 1px solid rgba(163, 28, 255, 0.45);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-1);
+  background-image: linear-gradient(90deg, rgba(150, 125, 255, 0.25) 1px, transparent 1px);
+  background-size: calc(var(--cell) * 4) 6px;
+  background-position: 0 100%;
+  background-repeat: repeat-x;
+}
+
+.keys {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: var(--bg-2);
+  border-right: 1px solid var(--line);
+}
+
+.keyRow {
+  height: var(--row);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 7px;
+  border-bottom: 1px solid rgba(150, 125, 255, 0.05);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--text-3);
+}
+
+.keyRowBlack {
+  background: rgba(0, 0, 8, 0.55);
+}
+
+.keyRowC {
+  color: var(--neon-pink-soft);
+}
+
+.lane {
+  position: relative;
+  cursor: crosshair;
+  background-image:
+    linear-gradient(90deg, rgba(163, 28, 255, 0.4) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(150, 125, 255, 0.14) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(150, 125, 255, 0.05) 1px, transparent 1px);
+  background-size:
+    var(--bar) 100%,
+    calc(var(--cell) * 4) 100%,
+    var(--cell) 100%;
+}
+
+.playhead {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #fff;
+  box-shadow: 0 0 8px var(--neon-pink), 0 0 15px var(--neon-pink);
+  pointer-events: none;
+}
+
+.laneRow {
+  height: var(--row);
+  border-bottom: 1px solid rgba(150, 125, 255, 0.05);
+  pointer-events: none;
+}
+
+.laneRowBlack {
+  background: rgba(0, 0, 8, 0.35);
+}
+
+.laneRowC {
+  border-bottom-color: rgba(255, 26, 168, 0.12);
+}
+
+.note {
+  position: absolute;
+  height: calc(var(--row) - 3px);
+  margin-top: 1px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--hue), color-mix(in srgb, var(--hue) 55%, #ffffff));
+  box-shadow:
+    0 0 10px color-mix(in srgb, var(--hue) 70%, transparent),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.25);
+  cursor: pointer;
+}
+
+.note:hover {
+  filter: brightness(1.2);
+}
+
+.noteDraft {
+  pointer-events: none;
+  opacity: 0.72;
+  outline: 1px dashed rgba(255, 255, 255, 0.75);
+  outline-offset: 2px;
+}
+
+.ghost {
+  pointer-events: none;
+  opacity: 0.18;
+  box-shadow: none;
+}
+
+/* ---------- Transport dock ---------- */
+
+.dock {
+  height: 84px;
+}
+
+.transport {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.play {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  border: none;
+  color: #fff;
+  background: var(--grad-neon);
+  box-shadow: var(--glow-pink);
+}
+
+.play:disabled {
+  opacity: 0.35;
+  box-shadow: none;
+}
+
+.position,
+.tempo {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 18px;
+  border-left: 1px solid var(--line);
+}
+
+.positionValue,
+.tempoValue {
+  font-family: var(--font-display);
+  font-size: 16px;
+  letter-spacing: 0.06em;
+  color: var(--text-0);
+  text-shadow: 0 0 12px rgba(163, 28, 255, 0.6);
+}
+
+.positionLabel {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-2);
+}
+
+/* Pattern overview: note density per step, like Voicebox's waveform strip */
+.overview {
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.overviewStep {
+  flex: 1;
+  min-height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--bg-5);
+}
+
+.overviewStepOn {
+  background: var(--grad-neon-v);
+  box-shadow: 0 0 6px rgba(255, 26, 168, 0.35);
+}
+
+.overviewBar {
+  margin-left: 4px;
+}

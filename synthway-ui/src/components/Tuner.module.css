@@ -1,0 +1,170 @@
+.tuner {
+  --tone: var(--text-2);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.tuner[data-tone='tune'] {
+  --tone: var(--neon-green);
+}
+
+.tuner[data-tone='near'] {
+  --tone: var(--neon-yellow);
+}
+
+.tuner[data-tone='off'] {
+  --tone: var(--neon-pink);
+}
+
+.gauge {
+  width: 100%;
+  max-width: 280px;
+  overflow: visible;
+}
+
+.track {
+  fill: none;
+  stroke: rgba(150, 125, 255, 0.16);
+  stroke-width: 10;
+  stroke-linecap: round;
+}
+
+.inTune {
+  fill: none;
+  stroke: var(--neon-green);
+  stroke-width: 10;
+  opacity: 0.45;
+}
+
+.tick {
+  stroke: rgba(170, 140, 255, 0.35);
+  stroke-width: 1.2;
+}
+
+.tickZero {
+  stroke: var(--neon-green);
+  stroke-width: 2;
+}
+
+.tickLabel {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  fill: var(--text-3);
+}
+
+.needle {
+  stroke: var(--tone);
+  stroke-width: 3;
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 5px var(--tone));
+  /* Turns around the hub (GAUGE.cx, GAUGE.cy in Tuner.tsx) */
+  transform-box: view-box;
+  transform-origin: 130px 128px;
+  transition: transform 90ms linear;
+}
+
+.hub {
+  fill: var(--bg-1);
+  stroke: var(--tone);
+  stroke-width: 2;
+}
+
+.reading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  margin-top: -18px;
+}
+
+.tuner[data-dim] .reading,
+.tuner[data-dim] .needle {
+  opacity: 0.5;
+}
+
+.note {
+  font-family: var(--font-display);
+  font-size: 46px;
+  line-height: 1.1;
+  color: var(--text-0);
+  text-shadow: 0 0 22px var(--tone);
+}
+
+.octave {
+  margin-left: 2px;
+  font-size: 22px;
+  color: var(--text-1);
+}
+
+.solfege {
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.facts {
+  display: flex;
+  gap: 14px;
+  margin-top: 6px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-1);
+}
+
+.facts span:first-child {
+  color: var(--tone);
+}
+
+.status {
+  margin-top: 4px;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--tone);
+}
+
+.meters {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 6px 10px;
+  width: 100%;
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.meters dd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+.meter {
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-4);
+  overflow: hidden;
+}
+
+.meter > span {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--grad-neon);
+  transition: width 90ms linear;
+}
+
+.meter[data-kind='level'] > span {
+  background: linear-gradient(90deg, var(--neon-blue) 0%, var(--neon-cyan) 70%, var(--neon-yellow) 100%);
+}
+
+.meterValue {
+  width: 52px;
+  text-align: right;
+  font-family: var(--font-mono);
+  color: var(--text-1);
+}
