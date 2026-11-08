@@ -8,13 +8,14 @@ L'interface n'envoie que des commandes. Le son est produit par le core, jamais p
 
 ## Écrans
 
-La barre latérale, inspirée de [Voicebox](https://voicebox.sh/), donne accès à quatre écrans. L'écran courant est gardé dans l'URL (`#/instruments`, `#/composer`, `#/analyzer`, `#/settings`).
+La barre latérale, inspirée de [Voicebox](https://voicebox.sh/), donne accès à cinq écrans. L'écran courant est gardé dans l'URL (`#/instruments`, `#/composer`, `#/analyzer`, `#/ainalyzer`, `#/settings`).
 
 | Écran | Contenu | Relié au moteur aujourd'hui |
 | --- | --- | --- |
 | **Instrument Creator** | Bibliothèque d'instruments (cartes), éditeur de partiels (spectre, enveloppes, onde résultante, volume, filtre, couleur), liste et réglages de chaque partiel, clavier en bas d'écran | Partiels (le timbre), volume, notes jouées au clavier |
 | **Composer** | Pistes (muet, solo, instrument), piano roll et transport avec vue d'ensemble | Lecture et pause, reprise, déplacement du curseur, addition des notes actives via le timbre du moteur (64 partiels au plus) |
 | **Analyzer** | Source (micro ou fichier), accordeur (note, écart en cents, fréquence, netteté, niveau), spectre mesuré, liste des partiels | Micro écouté par le core en direct (`/ws/analyzer`), fichier décodé et analysé par le core ; lecture du fichier et de l'enregistrement dans le navigateur |
+| **AI-nalyzer** | Un morceau décomposé en pistes (batterie, basse, voix, autres ; guitare et piano avec 6 pistes) par Demucs, chaque piste lue, téléchargée ou envoyée à l'Analyzer | Aucun : la séparation est faite par Demucs, lancé par le serveur ; les pistes sont lues par le navigateur |
 | **Réglages** | État du serveur, sortie audio et fréquence d'échantillonnage, MIDI, apparence, à propos | Démarrage et arrêt du moteur, choix de la sortie |
 
 Les réglages qui pilotent le moteur portent un badge **Moteur**. Ceux qui ne sont pas encore pris en charge par le core portent un badge **Bientôt** : filtre et choix du clavier MIDI. Ils sont quand même édités et enregistrés.
@@ -24,7 +25,7 @@ Les réglages qui pilotent le moteur portent un badge **Moteur**. Ceux qui ne so
 Un instrument est un ensemble de partiels, sa carte d'identité. Chaque partiel a son oscillateur et son enveloppe : un rapport à la note jouée (×1 la note, ×2 son octave, ×2,76 un partiel inharmonique, de ×0,01 à ×1000), une amplitude, une forme d'onde, une enveloppe ADSR et une couleur. Les partiels sont numérotés 1, 2, 3… dans l'ordre de la liste : le numéro ne change pas quand on change le rapport.
 
 - **Spectre :** une barre par partiel, à son rapport (horizontal) et à son amplitude (vertical). On la fait glisser à la souris ; près d'un rapport entier, l'**aimant** l'y accroche (Alt pour l'ignorer, bouton pour le couper). Un double-clic place un nouveau partiel. Une onde non sinusoïdale contient déjà ses propres harmoniques : elles sont dessinées en pointillés, dans la couleur du partiel. Au clavier, les flèches déplacent le partiel sélectionné (Maj pour aller plus vite).
-- **Verrous :** le cadenas à côté du nom d'un partiel le fige : plus de glisser, de réglage, d'interrupteur actif/inactif ni de suppression (un petit cadenas le signale dans la liste et sur le spectre). « À tous » le saute, et « Générer » le garde, en tête de la liste. Le bouton **Verrouillé / Déverrouillé**, à côté du nom de l'instrument, fige tout l'instrument comme une sauvegarde : nom, description, catégorie, volume, filtre, couleur, partiels et leurs cadenas, suppression depuis la bibliothèque. L'instrument se joue toujours, et sa copie (Dupliquer) est déverrouillée. Les deux verrous sont enregistrés avec l'instrument.
+- **Verrous :** le cadenas à côté du nom d'un partiel le fige : plus de glisser, de réglage, d'interrupteur actif/inactif ni de suppression (un petit cadenas le signale dans la liste et sur le spectre). « À tous » le saute, et « Générer » le garde, en tête de la liste. Le bouton **Verrouillé / Déverrouillé**, à côté du nom de l'instrument, fige tout l'instrument comme une sauvegarde : nom, description, catégorie, volume, filtre, couleur, octave du clavier, partiels et leurs cadenas, suppression depuis la bibliothèque. L'instrument se joue toujours, et sa copie (Dupliquer) est déverrouillée. Les deux verrous sont enregistrés avec l'instrument.
 - **Actif / inactif :** l'interrupteur au début de chaque ligne de la liste (et en tête des réglages du partiel) retire un partiel du son sans le supprimer. Inactif, il reste dans la liste et sur le spectre, estompé, mais il n'est ni envoyé au moteur, ni compté dans l'onde résultante, les enveloppes et les avertissements.
 - **Filtre :** un passe-bande appliqué au son de l'instrument, dans l'Instrument Creator comme au clavier et dans le Composer, piloté en direct. Ses deux bornes sont les deux poignées d'une même barre « Bande passante », de 20 Hz à 20 kHz sur une échelle logarithmique (`RangeSlider` dans `components/ui.tsx`) : tout à gauche, la borne basse ne coupe rien et s'affiche 0 Hz ; tout à droite, la borne haute ne coupe rien ; les deux aux extrémités, il n'y a pas de filtre (« aucun filtre »). Une poignée s'arrête contre l'autre (la borne haute reste au moins 5 % au-dessus de la basse). Résonance en dessous. Les réglages sont enregistrés avec l'instrument.
 - **Saisie au clavier :** un clic sur la valeur d'un curseur (rapport, amplitude, temps de l'enveloppe, volume, filtre) ouvre une petite fenêtre pour la taper, virgule ou point acceptés ; Entrée valide, Échap ou un clic à côté annule. La saisie peut dépasser la course du curseur, jusqu'aux limites du serveur (10 s pour les temps, ×1000 pour le rapport). La fenêtre du rapport a aussi ÷2, ×2 et **Harmoniser** (arrondi à l'harmonique la plus proche).
@@ -55,13 +56,24 @@ L'analyse est faite par `synthway-core`. Pour lire un fichier ou un enregistreme
 - **Note de référence :** sous l'accordeur. **Auto** prend la note entendue ; sur une zone, la plus basse de ses notes nettes (corrigée par le core), pour qu'une fondamentale qui s'éteint avant ses harmoniques ne la fasse pas monter d'une octave. **Fixée** prend la note choisie (son nom, et l'octave avec − et +), accordée sur ce que l'Analyzer entend de cette note dans n'importe quelle octave : si l'Analyzer entend G2 alors que la note jouée est G1, fixe G1, et les partiels de la couche G2 deviennent 2, 4, 6… La note fixée ne dure que le temps de la visite (elle va avec un son), et ne vaut pas pour l'écoute en direct.
 - **Harmoniques seulement :** en tête des partiels, activé par défaut et gardé dans `synthway.analyzer.harmonics-only.v1`. Ne garde que les partiels à moins de 30 cents d'un rapport entier, et le plus fort de chaque harmonique : dans un mix, ça écarte l'essentiel des autres instruments, et un instrument créé n'a pas deux partiels presque à la même fréquence, qui battraient. À couper pour un son inharmonique (cloche). Ne vaut pas pour l'écoute en direct.
 - **Partiels :** une ligne dit ce qui est analysé (le direct, l'instant et sa fenêtre, ou la zone, et la note des rapports), puis, pour chaque partiel : fréquence, note la plus proche, rapport, harmonique la plus proche avec l'écart en cents (au-delà de 30 cents : « inharmonique »), amplitude relative au plus fort.
-- **Créer un instrument :** fait une carte de l'Instrument Creator avec les partiels affichés (leur rapport à la note et leur amplitude, en sinusoïdes), l'ajoute à la bibliothèque et l'ouvre. Elle s'appelle comme la source et la note (« Enregistrement · A3 »), et sa description dit d'où elle vient. Son volume est choisi pour que la somme des partiels ne sature pas, et son filtre est grand ouvert. Il faut une note : sans note, le bouton est grisé.
+- **Créer un instrument :** fait une carte de l'Instrument Creator avec les partiels affichés (leur rapport à la note et leur amplitude, en sinusoïdes), l'ajoute à la bibliothèque et l'ouvre. Elle s'appelle comme la source et la note (« Enregistrement · A3 »), et sa description dit d'où elle vient. Son volume est choisi pour que la somme des partiels ne sature pas, son filtre est grand ouvert, et son clavier part de l'octave de la note analysée. Il faut une note : sans note, le bouton est grisé.
   - **Depuis une zone :** le core mesure aussi l'enveloppe de chaque partiel sur la zone (`/envelopes`, le bouton affiche « Mesure des enveloppes… ») : attaque, extinction exponentielle, maintien s'il tient, relâchement de 0,3 s au plus. Les amplitudes deviennent les pics des partiels. Pour un résultat net, la zone va de l'attaque d'une seule note jusqu'à la note suivante. Une erreur s'affiche sous le bouton, et aucune carte n'est créée.
   - **Depuis le curseur ou le direct :** tous les partiels ont la même enveloppe (attaque 10 ms, maintien plein, relâchement 200 ms) : le spectre mesuré, tenu.
+
+### AI-nalyzer
+
+Sépare un morceau en ses pistes pour analyser un instrument sans le beat ni les autres. La séparation est faite par [Demucs v4](https://github.com/adefossez/demucs), un réseau de neurones que le serveur lance dans un processus à part (dossier `synthway-demucs/`, facultatif). Un encart « Powered by Demucs v4 » le crédite en haut de l'écran : outil tiers open source, licence MIT pour le code ; les poids pré-entraînés n'ont pas de licence claire, d'où un usage en essai local seulement (voir `synthway-demucs/README.md`).
+
+- **Morceau :** **Importer un morceau** ou déposer un fichier WAV, FLAC, MP3 ou OGG. Il est envoyé entier au serveur, qui le garde avec ses pistes : ils reviennent à la réouverture de l'onglet et après un redémarrage du serveur. **Lire** joue le morceau tel qu'envoyé.
+- **Modèle :** **4 pistes** (`htdemucs`, par défaut, le plus rapide), **4 pistes, affiné** (`htdemucs_ft`, un peu plus propre, environ 4 fois plus lent) ou **6 pistes** (`htdemucs_6s`, ajoute guitare et piano ; le piano déborde beaucoup). Le choix est gardé dans `synthway.ainalyzer.model.v1`.
+- **Decompose :** lance la séparation en tâche de fond. Une barre suit l'étape (démarrage, chargement du modèle, téléchargé à sa première utilisation, lecture, séparation en %, écriture) et dit si elle tourne sur la carte graphique (CUDA) ou le processeur. **Annuler** l'arrête. Mesuré sur un morceau de 4 min 53 s avec une RTX PRO 1000 : environ 7 s de séparation, 30 à 40 s au total la première fois (téléchargement du modèle compris).
+- **Pistes :** une ligne par piste, avec sa forme d'onde (les hauteurs se comparent d'une piste à l'autre). Un clic sur la forme d'onde la lit à partir de là, le bouton ▶ la lit ou la met en pause ; une seule piste joue à la fois, dans le navigateur. Le bouton de téléchargement donne la piste en WAV stéréo 16 bits, nommée d'après le morceau. **Analyser** la charge dans l'Analyzer, à la place de son fichier, et l'ouvre sur l'onglet Fichier.
+- **Sans Demucs :** si `synthway-demucs` n'est pas installé ou que le serveur le désactive (`SYNTHWAY_DEMUCS=0`), l'écran dit pourquoi et **Decompose** reste grisé.
 
 ### Jouer au clavier
 
 - **Clavier de l'ordinateur :** par position physique des touches, en AZERTY comme en QWERTY. La rangée du milieu joue les touches blanches, celle du dessus les noires. Les deux touches à gauche de la rangée du bas (`W`/`X` en AZERTY) changent d'octave.
+- **Octave :** le clavier montre deux octaves à partir du do de l'octave affichée (« Oct 4 » : de C4 à C6), de 1 à 6. Chaque instrument garde la dernière octave jouée et la retrouve quand on le rouvre (4 pour un instrument qui n'en a pas encore). Un instrument créé dans l'Analyzer part de l'octave de la note analysée : un C2 donne l'octave 2, un F4 l'octave 4. Sur un instrument verrouillé, l'octave change le temps de jouer mais n'est pas gardée.
 - **Souris :** clic, ou glissé d'une touche à l'autre.
 - **Monophonie :** le moteur joue une note à la fois. Relâcher une touche rejoue la dernière touche encore tenue.
 - **Accord nécessaire :** rien ne sonne tant que l'audio n'est pas activé par le bouton ⏻ en bas à gauche, ou dans les Réglages.
@@ -77,7 +89,7 @@ Instruments, composition, réglages audio, apparence et réglages de l'Analyzer 
 - **Couleurs :** relevées sur le logo `assets/logo/v4.png`. Fond `#000008`, néons du rose `#ff1aa8` au bleu `#2e4dff` en passant par le magenta et le violet. Pour distinguer les partiels, s'y ajoutent le cyan, le vert, le jaune, l'orange, le rouge et le blanc (couleur du premier partiel). Toutes les couleurs sont des variables CSS dans `src/styles/theme.css`, reprises dans `src/lib/neon.ts`.
 - **Ambiance :** synthwave, avec un halo dans la brume et une grille d'horizon en perspective.
 - **Polices :** Michroma pour les titres, qui rappelle le mot « SYNTHWAY » du logo ; Inter pour le texte ; JetBrains Mono pour les valeurs.
-- **Icônes :** Lucide, sauf les trois de la navigation, dessinées pour Synthway dans `src/components/icons.tsx`. L'Instrument Creator est une sinusoïde sculptée en signal carré, avec une étincelle ; le Composer est un motif de piano roll ; l'Analyzer est une onde qui traverse une loupe révélant ses partiels.
+- **Icônes :** Lucide, sauf les quatre de la navigation, dessinées pour Synthway dans `src/components/icons.tsx`. L'Instrument Creator est une sinusoïde sculptée en signal carré, avec une étincelle ; le Composer est un motif de piano roll ; l'Analyzer est une onde qui traverse une loupe révélant ses partiels ; l'AI-nalyzer est une onde qui se sépare en trois pistes.
 - **Apparence réglable :** les lueurs et les animations se coupent dans les Réglages. Les animations se coupent aussi quand le système demande moins de mouvement.
 
 ---
@@ -100,7 +112,7 @@ synthway-ui/
     │   ├── brand/            # Emblème et logo allégés (générés)
     │   └── fonts/            # Polices + licences (voir son README)
     ├── lib/
-    │   ├── api.ts            # REST, WebSocket /ws/synth et /ws/analyzer, envoi d'un fichier à analyser
+    │   ├── api.ts            # REST, WebSocket /ws/synth et /ws/analyzer, envoi d'un fichier à analyser ou à décomposer
     │   ├── SynthServer.tsx   # Connexion au serveur, état du moteur, notes
     │   ├── appearance.tsx    # Lueurs / animations
     │   ├── instruments.ts    # Modèle (partiels), préréglages, migration des anciens instruments
@@ -112,7 +124,7 @@ synthway-ui/
     │   └── useElementSize.ts # Taille d'un élément, pour les graphiques en pixels
     ├── components/           # Barre latérale, contrôles, spectre, enveloppes, oscilloscope, clavier,
     │                         # accordeur, spectre mesuré, forme d'onde d'un fichier…
-    └── screens/              # InstrumentCreator, Composer, Analyzer, Settings
+    └── screens/              # InstrumentCreator, Composer, Analyzer, AINalyzer, Settings
 ```
 
 Les styles sont des modules CSS (`*.module.css`), un par composant ou écran.
@@ -180,7 +192,7 @@ Les polices sont embarquées, sans Google Fonts : l'interface fonctionne hors li
 
 ## Crédits et licences
 
-Toutes les ressources tierces autorisent l'usage commercial (règle du skill `third-party-resources`).
+Toutes les ressources tierces autorisent l'usage commercial (règle du skill `third-party-resources`), sauf peut-être les poids de Demucs : exception décidée par l'utilisateur pour un essai local, à revoir avant toute distribution.
 
 | Ressource | Usage | Auteur | Licence | Source |
 | --- | --- | --- | --- | --- |
@@ -193,5 +205,6 @@ Toutes les ressources tierces autorisent l'usage commercial (règle du skill `th
 | JetBrains Mono | Police des valeurs | The JetBrains Mono Project Authors | SIL OFL 1.1 | https://github.com/JetBrains/JetBrainsMono |
 | Pillow | Script `make-brand-assets.py` uniquement (non livré) | Jeffrey A. Clark et contributeurs | MIT-CMU | https://python-pillow.org |
 | Logo Synthway | Emblème, favicon, logo | Projet Synthway | Propriété du projet | `assets/logo/` |
+| Demucs v4 | Séparation de l'AI-nalyzer, lancée par le serveur (rien n'est livré avec l'UI) ; crédité dans l'écran | Meta Platforms, Inc. et affiliés, Alexandre Défossez | Code MIT ; poids sans licence claire, **exception d'essai local** | https://github.com/adefossez/demucs |
 
 Les textes de licence des polices sont livrés avec elles, dans `src/assets/fonts/licenses/` (détails dans [src/assets/fonts/README.md](src/assets/fonts/README.md)). Les icônes de navigation et les illustrations (oscilloscope, enveloppe, grille) sont dessinées pour Synthway.

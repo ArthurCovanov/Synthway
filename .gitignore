@@ -68,6 +68,12 @@ htmlcov/
 coverage.xml
 pip-wheel-metadata/
 
+# synthway-demucs: its environment, the downloaded weights (licence not clear:
+# never committed) and the pieces decomposed; its lock file is kept
+synthway-demucs/models/
+synthway-demucs/work/
+!synthway-demucs/uv.lock
+
 # Node / React
 node_modules/
 npm-debug.log*

@@ -82,8 +82,22 @@ export interface Instrument {
   volume: number;
   partials: TimbrePartial[];
   filter: FilterSettings;
+  /** Lowest octave of the keyboard, the last one played (MIN_OCTAVE to MAX_OCTAVE); absent: DEFAULT_OCTAVE */
+  octave?: number;
   /** Locked: read only, like a saved version; it still plays, and a copy can be edited */
   locked?: boolean;
+}
+
+/** Octaves the keyboard of the Instrument Creator can start from: it shows two, from C of that octave */
+export const MIN_OCTAVE = 1;
+export const MAX_OCTAVE = 6;
+export const DEFAULT_OCTAVE = 4;
+
+/** The keyboard octave for a note's octave, or the one an instrument keeps: within MIN_OCTAVE and MAX_OCTAVE */
+export function keyboardOctave(octave: number | undefined): number {
+  return octave === undefined || !Number.isFinite(octave)
+    ? DEFAULT_OCTAVE
+    : Math.min(MAX_OCTAVE, Math.max(MIN_OCTAVE, Math.round(octave)));
 }
 
 /** Partials of a preset, given as [ratio, amplitude, envelope]: sines, coloured in PARTIAL_HUES order */
@@ -246,12 +260,14 @@ const MEASURED_PEAK = 0.8;
  * note and their amplitude, as sines, each with the envelope measured on a
  * note (else all with one held envelope). Its volume keeps the sum of the
  * partials from saturating; its filter is wide open, the measured spectrum
- * already holds the sound's own.
+ * already holds the sound's own. Its keyboard starts at noteOctave, the
+ * octave of the note analyzed (within the keyboard's).
  */
 export function instrumentFromPartials(
   name: string,
   description: string,
   measured: { ratio: number; amplitude: number; envelope?: Envelope }[],
+  noteOctave?: number,
 ): Instrument {
   const kept = measured.filter((partial) => partial.ratio > 0 && partial.ratio <= 1000 && partial.amplitude > 0);
   const total = kept.reduce((sum, partial) => sum + partial.amplitude, 0);
@@ -270,6 +286,7 @@ export function instrumentFromPartials(
       ]),
     ),
     filter: { lowCutoff: 20, cutoff: 20000, resonance: 0 },
+    octave: keyboardOctave(noteOctave),
   };
 }
 

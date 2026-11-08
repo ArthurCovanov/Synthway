@@ -55,6 +55,19 @@ export function AnalyzerIcon(props: IconProps) {
   );
 }
 
+/** AI-nalyzer: a waveform splitting into its stems */
+export function AINalyzerIcon(props: IconProps) {
+  return (
+    <svg {...iconProps(props)}>
+      <path d="M2 12h1.5l1.6-4 2.3 8 1.6-4H11" />
+      <path d="M11 12c2.5 0 3-5.5 6-5.5h5" />
+      <path d="M11 12h11" />
+      <path d="M11 12c2.5 0 3 5.5 6 5.5h5" />
+      <path d="M19 2.5v2.5M17.75 3.75h2.5" strokeWidth={1.5} />
+    </svg>
+  );
+}
+
 /** Miniature of a spectrum: one bar per partial, at its ratio, in its colour */
 export function SpectrumGlyph({
   partials,

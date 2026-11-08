@@ -12,6 +12,7 @@ Environment:
     SYNTHWAY_PORT      listening port (default 18741, an uncommon port: 8000 is
                        often taken by other dev tools). Not read by uvicorn itself.
     SYNTHWAY_CORE_LIB  path to synthway.dll / libsynthway.so (default: found in synthway-core/build)
+    SYNTHWAY_DEMUCS, SYNTHWAY_DEMUCS_DIR  the AI-nalyzer's Demucs (see separation.py)
 """
 
 import asyncio
@@ -23,11 +24,13 @@ import re
 import sys
 import tempfile
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
+from urllib.parse import quote
 
 try:
     import anyio  # FastAPI's own async layer
-    from fastapi import FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
+    from fastapi import Body, FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
     from fastapi.middleware.cors import CORSMiddleware
     import uvicorn
     HAS_FASTAPI = True
@@ -53,6 +56,7 @@ try:  # run from src/ (uvicorn main:app, python main.py)
         ToneControlRequest,
         WaveformEnum,
     )
+    from separation import SeparationError, separation
 except ImportError:  # installed package (synthway-server command)
     from .core_bridge import (
         MAX_HARMONIC_CENTS, MAX_REFERENCE_HZ, MAX_WINDOW_S, MIN_REFERENCE_HZ, MIN_WINDOW_S, NOISE_GATE_OFF,
@@ -72,6 +76,7 @@ except ImportError:  # installed package (synthway-server command)
         ToneControlRequest,
         WaveformEnum,
     )
+    from .separation import SeparationError, separation
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("synthway-server")
@@ -423,11 +428,19 @@ if HAS_FASTAPI:
         """Loads an audio file (WAV, FLAC, MP3), sent as the raw request body, in place of the previous one."""
         if not core:
             raise HTTPException(status_code=503, detail="Synthway core library not loaded")
+        return await load_analyzer_clip(await uploaded_audio(request), name)
+
+    async def uploaded_audio(request: Request) -> bytes:
+        """The audio file sent as the raw request body: 400 when empty, 413 when too big."""
         data = await request.body()
         if not data:
             raise HTTPException(status_code=400, detail="Fichier vide")
         if len(data) > MAX_CLIP_UPLOAD_BYTES:
             raise HTTPException(status_code=413, detail=f"Fichier trop gros ({MAX_CLIP_UPLOAD_BYTES // 2**20} Mo au plus)")
+        return data
+
+    async def load_analyzer_clip(data: bytes, name: str) -> ClipResponse:
+        """Decodes an audio file into the Analyzer's file, in place of the previous one."""
         analyzer = analyzers.clip()
         analyzers.clip_name = None
         try:
@@ -817,6 +830,97 @@ if HAS_FASTAPI:
             logger.error(f"WebSocket error: {ex}")
         finally:
             await stop_listening()
+
+    # ---------- AI-nalyzer: Demucs separates a piece into its sources, in a process of its own ----------
+
+    SOURCE_MEDIA_TYPES = {".wav": "audio/wav", ".flac": "audio/flac", ".mp3": "audio/mpeg", ".ogg": "audio/ogg"}
+
+    def refused(ex: SeparationError) -> HTTPException:
+        return HTTPException(status_code=ex.status, detail=ex.detail)
+
+    def attachment(filename: str) -> str:
+        """A Content-Disposition for downloading under filename, accents included (RFC 5987)"""
+        ascii_name = filename.encode("ascii", "replace").decode("ascii").replace("?", "_").replace('"', "_")
+        return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}"
+
+    async def file_response(path: Path, request: Request, media_type: str, disposition: str) -> Response:
+        """A file on disk, whole or the byte range asked: the browser plays it and seeks in it."""
+        try:
+            data = await asyncio.to_thread(path.read_bytes)
+        except OSError as ex:
+            raise HTTPException(status_code=404, detail="Fichier introuvable") from ex
+        status_code, headers, body = clip_wav_payload(data, request.headers.get("range"))
+        headers["Content-Disposition"] = disposition
+        return Response(content=body, status_code=status_code, media_type=media_type, headers=headers)
+
+    @app.get("/api/separation")
+    async def separation_status():
+        """Whether Demucs is ready (else why not), the piece loaded, the separation running or done and its stems
+        (with the peaks of each, to draw it)."""
+        return separation.status()
+
+    @app.post("/api/separation/source")
+    async def separation_source(request: Request, name: str = Query(default="morceau", max_length=200)):
+        """The piece to decompose (WAV, FLAC, MP3, OGG), sent as the raw request body, in place of the previous one
+        and of its stems. 409 while a separation runs, 503 when Demucs is not ready."""
+        data = await uploaded_audio(request)
+        try:
+            await asyncio.to_thread(separation.set_source, name, data)
+        except SeparationError as ex:
+            raise refused(ex) from ex
+        return separation.status()
+
+    @app.get("/api/separation/source")
+    async def separation_source_audio(request: Request):
+        """The piece as it was sent, for the browser to play it."""
+        try:
+            path, _ = separation.source_file()
+        except SeparationError as ex:
+            raise refused(ex) from ex
+        return await file_response(path, request, SOURCE_MEDIA_TYPES.get(path.suffix, "application/octet-stream"), "inline")
+
+    @app.post("/api/separation/run")
+    async def separation_run(model: str = Body(default="htdemucs", embed=True)):
+        """Decomposes the piece loaded with a Demucs model (htdemucs, htdemucs_ft, htdemucs_6s), in the
+        background: GET /api/separation follows it. The weights are downloaded on a model's first use."""
+        try:
+            await asyncio.to_thread(separation.start, model)
+        except SeparationError as ex:
+            raise refused(ex) from ex
+        return separation.status()
+
+    @app.post("/api/separation/cancel")
+    async def separation_cancel():
+        """Stops the separation in progress (its process is killed)."""
+        await asyncio.to_thread(separation.cancel)
+        return separation.status()
+
+    @app.get("/api/separation/stems/{name}.wav")
+    async def separation_stem(request: Request, name: str, download: bool = Query(default=False)):
+        """A stem as a 16-bit stereo WAV file: played by the browser, or downloaded (download=true)."""
+        try:
+            path = separation.stem_file(name)
+            _, source_name = separation.source_file()
+        except SeparationError as ex:
+            raise refused(ex) from ex
+        disposition = attachment(f"{Path(source_name).stem} - {name}.wav") if download else "inline"
+        return await file_response(path, request, "audio/wav", disposition)
+
+    @app.post("/api/separation/stems/{name}/analyzer", response_model=ClipResponse)
+    async def separation_stem_to_analyzer(name: str):
+        """Loads a stem into the Analyzer, in place of its file: its Fichier tab then shows and analyzes it."""
+        if not core:
+            raise HTTPException(status_code=503, detail="Synthway core library not loaded")
+        try:
+            path = separation.stem_file(name)
+            _, source_name = separation.source_file()
+        except SeparationError as ex:
+            raise refused(ex) from ex
+        try:
+            data = await asyncio.to_thread(path.read_bytes)
+        except OSError as ex:
+            raise HTTPException(status_code=404, detail="Fichier introuvable") from ex
+        return await load_analyzer_clip(data, f"{Path(source_name).stem} · {name}")
 
 
 def run_standalone_cli():

@@ -312,6 +312,127 @@ function analyzerRoute(req, res, url, raw) {
   return false;
 }
 
+// ---------- AI-nalyzer: a fake Demucs, no model loaded, silent stems ----------
+
+const SEPARATION_MODELS = ['htdemucs', 'htdemucs_ft', 'htdemucs_6s'];
+const SEPARATION_SECONDS = 30; // every fake piece lasts 30 s
+let separationSource = null; // { name, size }
+let separationJob = { state: 'idle', stage: null, progress: 0, model: null, device: null, error: null };
+let separationResult = null;
+let separationTimer = null;
+
+/** Peaks that look like each stem: hits for the drums, phrases for the others */
+function fakeStemPeaks(name) {
+  return Array.from({ length: 1000 }, (_, i) => {
+    const t = (i / 1000) * SEPARATION_SECONDS;
+    const beat = t % 0.5;
+    switch (name) {
+      case 'drums':
+        return Math.round((0.15 + 0.75 * Math.exp(-beat * 18)) * 1000) / 1000;
+      case 'bass':
+        return Math.round((0.35 + 0.15 * Math.sin(t * 1.3)) * 1000) / 1000;
+      case 'vocals':
+        return t % 8 < 5 ? Math.round((0.3 + 0.2 * Math.abs(Math.sin(t * 2.1))) * 1000) / 1000 : 0.01;
+      default:
+        return Math.round((0.2 + 0.12 * Math.abs(Math.sin(t * 0.7 + name.length))) * 1000) / 1000;
+    }
+  });
+}
+
+function separationStatus() {
+  return {
+    available: true,
+    reason: null,
+    models: SEPARATION_MODELS,
+    source: separationSource,
+    job: separationJob,
+    result: separationResult,
+  };
+}
+
+/** Loading, reading, separating over about 4 s, saving: like Demucs, without Demucs */
+function fakeSeparation(model) {
+  const stems = model === 'htdemucs_6s'
+    ? ['drums', 'bass', 'other', 'vocals', 'guitar', 'piano']
+    : ['drums', 'bass', 'other', 'vocals'];
+  let step = 0;
+  separationJob = { state: 'running', stage: 'starting', progress: 0, model, device: null, error: null };
+  separationTimer = setInterval(() => {
+    step += 1;
+    if (step === 2) Object.assign(separationJob, { stage: 'loading', device: 'cuda' });
+    else if (step === 5) separationJob.stage = 'reading';
+    else if (step > 6 && step <= 26) Object.assign(separationJob, { stage: 'separating', progress: (step - 7) / 20 });
+    else if (step === 27) separationJob.stage = 'saving';
+    else if (step === 29) {
+      clearInterval(separationTimer);
+      separationTimer = null;
+      separationJob = { ...separationJob, state: 'done', stage: null, progress: 1 };
+      separationResult = {
+        model,
+        device: 'cuda',
+        sample_rate: 44100,
+        duration: SEPARATION_SECONDS,
+        seconds: 5.8,
+        stems: stems.map((name) => ({ name, peaks: fakeStemPeaks(name) })),
+      };
+      log(`   separation done: ${stems.join(', ')} (silent)`);
+    }
+  }, 200);
+}
+
+function separationRoute(req, res, url, raw) {
+  const route = `${req.method} ${url.pathname}`;
+  if (route === 'GET /api/separation') return json(res, separationStatus());
+  if (route === 'POST /api/separation/source') {
+    if (!raw.length) return error(res, 400, 'Fichier vide');
+    if (separationJob.state === 'running') return error(res, 409, 'Une décomposition est en cours');
+    separationSource = { name: url.searchParams.get('name') ?? 'morceau', size: raw.length };
+    separationResult = null;
+    separationJob = { state: 'idle', stage: null, progress: 0, model: null, device: null, error: null };
+    log(`   piece: ${separationSource.name}, ${raw.length} bytes (not decoded)`);
+    return json(res, separationStatus());
+  }
+  if (route === 'GET /api/separation/source') {
+    if (!separationSource) return error(res, 404, 'Aucun morceau chargé');
+    return sendWav(req, res, silentWav(SEPARATION_SECONDS), 'inline');
+  }
+  if (route === 'POST /api/separation/run') {
+    const model = (raw.length ? JSON.parse(raw.toString()) : {}).model ?? 'htdemucs';
+    if (!SEPARATION_MODELS.includes(model)) return error(res, 422, `Modèle inconnu : ${model}`);
+    if (!separationSource) return error(res, 400, 'Aucun morceau à décomposer');
+    if (separationJob.state === 'running') return error(res, 409, 'Une décomposition est déjà en cours');
+    separationResult = null;
+    fakeSeparation(model);
+    return json(res, separationStatus());
+  }
+  if (route === 'POST /api/separation/cancel') {
+    if (separationTimer) {
+      clearInterval(separationTimer);
+      separationTimer = null;
+      separationJob = { state: 'idle', stage: null, progress: 0, model: separationJob.model, device: null, error: 'Décomposition annulée' };
+    }
+    return json(res, separationStatus());
+  }
+  const stem = /^\/api\/separation\/stems\/([^/]+?)(\.wav|\/analyzer)$/.exec(url.pathname);
+  if (stem) {
+    const name = decodeURIComponent(stem[1]);
+    if (!separationResult?.stems.some((item) => item.name === name)) return error(res, 404, `Aucune piste « ${name} »`);
+    if (req.method === 'GET' && stem[2] === '.wav') {
+      const disposition = url.searchParams.get('download') === 'true'
+        ? `attachment; filename="${name}.wav"`
+        : 'inline';
+      return sendWav(req, res, silentWav(SEPARATION_SECONDS), disposition);
+    }
+    if (req.method === 'POST' && stem[2] === '/analyzer') {
+      // Becomes the Analyzer's file: the fake G3 pluck stands for it, as for any file
+      clip = { name: `${separationSource.name.replace(/\.[^.]+$/, '')} · ${name}`, duration: 3 };
+      log(`   stem ${name} sent to the Analyzer`);
+      return json(res, clipResponse(clip.name, clip.duration));
+    }
+  }
+  return false;
+}
+
 /** A WAV file, whole or the byte range asked, like the real server: the browser seeks in it with Range requests */
 function sendWav(req, res, wav, disposition) {
   const headers = { 'Accept-Ranges': 'bytes', 'Content-Type': 'audio/wav', 'Content-Disposition': disposition };
@@ -375,6 +496,13 @@ const server = createServer(async (req, res) => {
     const raw = req.method === 'POST' ? await readRaw(req) : Buffer.alloc(0);
     if (!url.pathname.endsWith('/analysis')) log('HTTP', req.method, req.url);
     if (analyzerRoute(req, res, url, raw) !== false) return;
+    res.writeHead(404);
+    return res.end();
+  }
+  if (url.pathname === '/api/separation' || url.pathname.startsWith('/api/separation/')) {
+    const raw = req.method === 'POST' ? await readRaw(req) : Buffer.alloc(0);
+    if (url.pathname !== '/api/separation') log('HTTP', req.method, req.url);
+    if (separationRoute(req, res, url, raw) !== false) return;
     res.writeHead(404);
     return res.end();
   }

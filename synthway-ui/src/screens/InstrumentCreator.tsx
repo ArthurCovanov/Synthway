@@ -1063,7 +1063,7 @@ export function InstrumentCreator({
         </Panel>
       </div>
 
-      <KeyboardDock instrument={selected} />
+      <KeyboardDock instrument={selected} onOctaveChange={(octave) => update({ octave })} />
     </div>
   );
 }

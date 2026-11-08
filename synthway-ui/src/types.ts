@@ -190,3 +190,41 @@ export type AnalyzerMessage =
   | ({ type: 'recorded' } & RecordingTimes)
   | { type: 'stopped' }
   | { type: 'error'; error: string };
+
+/** A Demucs model of the AI-nalyzer: 4 stems, the same fine-tuned (4 times slower), or 6 stems */
+export type SeparationModel = 'htdemucs' | 'htdemucs_ft' | 'htdemucs_6s';
+
+/** A stem of a separation: drums, bass, vocals, other, guitar or piano */
+export interface SeparationStem {
+  name: string;
+  /** Highest sample of each equal part of the stem, to draw it */
+  peaks: number[];
+}
+
+/** What GET /api/separation says: whether Demucs is ready, the piece loaded, the separation and its stems */
+export interface SeparationStatus {
+  available: boolean;
+  /** Why Demucs cannot run, null when it can */
+  reason: string | null;
+  models: SeparationModel[];
+  source: { name: string; size: number } | null;
+  job: {
+    state: 'idle' | 'running' | 'done' | 'error' | 'cancelled';
+    stage: 'starting' | 'loading' | 'reading' | 'separating' | 'saving' | null;
+    /** Share of the separation done, 0 to 1 */
+    progress: number;
+    model: SeparationModel | null;
+    /** cuda or cpu, once Demucs has started */
+    device: string | null;
+    error: string | null;
+  };
+  result: {
+    model: SeparationModel;
+    device: string;
+    sample_rate: number;
+    duration: number;
+    /** How long the separation took */
+    seconds: number;
+    stems: SeparationStem[];
+  } | null;
+}

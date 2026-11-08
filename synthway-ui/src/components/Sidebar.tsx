@@ -3,10 +3,10 @@ import type { ReactNode } from 'react';
 import emblem from '../assets/brand/emblem-256.png';
 import { SERVER_PORT } from '../lib/api';
 import { useSynthServer, type Connection } from '../lib/SynthServer';
-import { AnalyzerIcon, ComposerIcon, InstrumentIcon } from './icons';
+import { AINalyzerIcon, AnalyzerIcon, ComposerIcon, InstrumentIcon } from './icons';
 import styles from './Sidebar.module.css';
 
-export type ScreenId = 'instruments' | 'composer' | 'analyzer' | 'settings';
+export type ScreenId = 'instruments' | 'composer' | 'analyzer' | 'ainalyzer' | 'settings';
 
 const CONNECTION_LABEL: Record<Connection, string> = {
   connecting: 'Connexion au serveur…',
@@ -65,6 +65,13 @@ export function Sidebar({ current, onNavigate }: { current: ScreenId; onNavigate
           id="analyzer"
           label="Analyzer"
           icon={<AnalyzerIcon size={23} />}
+          current={current}
+          onNavigate={onNavigate}
+        />
+        <NavItem
+          id="ainalyzer"
+          label="AI-nalyzer"
+          icon={<AINalyzerIcon size={23} />}
           current={current}
           onNavigate={onNavigate}
         />

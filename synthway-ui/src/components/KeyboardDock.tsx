@@ -1,6 +1,6 @@
 import { Minus, Plus, Power } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Instrument } from '../lib/instruments';
+import { keyboardOctave, MAX_OCTAVE, MIN_OCTAVE, type Instrument } from '../lib/instruments';
 import { midiToFrequency, midiToName } from '../lib/music';
 import { toTimbre } from '../lib/partials';
 import { playBlocker, useSynthServer } from '../lib/SynthServer';
@@ -33,8 +33,6 @@ const KEY_OFFSETS: [code: string, offset: number][] = [
 const OFFSET_BY_CODE = new Map(KEY_OFFSETS);
 const OCTAVE_DOWN = 'KeyZ';
 const OCTAVE_UP = 'KeyX';
-const MIN_OCTAVE = 1;
-const MAX_OCTAVE = 6;
 /** Two octaves from the highest octave, plus the final C: C8 */
 export const HIGHEST_MIDI = (MAX_OCTAVE + 1) * 12 + 24;
 
@@ -69,14 +67,39 @@ function isTyping(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && (target.isContentEditable || ['SELECT', 'TEXTAREA'].includes(target.tagName));
 }
 
-/** Bottom dock of the Instrument Creator: audio power, note readout, keyboard */
-export function KeyboardDock({ instrument }: { instrument: Instrument }) {
+/**
+ * Bottom dock of the Instrument Creator: audio power, note readout, keyboard.
+ * The keyboard starts at the octave the instrument keeps; onOctaveChange gets
+ * every change, to keep it (a locked instrument keeps its own: the change
+ * then lasts until another instrument is chosen).
+ */
+export function KeyboardDock({
+  instrument,
+  onOctaveChange,
+}: {
+  instrument: Instrument;
+  onOctaveChange?: (octave: number) => void;
+}) {
   const server = useSynthServer();
   const { canPlay, noteOn, noteOff, engine, busy } = server;
   const blocker = playBlocker(server);
   const keyLabel = useKeyLabel();
 
-  const [octave, setOctave] = useState(4);
+  const savedOctave = keyboardOctave(instrument.octave);
+  const [octave, setOctave] = useState(savedOctave);
+  // Another instrument, or its octave changed: the keyboard follows it
+  useEffect(() => setOctave(savedOctave), [instrument.id, savedOctave]);
+  const onOctaveChangeRef = useRef(onOctaveChange);
+  onOctaveChangeRef.current = onOctaveChange;
+  const changeOctave = useCallback(
+    (delta: number) => {
+      const next = keyboardOctave(octave + delta);
+      if (next === octave) return;
+      setOctave(next);
+      onOctaveChangeRef.current?.(next);
+    },
+    [octave],
+  );
   const [held, setHeld] = useState<number[]>([]);
   const heldRef = useRef<number[]>([]);
   const notesByCode = useRef(new Map<string, number>());
@@ -123,12 +146,8 @@ export function KeyboardDock({ instrument }: { instrument: Instrument }) {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.repeat || event.ctrlKey || event.metaKey || event.altKey || isTyping(event.target)) return;
-      if (event.code === OCTAVE_DOWN) {
-        setOctave((current) => Math.max(MIN_OCTAVE, current - 1));
-        return;
-      }
-      if (event.code === OCTAVE_UP) {
-        setOctave((current) => Math.min(MAX_OCTAVE, current + 1));
+      if (event.code === OCTAVE_DOWN || event.code === OCTAVE_UP) {
+        changeOctave(event.code === OCTAVE_UP ? 1 : -1);
         return;
       }
       const offset = OFFSET_BY_CODE.get(event.code);
@@ -156,7 +175,7 @@ export function KeyboardDock({ instrument }: { instrument: Instrument }) {
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', onBlur);
     };
-  }, [startMidi, press, release]);
+  }, [startMidi, press, release, changeOctave]);
 
   const keyLabels = useMemo(
     () => new Map(KEY_OFFSETS.map(([code, offset]) => [startMidi + offset, keyLabel(code)])),
@@ -232,7 +251,7 @@ export function KeyboardDock({ instrument }: { instrument: Instrument }) {
             iconOnly
             aria-label="Octave inférieure"
             disabled={octave <= MIN_OCTAVE}
-            onClick={() => setOctave(octave - 1)}
+            onClick={() => changeOctave(-1)}
           >
             <Minus size={14} />
           </Button>
@@ -242,7 +261,7 @@ export function KeyboardDock({ instrument }: { instrument: Instrument }) {
             iconOnly
             aria-label="Octave supérieure"
             disabled={octave >= MAX_OCTAVE}
-            onClick={() => setOctave(octave + 1)}
+            onClick={() => changeOctave(1)}
           >
             <Plus size={14} />
           </Button>

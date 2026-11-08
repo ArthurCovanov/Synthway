@@ -24,7 +24,8 @@ synthway-server/
 │   ├── __init__.py         # Package init
 │   ├── main.py             # Point d'entrée de l'application FastAPI & mode autonome
 │   ├── core_bridge.py      # Wrapper Python ctypes vers libsynthway (cross-platform)
-│   └── models.py           # Modèles de données (Pydantic avec fallback Dataclasses)
+│   ├── models.py           # Modèles de données (Pydantic avec fallback Dataclasses)
+│   └── separation.py       # AI-nalyzer : lance Demucs (synthway-demucs) dans un processus à part
 └── tests/                  # Tests sans son : le core y est remplacé par des doublures
 ```
 
@@ -86,6 +87,8 @@ pip install -r requirements.txt
   | `SYNTHWAY_HOST` | Adresse d'écoute | `127.0.0.1` |
   | `SYNTHWAY_PORT` | Port d'écoute (utile si 18741 est pris) | `18741` |
   | `SYNTHWAY_CORE_LIB` | Chemin de `synthway.dll` / `libsynthway.so` | Recherché dans `synthway-core/build` |
+  | `SYNTHWAY_DEMUCS` | `0` désactive l'AI-nalyzer (la séparation par Demucs) | Activé s'il est installé |
+  | `SYNTHWAY_DEMUCS_DIR` | Dossier `synthway-demucs` | À côté de `synthway-server` |
 
 - **Mode test autonome (sans dépendances web)** :
   ```bash
@@ -106,6 +109,7 @@ Aucun test ne produit de son :
 - `test_server.py` remplace le core par des doublures et n'a pas besoin de `synthway-core` compilé.
 - `test_render.py` charge la vraie bibliothèque, mais seulement pour du rendu hors ligne, sans carte son. Il mesure la fréquence et le niveau de ce que produit le moteur. Il est ignoré si `synthway-core` n'est pas compilé.
 - `test_analysis.py` charge aussi la vraie bibliothèque : il fait analyser par le core des sons rendus hors ligne (une carte de type cloche, un fichier WAV passé en mémoire) et vérifie qu'on retrouve la note et les partiels. Il n'ouvre jamais le micro.
+- `test_separation.py` remplace Demucs par un faux script, qui rapporte sa progression comme le vrai : aucun modèle n'est chargé.
 
 Le pont expose aussi ce rendu : `SynthwayCore.render()` (échantillons en mémoire) et `SynthwayCore.render_to_wav()` (fichier WAV), sur un moteur séparé du moteur temps réel.
 
@@ -120,6 +124,7 @@ Le pont expose aussi ce rendu : `SynthwayCore.render()` (échantillons en mémoi
 - **Enveloppe :** `note_on` lance l'attaque et `note_off` le relâchement de l'enveloppe ADSR. Un `note_on` sur une note déjà ouverte change la hauteur sans relancer l'attaque (legato). Le serveur garde l'enveloppe et l'applique à chaque démarrage du moteur : on peut la régler avant de démarrer l'audio.
 - **Analyzer :** deux analyseurs du core (`synthway_analyzer_t`), indépendants du moteur et créés au premier usage : l'un pour le micro, l'autre pour le fichier chargé, pour qu'un long décodage ne bloque pas l'analyse en direct. Le micro est ouvert par le core, seulement quand une page envoie `start` sur `/ws/analyzer`, et fermé à `stop` ou quand la page se déconnecte. Une seule page l'écoute à la fois. Rien n'est joué. Le micro n'est enregistré que si la page envoie `record` : le core garde l'enregistrement en mémoire, sans limite de durée, et ses échantillons ne passent par le serveur que lorsqu'on le télécharge en WAV. Le serveur l'alimente en appelant l'analyse en direct toutes les 50 ms. Sinon, seuls les résultats de l'analyse sortent du core. Un fichier importé arrive entier dans le corps de la requête, et le core le décode en mémoire (WAV, FLAC, MP3 ; 256 Mo et 10 minutes au plus).
 - **Timbre (synthèse additive) :** un timbre remplace la forme d'onde et l'enveloppe par une liste de partiels, chacun avec son rapport à la note jouée, son amplitude, sa forme d'onde et son enveloppe. Comme l'enveloppe, le serveur le garde et l'applique à chaque démarrage du moteur. 64 partiels au plus (`max_partials` dans `/api/engine/status`, `MAX_PARTIALS` dans `models.py`, vérifié contre le core au chargement de la bibliothèque). Le serveur ne prévient ni des partiels au-delà de la moitié de la fréquence d'échantillonnage ni de la saturation : l'UI s'en charge.
+- **AI-nalyzer (séparation de sources) :** facultatif. Demucs v4 vit dans `synthway-demucs/`, avec son propre Python et PyTorch (`uv sync`), que le serveur n'importe jamais : `src/separation.py` lance `synthway-demucs/separate.py` dans un processus à part et suit les lignes JSON qu'il écrit. C'est un traitement de fichier hors ligne, aucun flux audio temps réel ne passe par Python. Un morceau à la fois, une séparation à la fois. Le morceau et ses pistes (WAV 16 bits stéréo à 44,1 kHz) sont gardés dans `synthway-demucs/work/` et reviennent après un redémarrage. Les poids sont téléchargés au premier usage d'un modèle. Sans Demucs installé, ou avec `SYNTHWAY_DEMUCS=0`, les routes `/api/separation/...` répondent 503 et `GET /api/separation` dit pourquoi. Licence des poids non précisée : essai local seulement, voir `synthway-demucs/README.md`.
 - **Filtre passe-bande :** `low_cutoff` (borne basse), `cutoff` (borne haute), de 20 à 20000 Hz, et `resonance`, de 0 à 1, sur `/api/synth/tone` ou dans un `set_param`. Chacun peut venir seul : les autres gardent leur valeur. La borne basse doit rester sous la borne haute, sinon le réglage est refusé (422, ou `{"error": ...}` sur le WebSocket) et le filtre ne change pas. Le serveur garde le filtre et l'applique à chaque démarrage du moteur, comme l'enveloppe. Par défaut, 20 Hz à 20 kHz sans résonance : le filtre est alors contourné, le son est inchangé.
 
 ---
@@ -150,6 +155,13 @@ Le pont expose aussi ce rendu : `SynthwayCore.render()` (échantillons en mémoi
 | `GET` | `/api/analyzer/recording/envelopes?start=…&end=…` | Les enveloppes d'une note de l'enregistrement, comme pour un fichier. 404 sans enregistrement |
 | `GET` | `/api/analyzer/recording/waveform?first=…&frames=…&count=…` | Forme d'onde d'une partie de l'enregistrement, comme pour un fichier (mono : les deux canaux sont identiques). 404 sans enregistrement |
 | `GET` | `/api/analyzer/recording.wav` | L'enregistrement en WAV mono 16 bits, écrit par le core, à télécharger (`Content-Disposition: attachment`) ; l'UI le lit aussi (le navigateur ignore alors cet en-tête) et il accepte les requêtes HTTP `Range` comme `clip.wav`. 404 sans enregistrement |
+| `GET` | `/api/separation` | AI-nalyzer : `available` et sinon `reason` (Demucs absent ou désactivé), `models`, le morceau chargé (`source` : `name`, `size`, ou `null`), la séparation (`job` : `state` `idle`/`running`/`done`/`error`/`cancelled`, `stage` `starting`/`loading`/`reading`/`separating`/`saving`, `progress` de 0 à 1, `model`, `device` `cuda` ou `cpu`, `error`) et son résultat (`result` : `model`, `device`, `sample_rate`, `duration`, `seconds` mis, `stems` : `name` et `peaks`, 1000 crêtes pour la dessiner ; ou `null`) |
+| `POST` | `/api/separation/source?name=…` | Le morceau à décomposer (WAV, FLAC, MP3, OGG), envoyé tel quel dans le corps de la requête, à la place du précédent et de ses pistes. Renvoie l'état. 400 si vide, 413 si plus de 256 Mo, 409 pendant une séparation, 503 sans Demucs |
+| `GET` | `/api/separation/source` | Le morceau tel qu'envoyé, pour l'écouter (accepte `Range`). 404 sans morceau |
+| `POST` | `/api/separation/run` | `{"model": "htdemucs"}` (ou `htdemucs_ft`, `htdemucs_6s`) : lance la séparation en tâche de fond ; `GET /api/separation` la suit. 400 sans morceau, 409 si une séparation tourne déjà, 422 pour un modèle inconnu, 503 sans Demucs |
+| `POST` | `/api/separation/cancel` | Arrête la séparation en cours (son processus est tué) ; `job.error` vaut alors « Décomposition annulée » |
+| `GET` | `/api/separation/stems/{name}.wav` | Une piste en WAV 16 bits stéréo (accepte `Range`) ; `?download=true` la donne en pièce jointe, nommée d'après le morceau et la piste. 404 pour une piste inconnue |
+| `POST` | `/api/separation/stems/{name}/analyzer` | Charge la piste dans l'Analyzer à la place de son fichier (nom : « morceau · piste ») et renvoie la même chose que `POST /api/analyzer/clip`. 404 pour une piste inconnue, 503 sans core |
 
 ### Canal WebSocket (`/ws/synth`)
 

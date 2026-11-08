@@ -580,6 +580,8 @@ export function Analyzer({ onCreateInstrument }: { onCreateInstrument: (instrume
         `${prefix}${noteName ? ` · ${noteName}` : ''}`,
         `Créé dans l’Analyzer depuis ${origin} : ${described}, rapports à ${noteName || 'la note'}${harmonics}. ${count} partiel${count > 1 ? 's' : ''} mesuré${count > 1 ? 's' : ''}, sinusoïdes, ${envelopes}.`,
         partialsMade,
+        // Its keyboard starts at the note's octave: C2 analyzed, octave 2
+        note?.octave,
       ),
     );
   };

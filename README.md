@@ -13,12 +13,16 @@ Synthway est structuré en **3 sous-projets indépendants et hautement découpl�
 flowchart LR
     subgraph UI ["synthway-ui (Frontend)"]
         React["React + TypeScript + Vite"]
-        UI_Controls["Instrument Creator, Composer, Analyzer, Réglages"]
+        UI_Controls["Instrument Creator, Composer, Analyzer, AI-nalyzer, Réglages"]
     end
 
     subgraph Server ["synthway-server (Ordonnanceur)"]
         FastAPI["FastAPI (REST & WebSockets)"]
         Bridge["Pont FFI (ctypes)"]
+    end
+
+    subgraph Demucs ["synthway-demucs (facultatif)"]
+        Separate["Demucs v4 (PyTorch), processus à part"]
     end
 
     subgraph Core ["synthway-core (Moteur Audio)"]
@@ -32,6 +36,7 @@ flowchart LR
     UI_Controls -->|REST: Découverte & Config| FastAPI
     UI_Controls <-->|WebSocket: Note On/Off, Knobs temps réel| FastAPI
     FastAPI --> Bridge
+    FastAPI -->|Séparation de sources d'un fichier, hors ligne| Separate
     Bridge -->|Appels C ABI (synthway.dll / libsynthway.so)| Engine
     Engine --> Miniaudio
     Devices --> Miniaudio
@@ -76,7 +81,13 @@ synthway/
 │       ├── __init__.py         # Module Python
 │       ├── main.py             # Application FastAPI & mode autonome
 │       ├── core_bridge.py      # Pont ctypes vers libsynthway
-│       └── models.py           # Modèles Pydantic / Dataclasses
+│       ├── models.py           # Modèles Pydantic / Dataclasses
+│       └── separation.py       # AI-nalyzer : lance Demucs dans un processus à part
+│
+├── synthway-demucs/            # Facultatif : séparation de sources (Demucs v4), essai local
+│   ├── README.md               # Installation (uv sync), licence, désactivation
+│   ├── separate.py             # Script lancé par le serveur
+│   └── vendor/demucs/          # Dépôt amont de Demucs, non modifié
 │
 └── synthway-ui/                # 3. Interface Graphique Utilisateur (React + Vite)
     ├── README.md               # Guide dédié de l'UI (composants, connexion au serveur, stack)
@@ -86,8 +97,8 @@ synthway/
     ├── index.html              # Page web hôte
     ├── scripts/                # Déclinaisons du logo, serveur factice muet
     └── src/                    # Code source de l'IHM
-        ├── App.tsx             # Navigation entre les 4 écrans
-        ├── screens/            # Instrument Creator, Composer, Analyzer, Réglages
+        ├── App.tsx             # Navigation entre les 5 écrans
+        ├── screens/            # Instrument Creator, Composer, Analyzer, AI-nalyzer, Réglages
         ├── components/         # Barre latérale, contrôles, oscilloscope, clavier
         ├── lib/                # Client API/WebSocket, modèles, état partagé
         ├── styles/             # Thème synthwave (couleurs du logo), polices
@@ -143,6 +154,17 @@ npm run dev
 ```
 Ouvrez [http://localhost:5173](http://localhost:5173) pour utiliser le synthétiseur dans votre navigateur. Vite ne sert que la page : le navigateur parle directement au serveur, sur `http://127.0.0.1:18741`. Si le serveur tourne sur un autre port que 18741, ou pour travailler sans lui avec le serveur factice muet, voir le [README de l'UI](synthway-ui/README.md).
 
+### Étape 4 (facultative) : la séparation de sources (`synthway-demucs`)
+
+L'onglet AI-nalyzer décompose un morceau en pistes avec Demucs v4. Il lui faut son propre environnement Python, créé par [uv](https://docs.astral.sh/uv/) (environ 3 Go avec PyTorch) :
+
+```bash
+cd synthway-demucs
+uv sync
+```
+
+Puis redémarrez le serveur. Licence des poids non précisée : essai local seulement. Voir le [README de synthway-demucs](synthway-demucs/README.md).
+
 ---
 
 ## 💻 Compatibilité Multiplateforme (Windows & Linux / WSL)
@@ -173,3 +195,7 @@ Lors de l'ajout de nouvelles fonctionnalités, respectez scrupuleusement les fro
 3. **Règles pour `synthway-ui` (Ergonomie & Contrôle)** :
    - Conserver l'interface réactive et découplée : elle doit afficher l'état de synchronisation avec le serveur.
    - Pour une version application de bureau sans navigateur, préférer **Tauri** à Electron pour sa légèreté.
+4. **Règles pour `synthway-demucs` (facultatif)** :
+   - Le serveur n'importe jamais PyTorch ni Demucs : il lance `separate.py` avec le Python de `synthway-demucs/.venv`, dans un processus à part, et lit ses lignes JSON.
+   - Tout doit continuer de marcher sans ce dossier : l'AI-nalyzer dit alors pourquoi il ne peut rien décomposer.
+   - `vendor/demucs/` reste le dépôt amont, sans modification. Les poids téléchargés (`models/`) ne sont jamais commités.

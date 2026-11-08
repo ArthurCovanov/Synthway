@@ -120,6 +120,7 @@ Un instrument est un ensemble de partiels (`TimbrePartial`) : chacun a un rappor
 | Volume | Envoyé avec le timbre par `set_param`, et au démarrage de l'audio par `/api/synth/tone` |
 | Filtre | Bornes basse et haute (20–20000 Hz) et résonance (0–1) envoyées avec le timbre par `set_param` ; le core applique un passe-bande biquad après la somme des partiels ; une borne à son extrémité (20 Hz en bas, 20 kHz en haut) ne filtre pas, les deux ensemble contournent le filtre. Les valeurs sont gardées par le serveur et réappliquées au démarrage du moteur ; une borne basse qui n'est pas sous la borne haute est refusée avant d'être gardée. Dans l'UI, les deux bornes sont les poignées d'une même barre |
 | Nom, description, catégorie, couleurs | Purement visuels, propres à l'UI |
+| Octave du clavier (`octave`) | Propre à l'UI : l'octave d'où part le clavier de l'Instrument Creator (`KeyboardDock`), la dernière jouée ; seules les fréquences des notes jouées partent au moteur |
 
 Les vues de l'Instrument Creator n'affichent pas le vrai signal. Le spectre (`SpectrumGraph`) dessine les partiels et, en pointillés, les harmoniques qu'une onde non sinusoïdale contient déjà (`waveformHarmonics`). Les enveloppes (`EnvelopesGraph`, `EnvelopeGraph`) sont tracées à partir des réglages par `envelopeLevel` (`synthway-ui/src/lib/instruments.ts`), qui reprend les courbes linéaire et exponentielle de `synthway-core/src/synth/envelope.c`. L'oscilloscope (`WaveScope`) recalcule la somme des partiels en JavaScript avec `sampleWave` (`synthway-ui/src/lib/music.ts`), qui reprend les formules de `synthway-core/src/synth/oscillator.c`.
 
@@ -193,6 +194,29 @@ flowchart LR
 - **Enveloppes** : pour une zone, « Créer un instrument » demande d'abord `GET …/envelopes?start=…&end=…`. Le serveur appelle `synthway_analyzer_measure_envelopes`, qui trouve les partiels comme ci-dessus, puis suit le niveau de chacun toutes les 5 ms à sa fréquence (`sw_analysis_tone_amplitude`, un filtre de Goertzel) et en tire une enveloppe exponentielle (`sw_analysis_fit_envelope` : attaque, pente en dB/s, maintien si elle se stabilise, relâchement de 0,3 s au plus). Seules ces enveloppes et l'analyse remontent ; le moteur les joue avec la courbe `SYNTHWAY_ENVELOPE_EXPONENTIAL` de chaque partiel (`synth/envelope.c`).
 - **Deux analyseurs** : un analyseur n'est pas thread-safe. Le serveur en a donc deux (`AnalyzerHub`, `main.py`), un pour le micro et un pour les fichiers, et chaque appel du pont prend un verrou (`Analyzer`, `core_bridge.py`).
 - **La note** est trouvée par sa période (méthode de McLeod), puis vérifiée par les partiels, que la FFT mesure plus finement : affinée par ses premières harmoniques, ou remplacée par le premier partiel audible quand elle tombe sous lui sans en être la fondamentale absente (cas d'une cloche). Détails dans la section « Fonctionnalités » de [`synthway-core/README.md`](../synthway-core/README.md).
+
+## L'AI-nalyzer
+
+L'AI-nalyzer sépare un morceau en pistes (batterie, basse, voix, autres…) avant de l'analyser, pour qu'un beat ne se mêle pas au timbre mesuré. La séparation n'est pas faite par le core mais par Demucs v4, un réseau de neurones en Python et PyTorch, rangé à part dans `synthway-demucs/` avec son propre environnement. C'est un traitement de fichier hors ligne : aucun flux audio temps réel ne passe par Python.
+
+```mermaid
+flowchart LR
+    UI["AINalyzer.tsx"] -->|"POST /api/separation/source<br/>le morceau entier"| Server["separation.py<br/>(serveur)"]
+    UI -->|"POST /api/separation/run<br/>GET /api/separation (progression)"| Server
+    Server -->|"processus à part :<br/>.venv/python separate.py"| Demucs["synthway-demucs<br/>Demucs v4, PyTorch (CUDA)"]
+    Demucs -->|"lignes JSON (étape, %)<br/>pistes WAV + result.json"| Work["synthway-demucs/work/"]
+    Work --> Server
+    Server -->|"POST …/stems/{piste}/analyzer"| Core["core : analyseur du fichier"]
+
+    classDef cmd fill:#EEEDFE,stroke:#534AB7,color:#3C3489
+    classDef sig fill:#FAECE7,stroke:#993C1D,color:#712B13
+    class UI,Server cmd
+    class Demucs,Work,Core sig
+```
+
+- Le serveur n'importe jamais PyTorch : le Python de MSYS2 n'en a pas, et un plantage de Demucs ne doit pas emporter le serveur. Il lance `separate.py` avec le Python de `synthway-demucs/.venv`, dans un thread qui lit ses lignes JSON et tient l'état à jour ; l'UI le demande toutes les 500 ms pendant la séparation.
+- Le morceau et ses pistes restent dans `synthway-demucs/work/` : ils reviennent après un redémarrage du serveur. « Analyser » relit une piste et la passe à l'analyseur du fichier, comme un fichier importé dans l'Analyzer.
+- Sans `synthway-demucs` (ou avec `SYNTHWAY_DEMUCS=0`), tout le reste marche pareil : `GET /api/separation` dit pourquoi l'AI-nalyzer est indisponible.
 
 ## Pièges connus
 

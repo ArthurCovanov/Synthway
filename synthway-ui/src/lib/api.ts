@@ -8,6 +8,8 @@ import type {
   EnvelopeAnalysis,
   EnvelopeParams,
   HealthResponse,
+  SeparationModel,
+  SeparationStatus,
   SynthStateMessage,
   TimbreParams,
   ToneParams,
@@ -151,7 +153,25 @@ export const api = {
     request<EnvelopeAnalysis>(analysisPath('/api/analyzer/recording/envelopes', zone, options), {}, ZONE_TIMEOUT_MS),
   recordingWaveform: (first: number, frames: number, count: number) =>
     request<ClipWaveformPart>(`/api/analyzer/recording/waveform?first=${first}&frames=${frames}&count=${count}`),
+  /** AI-nalyzer: whether Demucs is ready, the piece loaded, the separation and its stems */
+  separation: () => request<SeparationStatus>('/api/separation'),
+  /** The piece to decompose, in place of the previous one and its stems */
+  uploadSeparationSource: (file: File) => uploadAudio<SeparationStatus>('/api/separation/source', file),
+  /** Starts decomposing the piece, in the background: separation() follows it */
+  runSeparation: (model: SeparationModel) => postExplained<SeparationStatus>('/api/separation/run', { model }),
+  cancelSeparation: () => postExplained<SeparationStatus>('/api/separation/cancel'),
+  /** Loads a stem into the Analyzer, in place of its file */
+  stemToAnalyzer: (name: string) =>
+    postExplained<ClipInfo>(`/api/separation/stems/${encodeURIComponent(name)}/analyzer`, undefined, 30000),
 };
+
+/** The piece loaded into the AI-nalyzer, as it was sent */
+export const SEPARATION_SOURCE_URL = serverUrl('/api/separation/source');
+
+/** A stem of the last separation as a WAV file: played, or downloaded */
+export function separationStemUrl(name: string, download = false): string {
+  return serverUrl(`/api/separation/stems/${encodeURIComponent(name)}.wav${download ? '?download=true' : ''}`);
+}
 
 /** The last recording as a WAV file, written by the core */
 export const RECORDING_WAV_URL = serverUrl('/api/analyzer/recording.wav');
@@ -162,23 +182,43 @@ export const ANALYZER_CLIP_WAV_URL = serverUrl('/api/analyzer/clip.wav');
  * Sends an audio file to the analyzer, whole (the core decodes it). The error
  * message is the server's when it gives one (format, size).
  */
-async function uploadClip(file: File): Promise<ClipInfo> {
-  const res = await fetch(serverUrl(`/api/analyzer/clip?name=${encodeURIComponent(file.name)}`), {
+function uploadClip(file: File): Promise<ClipInfo> {
+  return uploadAudio<ClipInfo>('/api/analyzer/clip', file);
+}
+
+/** Sends an audio file whole, as the raw body; the error message is the server's when it gives one */
+async function uploadAudio<T>(path: string, file: File): Promise<T> {
+  const res = await fetch(serverUrl(`${path}?name=${encodeURIComponent(file.name)}`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/octet-stream' },
     body: file,
   });
-  if (!res.ok) {
-    let detail = `HTTP ${res.status}`;
-    try {
-      const body = (await res.json()) as { detail?: unknown };
-      if (typeof body.detail === 'string') detail = body.detail;
-    } catch {
-      // No JSON body: keep the status
-    }
-    throw new Error(detail);
+  if (!res.ok) throw await refusal(res);
+  return (await res.json()) as T;
+}
+
+/** A POST whose refusal says why: the server's message when it gives one (busy, Demucs missing...) */
+async function postExplained<T>(path: string, body?: unknown, timeoutMs = 15000): Promise<T> {
+  const res = await fetch(serverUrl(path), {
+    method: 'POST',
+    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!res.ok) throw await refusal(res);
+  return (await res.json()) as T;
+}
+
+/** The server's message for a refused request (its detail), or else its HTTP status */
+async function refusal(res: Response): Promise<Error> {
+  let detail = `HTTP ${res.status}`;
+  try {
+    const body = (await res.json()) as { detail?: unknown };
+    if (typeof body.detail === 'string') detail = body.detail;
+  } catch {
+    // No JSON body: keep the status
   }
-  return (await res.json()) as ClipInfo;
+  return new Error(detail);
 }
 
 /**

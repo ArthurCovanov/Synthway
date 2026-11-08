@@ -5,13 +5,14 @@ import { AppearanceProvider } from './lib/appearance';
 import { migrateInstruments, PRESET_INSTRUMENTS, type Instrument } from './lib/instruments';
 import { usePersistentState } from './lib/storage';
 import { SynthServerProvider } from './lib/SynthServer';
+import { AINalyzer } from './screens/AINalyzer';
 import { Analyzer } from './screens/Analyzer';
 import { Composer } from './screens/Composer';
 import { InstrumentCreator } from './screens/InstrumentCreator';
 import { Settings } from './screens/Settings';
 import styles from './App.module.css';
 
-const SCREENS: ScreenId[] = ['instruments', 'composer', 'analyzer', 'settings'];
+const SCREENS: ScreenId[] = ['instruments', 'composer', 'analyzer', 'ainalyzer', 'settings'];
 
 /** The current screen lives in the URL hash, so that a reload keeps it */
 function screenFromHash(): ScreenId {
@@ -76,6 +77,7 @@ export function App() {
                 }}
               />
             )}
+            {screen === 'ainalyzer' && <AINalyzer onOpenAnalyzer={() => navigate('analyzer')} />}
             {screen === 'settings' && <Settings />}
           </main>
         </div>
