@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type PointerEvent, type WheelEvent } from 'react';
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { frequencyToNote } from '../lib/music';
 import { useElementSize } from '../lib/useElementSize';
 import type { ClipInfo, ClipWaveformPart } from '../types';
@@ -19,6 +19,12 @@ const WAVEFORM_THROTTLE_MS = 50;
 const WAVEFORM_MAX_PARTS = 8192;
 /** Samples get a dot once they are this far apart */
 const SAMPLE_DOT_SPACING_PX = 6;
+/** Zoom of one notch of a mouse wheel (100 px); a touchpad's small steps zoom as much over the same distance */
+const WHEEL_NOTCH_ZOOM = 1.25;
+const WHEEL_NOTCH_PX = 100;
+/** A wheel event counted in lines or pages (Firefox), in pixels */
+const WHEEL_LINE_PX = 33;
+const WHEEL_PAGE_PX = 800;
 
 /** A zone of a clip, in seconds (start < end) */
 export interface ClipSelection {
@@ -53,7 +59,9 @@ function timeStep(duration: number, width: number): number {
  * choose the moment analyzed, arrows to nudge it (Shift: ten times more).
  * Dragging selects a zone with onSelect (a click or Escape removes it), and
  * moves the cursor without it. zoomable: it can also zoom and pan
- * horizontally, and while playing, the view follows the cursor. time null: no
+ * horizontally (the wheel, plain or with Ctrl, zooms around the pointer: it
+ * neither scrolls the page nor zooms the browser; a middle-button drag pans),
+ * and while playing, the view follows the cursor. time null: no
  * cursor yet. loadWaveform: asks the server for the waveform of the part in
  * view, drawn like an audio editor does (lowest to highest sample of each
  * pixel column, then the samples themselves); without it, or until it comes,
@@ -258,18 +266,34 @@ export function ClipWaveform({
     return Math.max(0, Math.min(clip.duration, seconds));
   };
 
-  const handleWheel = (event: WheelEvent<SVGSVGElement>) => {
-    // No preventDefault: React's wheel listeners are passive. App stops Alt + wheel from scrolling the page
-    if (!zoomable || !event.altKey) return;
-    const rect = event.currentTarget.getBoundingClientRect();
+  /** The wheel zooms around the pointer, plain or with Ctrl (a touchpad pinch is a Ctrl + wheel) */
+  const handleWheel = (event: WheelEvent) => {
+    if (!zoomable || event.deltaY === 0) return;
+    // Taken: the page does not scroll, the browser does not zoom (the listener is not passive)
+    event.preventDefault();
+    const pixels = event.deltaY * (event.deltaMode === 1 ? WHEEL_LINE_PX : event.deltaMode === 2 ? WHEEL_PAGE_PX : 1);
+    const factor = Math.max(0.5, Math.min(2, WHEEL_NOTCH_ZOOM ** (-pixels / WHEEL_NOTCH_PX)));
+    const rect = svgRef.current?.getBoundingClientRect();
+    if (!rect) return;
     const fraction = Math.max(0, Math.min(1, (event.clientX - rect.left - PAD.left) / plotW));
     const anchorTime = viewStart + fraction * viewDuration;
-    const nextZoom = Math.max(1, Math.min(maxZoom, zoom * (event.deltaY < 0 ? 1.25 : 0.8)));
+    const nextZoom = Math.max(1, Math.min(maxZoom, zoom * factor));
     const nextDuration = clip.duration / nextZoom;
     const nextStart = Math.max(0, Math.min(clip.duration - nextDuration, anchorTime - fraction * nextDuration));
     setZoom(nextZoom);
     setViewStart(nextStart);
   };
+  // React's wheel listeners are passive and cannot stop the page: a native one, calling the latest handler
+  const wheelRef = useRef(handleWheel);
+  wheelRef.current = handleWheel;
+  const svgShown = width > 0;
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svgShown || !svg) return undefined;
+    const listener = (event: WheelEvent) => wheelRef.current(event);
+    svg.addEventListener('wheel', listener, { passive: false });
+    return () => svg.removeEventListener('wheel', listener);
+  }, [svgShown]);
 
   const onPointerDown = (event: PointerEvent<SVGSVGElement>) => {
     if (zoomable && event.button === 1) {
@@ -358,7 +382,7 @@ export function ClipWaveform({
 
   return (
     <div ref={boxRef} className={styles.box}>
-      {zoomable && <span className={styles.zoomIndicator} title="Alt + roulette : zoomer autour du pointeur, jusqu’aux échantillons · clic milieu maintenu : déplacer l’affichage">×{zoomText} · Alt + roulette</span>}
+      {zoomable && <span className={styles.zoomIndicator} title="Roulette (ou Ctrl + roulette) : zoomer autour du pointeur, jusqu’aux échantillons · clic milieu maintenu : déplacer l’affichage">×{zoomText} · roulette</span>}
       {width > 0 && (
         <svg
           ref={svgRef}
@@ -379,8 +403,7 @@ export function ClipWaveform({
           onPointerUp={finishPointer}
           onPointerCancel={finishPointer}
           onKeyDown={onKeyDown}
-          onWheel={handleWheel}
-          aria-description={zoomable ? `Zoom ×${zoomText}. Alt plus roulette pour zoomer, clic milieu maintenu pour déplacer.` : undefined}
+          aria-description={zoomable ? `Zoom ×${zoomText}. Roulette pour zoomer, clic milieu maintenu pour déplacer.` : undefined}
         >
           <defs>
             <clipPath id={clipPathId}>

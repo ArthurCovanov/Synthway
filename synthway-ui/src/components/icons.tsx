@@ -55,8 +55,8 @@ export function AnalyzerIcon(props: IconProps) {
   );
 }
 
-/** AI-nalyzer: a waveform splitting into its stems */
-export function AINalyzerIcon(props: IconProps) {
+/** Decomposer: a waveform splitting into its stems */
+export function DecomposerIcon(props: IconProps) {
   return (
     <svg {...iconProps(props)}>
       <path d="M2 12h1.5l1.6-4 2.3 8 1.6-4H11" />

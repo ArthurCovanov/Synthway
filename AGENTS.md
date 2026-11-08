@@ -12,7 +12,7 @@ Synthway est un synthétiseur audio en trois parties :
 | `synthway-core/` | Moteur bas niveau : périphériques, synthèse, lecture, acquisition, MIDI | C11 + miniaudio (audio) + RtMidi (MIDI, C++), compilé en bibliothèque partagée | Premier jet |
 | `synthway-server/` | API et ordonnancement, pilote le core | Python, FastAPI, pont `ctypes` | Premier jet |
 | `synthway-ui/` | Interface de contrôle du serveur | React, TypeScript, Vite | Premier jet |
-| `synthway-demucs/` | Facultatif : séparation de sources de l'onglet AI-nalyzer, lancée par le serveur dans un processus à part | Demucs v4 (Python, PyTorch), environnement uv à lui | Essai local |
+| `synthway-demucs/` | Facultatif : séparation de sources de l'onglet Decomposer, lancée par le serveur dans un processus à part | Demucs v4 (Python, PyTorch), environnement uv à lui | Essai local |
 
 - **Vue d'ensemble et démarrage :** `README.md` à la racine.
 - **Règles d'architecture par couche :** section « Guide pour les Développeurs Humains et Agents IA » du `README.md` racine. Lis-la avant de modifier une couche.

@@ -881,7 +881,8 @@ static void test_envelopes(void) {
         const synthway_envelope_t* e = &envelopes[k];
         length += snprintf(detail + length, sizeof(detail) - length, " h%d %.2f: %.0f ms, %.2f s (%.2f), %.2f;",
                            n, a.partials[k].amplitude, 1000.0 * e->attack_s, e->decay_s, 3.0 / n, e->sustain_level);
-        ok = ok && e->curve == SYNTHWAY_ENVELOPE_EXPONENTIAL && e->sustain_level == 0.0f
+        ok = ok && e->curve == SYNTHWAY_ENVELOPE_EXPONENTIAL && e->release_curve == SYNTHWAY_ENVELOPE_EXPONENTIAL
+             && e->sustain_level == 0.0f
              && fabs(e->decay_s - 3.0 / n) < 0.2 * 3.0 / n && fabs(e->release_s - fmin(e->decay_s, 0.3)) < 1e-6
              && e->attack_s < 0.03f && fabs(a.partials[k].amplitude - 1.0 / n) < 0.15 / n;
     }
@@ -922,6 +923,276 @@ static void test_envelopes(void) {
           "envelopes: invalid calls refused", "no room for the envelopes, reversed zone");
     synthway_analyzer_destroy(clip);
     free(settling);
+}
+
+/* Adds a sawtooth-like voice (8 harmonics in 1/n) at frequency, scaled by gain, to x from frame from to frame to */
+static void add_voice(float* x, float frequency, float gain, uint32_t from, uint32_t to) {
+    float ratios[8], amplitudes[8];
+    for (int n = 1; n <= 8; ++n) {
+        ratios[n - 1] = (float)n;
+        amplitudes[n - 1] = 0.5f / n;
+    }
+    const synthway_timbre_t timbre = sine_timbre(8, ratios, amplitudes);
+    float* voice = render_note(frequency, SYNTHWAY_WAVEFORM_SINE, &timbre, SAMPLE_RATE, to - from);
+    for (uint32_t i = from; i < to; ++i) {
+        x[i] += gain * voice[i - from];
+    }
+    free(voice);
+}
+
+/* The span of the note nearest frequency (within a semitone), or NULL */
+static const synthway_note_span_t* span_near(const synthway_note_span_t* spans, uint32_t count, double frequency) {
+    for (uint32_t i = 0; i < count; ++i) {
+        if (fabs(cents(spans[i].frequency_hz, frequency)) < 100.0) return &spans[i];
+    }
+    return NULL;
+}
+
+static void test_notes_played_together(void) {
+    /* Bb5 + D6 for 0.3 s, then A5 + D6 for 0.4 s, over a quiet D4: A5 and D6
+       are the 3rd and 4th harmonics of D4, which one note alone would take for
+       the note played */
+    const uint32_t change = (uint32_t)(0.3 * SAMPLE_RATE), frames = (uint32_t)(0.7 * SAMPLE_RATE);
+    float* x = (float*)calloc(frames, sizeof(float));
+    add_voice(x, 932.33f, 1.0f, 0, change);
+    add_voice(x, 880.0f, 1.0f, change, frames);
+    add_voice(x, 1174.66f, 0.8f, 0, frames);
+    add_voice(x, 293.66f, 0.25f, 0, frames);
+    synthway_analyzer_t* clip = clip_of(x, frames);
+
+    synthway_note_span_t spans[8];
+    uint32_t count = 0;
+    const synthway_result_t result = synthway_analyzer_find_notes(clip, 0.0, 0.7, SYNTHWAY_ANALYZER_WINDOW_AUTO, spans, 8, &count);
+    char detail[400];
+    int length = snprintf(detail, sizeof(detail), "%u notes:", count);
+    for (uint32_t i = 0; i < count && length < (int)sizeof(detail); ++i) {
+        length += snprintf(detail + length, sizeof(detail) - length, " %.1f Hz %.2f-%.2f s (%.2f);",
+                           spans[i].frequency_hz, spans[i].start_s, spans[i].end_s, spans[i].strength);
+    }
+    const synthway_note_span_t* bb5 = span_near(spans, count, 932.33);
+    const synthway_note_span_t* a5 = span_near(spans, count, 880.0);
+    const synthway_note_span_t* d6 = span_near(spans, count, 1174.66);
+    const synthway_note_span_t* d4 = span_near(spans, count, 293.66);
+    check(result == SYNTHWAY_OK && count <= 4 && bb5 && a5 && d6
+              && fabs(cents(bb5->frequency_hz, 932.33)) < 10.0 && fabs(cents(a5->frequency_hz, 880.0)) < 10.0
+              && fabs(cents(d6->frequency_hz, 1174.66)) < 10.0
+              && bb5->start_s < 0.05 && fabs(bb5->end_s - 0.3) < 0.1 && fabs(a5->start_s - 0.3) < 0.1 && a5->end_s > 0.65
+              && d6->start_s < 0.05 && d6->end_s > 0.65 && (!d4 || d4->strength < 0.6),
+          "notes: two notes at once and a change of note, not their missing fundamental", detail);
+
+    uint32_t none = 0;
+    check(synthway_analyzer_find_notes(clip, 0.5, 0.4, SYNTHWAY_ANALYZER_WINDOW_AUTO, spans, 8, &none) == SYNTHWAY_INVALID_PARAM
+              && synthway_analyzer_find_notes(clip, 0.0, 0.7, SYNTHWAY_ANALYZER_WINDOW_AUTO, NULL, 8, &none) == SYNTHWAY_INVALID_PARAM,
+          "notes: an empty zone or no room is refused", "SYNTHWAY_INVALID_PARAM");
+    synthway_analyzer_destroy(clip);
+    free(x);
+}
+
+/* A held note through the engine's low-pass (cutoff_hz 20000: none), as a clip */
+static synthway_analyzer_t* filtered_clip(
+    float frequency,
+    synthway_waveform_t waveform,
+    const synthway_timbre_t* timbre,
+    float cutoff_hz,
+    float resonance,
+    uint32_t frames
+) {
+    synthway_engine_t* engine = synthway_engine_create();
+    synthway_engine_config_t config;
+    memset(&config, 0, sizeof(config));
+    config.sample_rate = SAMPLE_RATE;
+    config.channels = 1;
+    float* samples = (float*)malloc(sizeof(float) * frames);
+    if (!engine || !samples || synthway_engine_init_offline(engine, &config) != SYNTHWAY_OK) {
+        fprintf(stderr, "[!] Cannot create an offline engine\n");
+        exit(2);
+    }
+    synthway_engine_set_waveform(engine, waveform);
+    synthway_engine_set_frequency(engine, frequency);
+    synthway_engine_set_volume(engine, 0.5f);
+    synthway_engine_set_filter(engine, 20.0f, cutoff_hz, resonance);
+    if (timbre) {
+        synthway_engine_set_timbre(engine, timbre);
+    }
+    synthway_engine_set_tone_enabled(engine, true);
+    if (synthway_engine_render(engine, samples, frames) != SYNTHWAY_OK) {
+        fprintf(stderr, "[!] Rendering failed\n");
+        exit(2);
+    }
+    synthway_engine_destroy(engine);
+    synthway_analyzer_t* clip = clip_of(samples, frames);
+    free(samples);
+    return clip;
+}
+
+static const char* SHAPE_NAMES[] = { "sine", "square", "triangle", "sawtooth", "pulse" };
+
+/* The fits of a zone, described: "sawtooth 0.8 dB (3175 Hz), square 9.1 dB…" */
+static int describe_fit(char* detail, size_t size, const synthway_waveform_fit_t* fit) {
+    int length = snprintf(detail, size, "%u moments, %u harmonics, even %.1f dB (%u), slope %.1f dB/oct:",
+                          fit->moment_count, fit->harmonic_count, fit->even_db, fit->even_count, fit->slope_db_per_octave);
+    for (uint32_t i = 0; i < fit->fit_count && length < (int)size; ++i) {
+        const synthway_shape_fit_t* f = &fit->fits[i];
+        length += snprintf(detail + length, size - length, " %s %.1f dB", SHAPE_NAMES[f->shape % SYNTHWAY_SHAPE_COUNT], f->error_db);
+        if (f->shape == SYNTHWAY_SHAPE_PULSE && length < (int)size) {
+            length += snprintf(detail + length, size - length, " (duty %.3f)", f->duty);
+        }
+        if (f->cutoff_hz > 0.0f && length < (int)size) {
+            length += snprintf(detail + length, size - length, " (%.0f Hz, res %.2f)", f->cutoff_hz, f->resonance);
+        }
+        if (length < (int)size) length += snprintf(detail + length, size - length, ";");
+    }
+    return length;
+}
+
+/* The fit of the shape given, or NULL */
+static const synthway_shape_fit_t* fit_of(const synthway_waveform_fit_t* fit, uint32_t shape) {
+    for (uint32_t i = 0; i < fit->fit_count; ++i) {
+        if (fit->fits[i].shape == shape) return &fit->fits[i];
+    }
+    return NULL;
+}
+
+static void test_waveform_fit(void) {
+    const uint32_t frames = SAMPLE_RATE;
+    char detail[600];
+    synthway_waveform_fit_t fit;
+
+    /* A sawtooth through the engine's low-pass at 3 kHz: a sawtooth, filtered near 3 kHz */
+    synthway_analyzer_t* clip = filtered_clip(220.0f, SYNTHWAY_WAVEFORM_SAWTOOTH, NULL, 3000.0f, 0.0f, frames);
+    synthway_result_t res = synthway_analyzer_fit_waveform(clip, 0.2, 0.8, SYNTHWAY_ANALYZER_WINDOW_AUTO, 0.0f, &fit);
+    describe_fit(detail, sizeof(detail), &fit);
+    const synthway_shape_fit_t* square = fit_of(&fit, SYNTHWAY_SHAPE_SQUARE);
+    check(res == SYNTHWAY_OK && fit.fit_count == SYNTHWAY_SHAPE_COUNT && fabs(cents(fit.frequency_hz, 220.0)) < 10.0
+              && fit.fits[0].shape == SYNTHWAY_SHAPE_SAWTOOTH && fit.fits[0].cutoff_hz > 2100.0f && fit.fits[0].cutoff_hz < 4300.0f
+              && fit.fits[0].error_db < 2.0f && square && square->error_db > fit.fits[0].error_db + 3.0f
+              && fit.even_count >= 4 && fit.even_db > -4.0f,
+          "waveform: a filtered sawtooth, and its cutoff", detail);
+    synthway_analyzer_destroy(clip);
+
+    /* A square, unfiltered: odd harmonics only */
+    clip = filtered_clip(220.0f, SYNTHWAY_WAVEFORM_SQUARE, NULL, 20000.0f, 0.0f, frames);
+    res = synthway_analyzer_fit_waveform(clip, 0.2, 0.8, SYNTHWAY_ANALYZER_WINDOW_AUTO, 0.0f, &fit);
+    describe_fit(detail, sizeof(detail), &fit);
+    check(res == SYNTHWAY_OK && fit.fit_count == SYNTHWAY_SHAPE_COUNT && fit.fits[0].shape == SYNTHWAY_SHAPE_SQUARE
+              && (fit.fits[0].cutoff_hz == 0.0f || fit.fits[0].cutoff_hz > 8000.0f) && fit.even_db < -20.0f
+              && fit.slope_db_per_octave < -4.0f && fit.slope_db_per_octave > -8.0f,
+          "waveform: a square, odd harmonics only", detail);
+    synthway_analyzer_destroy(clip);
+
+    /* A triangle: odd harmonics, falling twice as fast */
+    clip = filtered_clip(220.0f, SYNTHWAY_WAVEFORM_TRIANGLE, NULL, 20000.0f, 0.0f, frames);
+    res = synthway_analyzer_fit_waveform(clip, 0.2, 0.8, SYNTHWAY_ANALYZER_WINDOW_AUTO, 0.0f, &fit);
+    describe_fit(detail, sizeof(detail), &fit);
+    check(res == SYNTHWAY_OK && fit.fit_count == SYNTHWAY_SHAPE_COUNT && fit.fits[0].shape == SYNTHWAY_SHAPE_TRIANGLE
+              && fit.slope_db_per_octave < -10.0f,
+          "waveform: a triangle", detail);
+    synthway_analyzer_destroy(clip);
+
+    /* A pulse high a quarter of the period, from its harmonics: a gap every 4th */
+    {
+        float ratios[48], amplitudes[48];
+        for (int k = 1; k <= 48; ++k) {
+            ratios[k - 1] = (float)k;
+            amplitudes[k - 1] = (float)(0.6 * fabs(sin(3.14159265358979 * k * 0.25)) / k);
+            if (amplitudes[k - 1] < 1e-4f) amplitudes[k - 1] = 0.0f;
+        }
+        const synthway_timbre_t timbre = sine_timbre(48, ratios, amplitudes);
+        clip = filtered_clip(220.0f, SYNTHWAY_WAVEFORM_SINE, &timbre, 20000.0f, 0.0f, frames);
+    }
+    res = synthway_analyzer_fit_waveform(clip, 0.2, 0.8, SYNTHWAY_ANALYZER_WINDOW_AUTO, 0.0f, &fit);
+    describe_fit(detail, sizeof(detail), &fit);
+    check(res == SYNTHWAY_OK && fit.fit_count == SYNTHWAY_SHAPE_COUNT && fit.fits[0].shape == SYNTHWAY_SHAPE_PULSE
+              && fabs(fit.fits[0].duty - 0.25f) < 0.03f && fit.harmonic_state[3] == SYNTHWAY_HARMONIC_FAINT,
+          "waveform: a pulse, and its duty", detail);
+    synthway_analyzer_destroy(clip);
+
+    /* A sine */
+    clip = filtered_clip(440.0f, SYNTHWAY_WAVEFORM_SINE, NULL, 20000.0f, 0.0f, frames);
+    res = synthway_analyzer_fit_waveform(clip, 0.2, 0.8, SYNTHWAY_ANALYZER_WINDOW_AUTO, 0.0f, &fit);
+    describe_fit(detail, sizeof(detail), &fit);
+    check(res == SYNTHWAY_OK && fit.fit_count == SYNTHWAY_SHAPE_COUNT && fit.fits[0].shape == SYNTHWAY_SHAPE_SINE,
+          "waveform: a sine", detail);
+    synthway_analyzer_destroy(clip);
+
+    /* A5 + D6 played together, two sawtooths up to 20 kHz: A5's 4th harmonic
+       is D6's 3rd, left out; on their missing fundamental D4, no note heard
+       alone, no fit */
+    {
+        const uint32_t length = (uint32_t)(0.7 * SAMPLE_RATE);
+        float* x = (float*)calloc(length, sizeof(float));
+        static const float voices[2][2] = { { 880.0f, 1.0f }, { 1174.66f, 0.8f } };
+        for (int v = 0; v < 2; ++v) {
+            float ratios[SYNTHWAY_MAX_PARTIALS], amplitudes[SYNTHWAY_MAX_PARTIALS];
+            uint32_t count = 0;
+            for (uint32_t k = 1; k * voices[v][0] < 20000.0f && count < SYNTHWAY_MAX_PARTIALS; ++k, ++count) {
+                ratios[count] = (float)k;
+                amplitudes[count] = 0.3f / k;
+            }
+            const synthway_timbre_t timbre = sine_timbre(count, ratios, amplitudes);
+            float* voice = render_note(voices[v][0], SYNTHWAY_WAVEFORM_SINE, &timbre, SAMPLE_RATE, length);
+            for (uint32_t i = 0; i < length; ++i) x[i] += voices[v][1] * voice[i];
+            free(voice);
+        }
+        clip = clip_of(x, length);
+        free(x);
+    }
+    res = synthway_analyzer_fit_waveform(clip, 0.1, 0.6, SYNTHWAY_ANALYZER_WINDOW_AUTO, 880.0f, &fit);
+    int length = describe_fit(detail, sizeof(detail), &fit);
+    if (length < (int)sizeof(detail)) {
+        snprintf(detail + length, sizeof(detail) - length, " states 1-4: %u %u %u %u", fit.harmonic_state[0],
+                 fit.harmonic_state[1], fit.harmonic_state[2], fit.harmonic_state[3]);
+    }
+    const int chord_ok = res == SYNTHWAY_OK && fit.fit_count == SYNTHWAY_SHAPE_COUNT && fit.moment_count > 0
+                         && fit.harmonic_state[3] == SYNTHWAY_HARMONIC_SHARED && fit.harmonic_state[1] == SYNTHWAY_HARMONIC_HEARD
+                         && fit.fits[0].shape == SYNTHWAY_SHAPE_SAWTOOTH;
+    synthway_waveform_fit_t none;
+    res = synthway_analyzer_fit_waveform(clip, 0.1, 0.6, SYNTHWAY_ANALYZER_WINDOW_AUTO, 293.66f, &none);
+    if (length < (int)sizeof(detail)) {
+        snprintf(detail + strlen(detail), sizeof(detail) - strlen(detail), "; on D4: %u moments, %u fits",
+                 none.moment_count, none.fit_count);
+    }
+    check(chord_ok && res == SYNTHWAY_OK && none.moment_count == 0 && none.fit_count == 0,
+          "waveform: one note of a chord, its shared harmonic left out; none on their missing fundamental", detail);
+
+    synthway_analyzer_destroy(clip);
+
+    /* A5 over a quiet D4, whose harmonics hold all of A5's: they stay A5's */
+    {
+        const uint32_t length = (uint32_t)(0.7 * SAMPLE_RATE);
+        float* x = (float*)calloc(length, sizeof(float));
+        static const float voices[2][2] = { { 880.0f, 1.0f }, { 293.66f, 0.25f } };
+        for (int v = 0; v < 2; ++v) {
+            float ratios[SYNTHWAY_MAX_PARTIALS], amplitudes[SYNTHWAY_MAX_PARTIALS];
+            uint32_t count = 0;
+            for (uint32_t k = 1; k * voices[v][0] < 20000.0f && count < SYNTHWAY_MAX_PARTIALS; ++k, ++count) {
+                ratios[count] = (float)k;
+                amplitudes[count] = 0.3f / k;
+            }
+            const synthway_timbre_t timbre = sine_timbre(count, ratios, amplitudes);
+            float* voice = render_note(voices[v][0], SYNTHWAY_WAVEFORM_SINE, &timbre, SAMPLE_RATE, length);
+            for (uint32_t i = 0; i < length; ++i) x[i] += voices[v][1] * voice[i];
+            free(voice);
+        }
+        clip = clip_of(x, length);
+        free(x);
+    }
+    res = synthway_analyzer_fit_waveform(clip, 0.1, 0.6, SYNTHWAY_ANALYZER_WINDOW_AUTO, 880.0f, &fit);
+    length = describe_fit(detail, sizeof(detail), &fit);
+    if (length < (int)sizeof(detail)) {
+        snprintf(detail + length, sizeof(detail) - length, " states 1-4: %u %u %u %u", fit.harmonic_state[0],
+                 fit.harmonic_state[1], fit.harmonic_state[2], fit.harmonic_state[3]);
+    }
+    check(res == SYNTHWAY_OK && fit.fit_count == SYNTHWAY_SHAPE_COUNT && fit.moment_count > 0
+              && fit.harmonic_state[0] == SYNTHWAY_HARMONIC_HEARD && fit.harmonic_state[1] == SYNTHWAY_HARMONIC_HEARD
+              && fit.harmonic_state[2] == SYNTHWAY_HARMONIC_HEARD && fit.fits[0].shape == SYNTHWAY_SHAPE_SAWTOOTH,
+          "waveform: a quiet note under the note does not take its harmonics", detail);
+
+    check(synthway_analyzer_fit_waveform(clip, 0.1, 0.6, SYNTHWAY_ANALYZER_WINDOW_AUTO, 0.0f, NULL) == SYNTHWAY_INVALID_PARAM
+              && synthway_analyzer_fit_waveform(clip, 0.6, 0.1, SYNTHWAY_ANALYZER_WINDOW_AUTO, 0.0f, &fit) == SYNTHWAY_INVALID_PARAM
+              && synthway_analyzer_fit_waveform(NULL, 0.1, 0.6, SYNTHWAY_ANALYZER_WINDOW_AUTO, 0.0f, &fit) == SYNTHWAY_INVALID_PARAM,
+          "waveform: no room, an empty zone or no analyzer is refused", "SYNTHWAY_INVALID_PARAM");
+    synthway_analyzer_destroy(clip);
 }
 
 static void test_guards(void) {
@@ -979,6 +1250,8 @@ int main(int argc, char* argv[]) {
     test_reference_note();
     test_one_partial_per_harmonic();
     test_envelopes();
+    test_notes_played_together();
+    test_waveform_fit();
     test_guards();
 
     synthway_analyzer_destroy(analyzer);

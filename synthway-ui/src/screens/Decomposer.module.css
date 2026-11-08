@@ -225,3 +225,8 @@
   stroke: var(--neon-white);
   stroke-width: 1.5;
 }
+
+/* The cursor on a track that is not the one loaded: where it would start */
+.waveCursor[data-other] {
+  stroke-opacity: 0.35;
+}

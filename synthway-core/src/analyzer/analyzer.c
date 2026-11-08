@@ -1,5 +1,8 @@
 #include "synthway/synthway.h"
 #include "analysis/analysis.h"
+#include "analysis/notes.h"
+#include "analysis/spectrum.h"
+#include "analysis/waveform.h"
 #include "io/audio_file.h"
 #include "io/audio_input.h"
 #include "io/wav_file.h"
@@ -465,6 +468,151 @@ SYNTHWAY_API synthway_result_t synthway_analyzer_analyze_clip_range(
     return result;
 }
 
+/* The moments of synthway_analyzer_analyze_clip_range in a zone, for windows
+   of n frames: one around its middle when it fits in a window, else evenly
+   spread. Returns their count; out_first_centre gets the first one's centre
+   (in frames), out_step the frames between two. */
+static uint32_t sw_analyzer_zone_moments(
+    double start_s,
+    double end_s,
+    uint32_t n,
+    uint32_t rate,
+    double* out_first_centre,
+    double* out_step
+) {
+    const double first_centre = start_s * rate + n / 2.0;
+    const double last_centre = end_s * rate - n / 2.0;
+    if (last_centre <= first_centre + 1.0) {
+        *out_first_centre = (start_s + end_s) / 2.0 * rate;
+        *out_step = 0.0;
+        return 1;
+    }
+    double gaps = floor((last_centre - first_centre) / (MIN_ZONE_STEP_SECONDS * rate));
+    if (gaps < 1.0) gaps = 1.0;
+    if (gaps > MAX_ZONE_MOMENTS - 1) gaps = MAX_ZONE_MOMENTS - 1;
+    *out_first_centre = first_centre;
+    *out_step = (last_centre - first_centre) / gaps;
+    return (uint32_t)gaps + 1;
+}
+
+/* Notes looked for, from a low B0 to C8 */
+#define NOTES_MIN_HZ 30.0f
+#define NOTES_MAX_HZ 4200.0f
+/* A note missing at up to this many moments in a row goes on; one heard for
+   less than NOTES_MIN_SECONDS is dropped (unless the zone is shorter) */
+#define NOTES_MAX_GAP_MOMENTS 3
+#define NOTES_MIN_SECONDS 0.06
+
+/* A note followed from moment to moment */
+typedef struct sw_note_track {
+    float midi;                /* of its first moment */
+    double log2_sum;           /* of its frequencies, for their geometric mean */
+    double salience_sum;
+    uint32_t moments;
+    uint32_t first, last;      /* moment indices */
+} sw_note_track;
+
+static int sw_compare_spans(const void* a, const void* b) {
+    const synthway_note_span_t* x = (const synthway_note_span_t*)a;
+    const synthway_note_span_t* y = (const synthway_note_span_t*)b;
+    if (x->start_s != y->start_s) return x->start_s < y->start_s ? -1 : 1;
+    return (x->frequency_hz > y->frequency_hz) - (x->frequency_hz < y->frequency_hz);
+}
+
+SYNTHWAY_API synthway_result_t synthway_analyzer_find_notes(
+    synthway_analyzer_t* analyzer,
+    double start_s,
+    double end_s,
+    double window_s,
+    synthway_note_span_t* out_notes,
+    uint32_t capacity,
+    uint32_t* out_count
+) {
+    if (!analyzer || !out_notes || !out_count || !analyzer->clip.samples || !(end_s > start_s)
+        || !(window_s == SYNTHWAY_ANALYZER_WINDOW_AUTO
+             || (window_s >= SYNTHWAY_ANALYZER_MIN_WINDOW_S && window_s <= SYNTHWAY_ANALYZER_MAX_WINDOW_S))) {
+        return SYNTHWAY_INVALID_PARAM;
+    }
+    *out_count = 0;
+    const sw_audio_clip* clip = &analyzer->clip;
+    const uint32_t rate = clip->sample_rate;
+    const uint32_t n = window_s == SYNTHWAY_ANALYZER_WINDOW_AUTO ? sw_analysis_window_frames(rate)
+                                                                 : sw_analysis_frames_for(window_s, rate);
+    double first_centre, step;
+    const uint32_t count = sw_analyzer_zone_moments(start_s, end_s, n, rate, &first_centre, &step);
+
+    sw_note* notes = (sw_note*)malloc(sizeof(sw_note) * count * SYNTHWAY_ANALYZER_MAX_NOTES_AT_ONCE);
+    uint32_t* found = (uint32_t*)malloc(sizeof(uint32_t) * count);
+    sw_note_track* tracks = (sw_note_track*)malloc(sizeof(sw_note_track) * count * SYNTHWAY_ANALYZER_MAX_NOTES_AT_ONCE);
+    synthway_note_span_t* spans = (synthway_note_span_t*)malloc(sizeof(synthway_note_span_t) * count * SYNTHWAY_ANALYZER_MAX_NOTES_AT_ONCE);
+    if (!notes || !found || !tracks || !spans) {
+        free(notes);
+        free(found);
+        free(tracks);
+        free(spans);
+        return SYNTHWAY_ERROR;
+    }
+
+    synthway_analysis_t moment;
+    uint32_t track_count = 0;
+    for (uint32_t i = 0; i < count; ++i) {
+        sw_analyzer_fill_clip_window(analyzer, clip, (int64_t)(first_centre + step * i), n);
+        sw_analysis_run(analyzer->window, n, rate, analyzer->noise_gate_db, &analyzer->workspace, &moment);
+        sw_note* at = notes + (size_t)i * SYNTHWAY_ANALYZER_MAX_NOTES_AT_ONCE;
+        found[i] = sw_notes_find(&moment, NOTES_MIN_HZ, NOTES_MAX_HZ, at, SYNTHWAY_ANALYZER_MAX_NOTES_AT_ONCE);
+        /* Each note continues a track on its semitone heard a few moments ago, or starts one */
+        for (uint32_t k = 0; k < found[i]; ++k) {
+            const float midi = 69.0f + 12.0f * log2f(at[k].frequency_hz / 440.0f);
+            sw_note_track* track = NULL;
+            for (uint32_t t = 0; t < track_count && !track; ++t) {
+                if (fabsf(tracks[t].midi - midi) < 0.5f && tracks[t].last < i && tracks[t].last + NOTES_MAX_GAP_MOMENTS + 1 >= i) {
+                    track = &tracks[t];
+                }
+            }
+            if (!track) {
+                track = &tracks[track_count++];
+                memset(track, 0, sizeof(*track));
+                track->midi = midi;
+                track->first = i;
+            }
+            track->log2_sum += log2((double)at[k].frequency_hz);
+            track->salience_sum += at[k].salience;
+            track->moments++;
+            track->last = i;
+        }
+    }
+
+    /* Tracks heard long enough become spans; strengths relative to the strongest */
+    uint32_t min_moments = step > 0.0 ? (uint32_t)ceil(NOTES_MIN_SECONDS * rate / step) : 1;
+    if (min_moments > count) min_moments = count;
+    double strongest = 0.0;
+    for (uint32_t t = 0; t < track_count; ++t) {
+        if (tracks[t].moments >= min_moments && tracks[t].salience_sum / tracks[t].moments > strongest) {
+            strongest = tracks[t].salience_sum / tracks[t].moments;
+        }
+    }
+    uint32_t span_count = 0;
+    for (uint32_t t = 0; t < track_count; ++t) {
+        const sw_note_track* track = &tracks[t];
+        if (track->moments < min_moments) continue;
+        synthway_note_span_t* span = &spans[span_count++];
+        /* From halfway between moments; the first and last moments reach the zone's ends */
+        span->start_s = track->first == 0 ? start_s : (first_centre + step * (track->first - 0.5)) / rate;
+        span->end_s = track->last == count - 1 ? end_s : (first_centre + step * (track->last + 0.5)) / rate;
+        span->frequency_hz = (float)exp2(track->log2_sum / track->moments);
+        span->strength = strongest > 0.0 ? (float)(track->salience_sum / track->moments / strongest) : 0.0f;
+    }
+    qsort(spans, span_count, sizeof(synthway_note_span_t), sw_compare_spans);
+    *out_count = span_count < capacity ? span_count : capacity;
+    memcpy(out_notes, spans, sizeof(synthway_note_span_t) * *out_count);
+
+    free(notes);
+    free(found);
+    free(tracks);
+    free(spans);
+    return SYNTHWAY_OK;
+}
+
 SYNTHWAY_API synthway_result_t synthway_analyzer_measure_envelopes(
     synthway_analyzer_t* analyzer,
     double start_s,
@@ -544,6 +692,183 @@ SYNTHWAY_API synthway_result_t synthway_analyzer_measure_envelopes(
         out_analysis->partials[k].amplitude = powf(10.0f, (out_analysis->partials[k].amplitude - strongest) / 20.0f);
     }
     free(levels);
+    return SYNTHWAY_OK;
+}
+
+/* Waveform fit: the note is the zone's, its partials kept within
+   FIT_HARMONIC_CENTS of a whole ratio; a note found at a moment within
+   FIT_SAME_NOTE_CENTS of it (or of one of its harmonics) is that note; a harmonic is heard when its median
+   stands FIT_HEARD_DB above its background; one shared with another note at
+   more than two thirds of the moments is left out */
+#define FIT_HARMONIC_CENTS 30.0f
+#define FIT_SAME_NOTE_CENTS 50.0
+#define FIT_HEARD_DB 6.0f
+#define FIT_MIN_CLEAR_SHARE (1.0 / 3.0)
+
+static int sw_compare_floats(const void* a, const void* b) {
+    const float x = *(const float*)a, y = *(const float*)b;
+    return (x > y) - (x < y);
+}
+
+/* Median of n values (they get sorted) */
+static float sw_median_of(float* values, uint32_t n) {
+    qsort(values, n, sizeof(float), sw_compare_floats);
+    return n % 2 ? values[n / 2] : 0.5f * (values[n / 2 - 1] + values[n / 2]);
+}
+
+SYNTHWAY_API synthway_result_t synthway_analyzer_fit_waveform(
+    synthway_analyzer_t* analyzer,
+    double start_s,
+    double end_s,
+    double window_s,
+    float reference_hz,
+    synthway_waveform_fit_t* out_fit
+) {
+    if (!out_fit) {
+        return SYNTHWAY_INVALID_PARAM;
+    }
+    memset(out_fit, 0, sizeof(*out_fit));
+
+    /* The note: the zone's, as its analysis finds it (or the reference given) */
+    synthway_analysis_t* zone = (synthway_analysis_t*)malloc(sizeof(synthway_analysis_t));
+    if (!zone) {
+        return SYNTHWAY_ERROR;
+    }
+    const synthway_result_t found = synthway_analyzer_analyze_clip_range(
+        analyzer, start_s, end_s, window_s, reference_hz, FIT_HARMONIC_CENTS, zone
+    );
+    const float note = found == SYNTHWAY_OK ? zone->frequency_hz : 0.0f;
+    free(zone);
+    if (found != SYNTHWAY_OK) {
+        return found;
+    }
+    const sw_audio_clip* clip = &analyzer->clip;
+    const uint32_t rate = clip->sample_rate;
+    const uint32_t harmonics = sw_waveform_harmonic_count(note, (float)rate);
+    if (!(note > 0.0f) || harmonics == 0) {
+        return SYNTHWAY_OK;
+    }
+    out_fit->frequency_hz = note;
+
+    const uint32_t n = window_s == SYNTHWAY_ANALYZER_WINDOW_AUTO ? sw_analysis_window_frames(rate)
+                                                                 : sw_analysis_frames_for(window_s, rate);
+    const uint32_t fft_size = sw_analysis_fft_size(n);
+    double first_centre, step;
+    const uint32_t count = sw_analyzer_zone_moments(start_s, end_s, n, rate, &first_centre, &step);
+    float* levels = (float*)malloc(sizeof(float) * count * harmonics);
+    float* backgrounds = (float*)malloc(sizeof(float) * count * harmonics);
+    uint8_t* shared = (uint8_t*)malloc(count * harmonics);
+    float* values = (float*)malloc(sizeof(float) * count);
+    if (!levels || !backgrounds || !shared || !values) {
+        free(levels);
+        free(backgrounds);
+        free(shared);
+        free(values);
+        return SYNTHWAY_ERROR;
+    }
+
+    /* At each moment where the note is heard: its harmonics, relative to the
+       strongest one clear of other notes (the level of a note pumped by a
+       kick then counts out) */
+    synthway_analysis_t moment;
+    sw_note notes[SYNTHWAY_ANALYZER_MAX_NOTES_AT_ONCE];
+    float others[SYNTHWAY_ANALYZER_MAX_NOTES_AT_ONCE], strengths[SYNTHWAY_ANALYZER_MAX_NOTES_AT_ONCE];
+    uint32_t used = 0;
+    for (uint32_t i = 0; i < count; ++i) {
+        sw_analyzer_fill_clip_window(analyzer, clip, (int64_t)(first_centre + step * i), n);
+        sw_analysis_run(analyzer->window, n, rate, analyzer->noise_gate_db, &analyzer->workspace, &moment);
+        const uint32_t found_notes = sw_notes_find(&moment, NOTES_MIN_HZ, NOTES_MAX_HZ, notes, SYNTHWAY_ANALYZER_MAX_NOTES_AT_ONCE);
+        int heard = -1;
+        double closest = FIT_SAME_NOTE_CENTS;
+        for (uint32_t k = 0; k < found_notes; ++k) {
+            const double cents = fabs(1200.0 * log2((double)notes[k].frequency_hz / note));
+            if (cents < closest) {
+                closest = cents;
+                heard = (int)k;
+            }
+        }
+        if (heard < 0 || !(notes[heard].salience > 0.0f)) {
+            continue;
+        }
+        const float heard_hz = notes[heard].frequency_hz;
+        /* The other notes, with their strength next to the note's; a weaker one
+           on a harmonic of the note (the strong 3rd of a square reads as a note
+           of its own) cannot be told from it: it is the note */
+        uint32_t other_count = 0;
+        for (uint32_t k = 0; k < found_notes; ++k) {
+            if ((int)k == heard) continue;
+            const float strength = notes[k].salience / notes[heard].salience;
+            const double multiple = floor((double)notes[k].frequency_hz / heard_hz + 0.5);
+            const bool harmonic = multiple >= 2.0 && strength < 1.0f
+                                  && fabs(1200.0 * log2((double)notes[k].frequency_hz / (multiple * heard_hz))) < FIT_SAME_NOTE_CENTS;
+            if (harmonic) continue;
+            others[other_count] = notes[k].frequency_hz;
+            strengths[other_count] = strength;
+            other_count++;
+        }
+        float* level = levels + (size_t)used * harmonics;
+        float* background = backgrounds + (size_t)used * harmonics;
+        uint8_t* mark = shared + (size_t)used * harmonics;
+        sw_waveform_measure(analyzer->workspace.mag_db, n, fft_size, (float)rate, heard_hz, others, strengths,
+                            other_count, harmonics, level, background, mark);
+        float top = SW_SPECTRUM_FLOOR_DB;
+        int clear = 0;
+        for (uint32_t k = 0; k < harmonics; ++k) {
+            if (!mark[k] && level[k] > top) top = level[k];
+            clear |= !mark[k];
+        }
+        if (!clear) {
+            continue;
+        }
+        for (uint32_t k = 0; k < harmonics; ++k) {
+            level[k] -= top;
+            background[k] -= top;
+        }
+        used++;
+    }
+    out_fit->moment_count = used;
+
+    if (used > 0) {
+        /* Each harmonic: the medians of the moments where it is clear of other notes */
+        float strongest = SW_SPECTRUM_FLOOR_DB;
+        for (uint32_t k = 0; k < harmonics; ++k) {
+            uint32_t clear = 0;
+            for (uint32_t m = 0; m < used; ++m) {
+                if (!shared[(size_t)m * harmonics + k]) values[clear++] = levels[(size_t)m * harmonics + k];
+            }
+            const bool kept = clear > 0 && clear >= FIT_MIN_CLEAR_SHARE * used;
+            const uint32_t taken = kept ? clear : used;
+            if (!kept) {
+                for (uint32_t m = 0; m < used; ++m) values[m] = levels[(size_t)m * harmonics + k];
+            }
+            out_fit->harmonic_db[k] = sw_median_of(values, taken);
+            uint32_t b = 0;
+            for (uint32_t m = 0; m < used; ++m) {
+                if (!kept || !shared[(size_t)m * harmonics + k]) values[b++] = backgrounds[(size_t)m * harmonics + k];
+            }
+            out_fit->background_db[k] = sw_median_of(values, b);
+            out_fit->harmonic_state[k] = !kept ? SYNTHWAY_HARMONIC_SHARED
+                                         : out_fit->harmonic_db[k] >= out_fit->background_db[k] + FIT_HEARD_DB ? SYNTHWAY_HARMONIC_HEARD
+                                                                                                               : SYNTHWAY_HARMONIC_FAINT;
+            if (out_fit->harmonic_state[k] == SYNTHWAY_HARMONIC_HEARD && out_fit->harmonic_db[k] > strongest) {
+                strongest = out_fit->harmonic_db[k];
+            }
+        }
+        /* The strongest heard harmonic reads 0 dB */
+        if (strongest > SW_SPECTRUM_FLOOR_DB) {
+            for (uint32_t k = 0; k < harmonics; ++k) {
+                out_fit->harmonic_db[k] -= strongest;
+                out_fit->background_db[k] -= strongest;
+            }
+        }
+        out_fit->harmonic_count = harmonics;
+        sw_waveform_fit((float)rate, out_fit);
+    }
+
+    free(levels);
+    free(backgrounds);
+    free(shared);
+    free(values);
     return SYNTHWAY_OK;
 }
 

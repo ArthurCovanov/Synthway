@@ -90,3 +90,19 @@
   color: #fff;
   opacity: 1;
 }
+
+/* The marked note (the one an analysis was made on): a dot at the top of its key */
+.white[data-marked]::after,
+.black[data-marked]::after {
+  content: '';
+  position: absolute;
+  top: 7px;
+  left: 50%;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  transform: translateX(-50%);
+  background: var(--neon-green);
+  box-shadow: 0 0 8px var(--neon-green);
+  pointer-events: none;
+}

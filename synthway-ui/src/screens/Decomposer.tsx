@@ -4,13 +4,14 @@ import layout from '../components/layout.module.css';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { Badge, Button, Panel, Section, Segmented } from '../components/ui';
 import { api, SEPARATION_SOURCE_URL, separationStemUrl } from '../lib/api';
+import { useSpaceBar } from '../lib/keyboard';
 import { saveJson, usePersistentState } from '../lib/storage';
 import { useSynthServer } from '../lib/SynthServer';
 import type { SeparationModel, SeparationStatus } from '../types';
-import styles from './AINalyzer.module.css';
+import styles from './Decomposer.module.css';
 
 /*
- * AI-nalyzer: decomposes a piece of music into its stems (drums, bass, vocals,
+ * Decomposer: decomposes a piece of music into its stems (drums, bass, vocals,
  * other; guitar and piano with the 6-stem model) with Demucs v4, a neural
  * network run by synthway-server in a process of its own (synthway-demucs/).
  * The piece is sent whole to the server, « Decompose » starts the separation
@@ -88,26 +89,42 @@ function deviceLabel(device: string | null): string {
  * One track plays at a time, in the browser, from the server's file (it
  * answers Range requests, so the browser can start anywhere). A track is a key
  * and its address; the address changes with each new piece or separation, so
- * that no cache serves the previous one.
+ * that no cache serves the previous one. The piece and its stems are in step:
+ * one cursor for all of them, and another track starts where it is. Only from
+ * the end of a track does playback start again at the start.
  */
 function useTrackPlayer(onError: (error: string) => void) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [track, setTrack] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
   const [time, setTime] = useState(0);
+  /** The cursor, for play(): the same as time, without waiting for a render */
+  const timeRef = useRef(0);
+  const endedRef = useRef(false);
+
+  const follow = useCallback((at: number) => {
+    timeRef.current = at;
+    setTime(at);
+  }, []);
 
   useEffect(() => {
     const audio = new Audio();
     audio.preload = 'auto';
     audioRef.current = audio;
     audio.addEventListener('play', () => setPlaying(true));
-    audio.addEventListener('pause', () => setPlaying(false));
-    audio.addEventListener('ended', () => setTime(audio.duration || 0));
+    audio.addEventListener('pause', () => {
+      setPlaying(false);
+      if (audio.getAttribute('src') && !audio.ended) follow(audio.currentTime);
+    });
+    audio.addEventListener('ended', () => {
+      endedRef.current = true;
+      follow(audio.duration || timeRef.current);
+    });
     audio.addEventListener('error', () => {
       if (audio.getAttribute('src')) onError('La lecture a échoué.');
     });
     const tick = window.setInterval(() => {
-      if (!audio.paused) setTime(audio.currentTime);
+      if (!audio.paused) follow(audio.currentTime);
     }, PLAYBACK_FOLLOW_MS);
     return () => {
       window.clearInterval(tick);
@@ -116,30 +133,51 @@ function useTrackPlayer(onError: (error: string) => void) {
       audio.load();
       audioRef.current = null;
     };
-  }, [onError]);
+  }, [onError, follow]);
 
-  /** Plays the track from `from` (where it is, when omitted), or pauses it when it plays and no `from` is given */
+  /** Plays the track from the cursor, or pauses it when it plays */
   const play = useCallback(
-    (key: string, url: string, from?: number) => {
+    (key: string, url: string) => {
       const audio = audioRef.current;
       if (!audio) return;
-      if (key === track && !audio.paused && from === undefined) {
+      if (key === track && !audio.paused) {
         audio.pause();
         return;
       }
+      const start = endedRef.current ? 0 : timeRef.current;
+      endedRef.current = false;
       if (key !== track || !audio.getAttribute('src')) {
         audio.src = url;
         setTrack(key);
       }
-      if (from !== undefined) audio.currentTime = from;
-      else if (audio.ended) audio.currentTime = 0;
-      setTime(audio.currentTime);
+      // Kept by the browser even before the new track has loaded
+      audio.currentTime = start;
+      follow(start);
       audio.play().catch((error: unknown) => {
         // AbortError: paused or replaced before it could start
         if (!(error instanceof DOMException && error.name === 'AbortError')) onError(`Lecture impossible : ${describe(error)}`);
       });
     },
-    [track, onError],
+    [track, onError, follow],
+  );
+
+  /** Selects the track and places the cursor at `at`, without playing: what plays pauses, ▶ or the space bar go on */
+  const select = useCallback(
+    (key: string, url: string, at: number) => {
+      const audio = audioRef.current;
+      if (!audio) return;
+      audio.pause();
+      // A new address drops the 'pause' event still to come
+      setPlaying(false);
+      endedRef.current = false;
+      if (key !== track || !audio.getAttribute('src')) {
+        audio.src = url;
+        setTrack(key);
+      }
+      audio.currentTime = at;
+      follow(at);
+    },
+    [track, follow],
   );
 
   const stop = useCallback(() => {
@@ -149,19 +187,22 @@ function useTrackPlayer(onError: (error: string) => void) {
       audio.removeAttribute('src');
       audio.load();
     }
+    setPlaying(false);
     setTrack(null);
-    setTime(0);
-  }, []);
+    endedRef.current = false;
+    follow(0);
+  }, [follow]);
 
-  return { track, playing, time, play, stop };
+  return { track, playing, time, play, select, stop };
 }
 
-/** A stem's waveform from its peaks, with the playback cursor; a click plays from there */
+/** A stem's waveform from its peaks, with the playback cursor; a click selects the stem and places the cursor there */
 function StemWave({
   peaks,
   scale,
   color,
   cursor,
+  selected,
   label,
   onSeek,
 }: {
@@ -169,8 +210,10 @@ function StemWave({
   /** The highest peak of all the stems: their heights compare */
   scale: number;
   color: string;
-  /** Share of the stem played, null when it is not the track loaded */
+  /** Share of the piece played (the same for all the tracks), null when no track has been played */
   cursor: number | null;
+  /** The track loaded: its cursor is bright, the others' faint */
+  selected: boolean;
   label: string;
   onSeek: (fraction: number) => void;
 }) {
@@ -201,6 +244,7 @@ function StemWave({
         <path
           d={`M${(cursor * (count - 1)).toFixed(2)} 0V100`}
           className={styles.waveCursor}
+          data-other={selected ? undefined : 'true'}
           vectorEffect="non-scaling-stroke"
         />
       )}
@@ -208,17 +252,17 @@ function StemWave({
   );
 }
 
-export function AINalyzer({ onOpenAnalyzer }: { onOpenAnalyzer: () => void }) {
+export function Decomposer({ onOpenAnalyzer }: { onOpenAnalyzer: () => void }) {
   const server = useSynthServer();
   const online = server.connection === 'online';
   const [status, setStatus] = useState<SeparationStatus | null>(null);
-  const [model, setModel] = usePersistentState<SeparationModel>('synthway.ainalyzer.model.v1', () => 'htdemucs');
+  const [model, setModel] = usePersistentState<SeparationModel>('synthway.decomposer.model.v1', () => 'htdemucs');
   const [uploading, setUploading] = useState(false);
   const [dropping, setDropping] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
-  const { track, playing, time, play, stop } = useTrackPlayer(setError);
+  const { track, playing, time, play, select, stop } = useTrackPlayer(setError);
 
   const refresh = useCallback(async () => {
     try {
@@ -309,13 +353,22 @@ export function AINalyzer({ onOpenAnalyzer }: { onOpenAnalyzer: () => void }) {
   const canChange = online && available && !uploading && !running;
   const scale = result ? Math.max(...result.stems.flatMap((stem) => stem.peaks), 1e-6) : 1;
   const percent = Math.round((job?.progress ?? 0) * 100);
+  const sourceUrl = `${SEPARATION_SOURCE_URL}?v=${encodeURIComponent(sourceStamp)}`;
+  const stemUrl = (name: string) => `${separationStemUrl(name)}?v=${encodeURIComponent(resultStamp)}`;
+
+  // The space bar plays or pauses the track selected (the one played last; none yet: the piece), from the cursor
+  useSpaceBar(() => {
+    if (!online) return;
+    if (track && track !== 'source') play(track, stemUrl(track));
+    else if (source) play('source', sourceUrl);
+  });
 
   return (
     <div className={layout.screen}>
       <ScreenHeader
         index="05"
         eyebrow="Séparation de sources"
-        title="AI-nalyzer"
+        title="Decomposer"
         subtitle="Décompose un morceau en ses pistes (batterie, basse, voix, autres…), puis analyse celle qui t’intéresse."
       >
         <aside className={styles.credit} aria-label="Outil tiers utilisé">
@@ -344,8 +397,8 @@ export function AINalyzer({ onOpenAnalyzer }: { onOpenAnalyzer: () => void }) {
                   <Button
                     size="small"
                     disabled={!online}
-                    onClick={() => play('source', `${SEPARATION_SOURCE_URL}?v=${encodeURIComponent(sourceStamp)}`)}
-                    title={track === 'source' && playing ? 'Met la lecture en pause' : 'Lit le morceau entier'}
+                    onClick={() => play('source', sourceUrl)}
+                    title={track === 'source' && playing ? 'Met la lecture en pause (Espace)' : 'Lit le morceau entier, à partir du curseur'}
                   >
                     {track === 'source' && playing ? <Pause size={13} /> : <Play size={13} />}
                     {track === 'source' && playing ? 'Pause' : 'Lire'}
@@ -449,7 +502,7 @@ export function AINalyzer({ onOpenAnalyzer }: { onOpenAnalyzer: () => void }) {
                 <div className={styles.stems}>
                   {result.stems.map((stem) => {
                     const info = stemInfo(stem.name);
-                    const url = `${separationStemUrl(stem.name)}?v=${encodeURIComponent(resultStamp)}`;
+                    const url = stemUrl(stem.name);
                     const loaded = track === stem.name;
                     return (
                       <div key={stem.name} className={styles.stem}>
@@ -461,9 +514,10 @@ export function AINalyzer({ onOpenAnalyzer }: { onOpenAnalyzer: () => void }) {
                           peaks={stem.peaks}
                           scale={scale}
                           color={info.color}
-                          cursor={loaded ? Math.min(1, time / Math.max(result.duration, 1e-6)) : null}
+                          cursor={track !== null ? Math.min(1, time / Math.max(result.duration, 1e-6)) : null}
+                          selected={loaded}
                           label={`Forme d’onde : ${info.label}`}
-                          onSeek={(fraction) => play(stem.name, url, fraction * result.duration)}
+                          onSeek={(fraction) => select(stem.name, url, fraction * result.duration)}
                         />
                         <div className={styles.stemActions}>
                           <Button
@@ -471,7 +525,7 @@ export function AINalyzer({ onOpenAnalyzer }: { onOpenAnalyzer: () => void }) {
                             iconOnly
                             disabled={!online}
                             onClick={() => play(stem.name, url)}
-                            title={loaded && playing ? 'Met la lecture en pause' : `Lit la piste « ${info.label} »`}
+                            title={loaded && playing ? 'Met la lecture en pause (Espace)' : `Lit la piste « ${info.label} » à partir du curseur`}
                             aria-label={loaded && playing ? 'Pause' : `Lire ${info.label}`}
                           >
                             {loaded && playing ? <Pause size={14} /> : <Play size={14} />}
@@ -502,7 +556,8 @@ export function AINalyzer({ onOpenAnalyzer }: { onOpenAnalyzer: () => void }) {
                 <p className={styles.note}>
                   {MODELS.find((option) => option.value === result.model)?.label ?? result.model} ({result.model}) ·{' '}
                   {(result.sample_rate / 1000).toFixed(1)} kHz · séparé en {formatDuration(result.seconds)} sur le{' '}
-                  {deviceLabel(result.device)}. Un clic sur une piste la lit à partir de là.
+                  {deviceLabel(result.device)}. Un clic sur une piste la sélectionne et y place le curseur, sans la lire ;
+                  ▶ ou Espace : lecture / pause de la piste sélectionnée. Une autre piste reprend au même endroit.
                 </p>
               </>
             ) : (

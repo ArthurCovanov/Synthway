@@ -12,7 +12,7 @@ Environment:
     SYNTHWAY_PORT      listening port (default 18741, an uncommon port: 8000 is
                        often taken by other dev tools). Not read by uvicorn itself.
     SYNTHWAY_CORE_LIB  path to synthway.dll / libsynthway.so (default: found in synthway-core/build)
-    SYNTHWAY_DEMUCS, SYNTHWAY_DEMUCS_DIR  the AI-nalyzer's Demucs (see separation.py)
+    SYNTHWAY_DEMUCS, SYNTHWAY_DEMUCS_DIR  the Decomposer's Demucs (see separation.py)
 """
 
 import asyncio
@@ -25,7 +25,7 @@ import sys
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 from urllib.parse import quote
 
 try:
@@ -52,9 +52,12 @@ try:  # run from src/ (uvicorn main:app, python main.py)
         EngineStatusResponse,
         EnvelopeAnalysis,
         Envelope,
+        NoteSpan,
         Timbre,
         ToneControlRequest,
+        Unison,
         WaveformEnum,
+        WaveformFit,
     )
     from separation import SeparationError, separation
 except ImportError:  # installed package (synthway-server command)
@@ -72,9 +75,12 @@ except ImportError:  # installed package (synthway-server command)
         EngineStatusResponse,
         EnvelopeAnalysis,
         Envelope,
+        NoteSpan,
         Timbre,
         ToneControlRequest,
+        Unison,
         WaveformEnum,
+        WaveformFit,
     )
     from .separation import SeparationError, separation
 
@@ -312,6 +318,10 @@ if HAS_FASTAPI:
                                 tone.resonance if tone.resonance is not None else resonance)
             except (ValueError, RuntimeError) as ex:
                 raise HTTPException(status_code=422, detail=str(ex)) from ex
+        if tone.reverb is not None:
+            core.set_reverb(tone.reverb)
+        if tone.unison is not None:
+            core.set_unison(tone.unison.voices, tone.unison.detune, tone.unison.spread)
         return {
             "frequency": core.get_frequency(),
             "volume": core.get_volume(),
@@ -355,7 +365,8 @@ if HAS_FASTAPI:
           - {"type": "set_param", "frequency": 523.25, "volume": 0.3, "waveform": 1,
              "envelope": {"attack": 0.01, "decay": 0.2, "sustain": 0.7, "release": 0.3},
              "timbre": {"partials": [{"ratio": 1, "amplitude": 0.8, "waveform": 0,
-                                      "envelope": {...}}, ...]}}
+                                      "envelope": {...}}, ...]},
+             "unison": {"voices": 7, "detune": 12, "spread": 0.8}}
             ("timbre": null goes back to the single oscillator: waveform and envelope)
         An invalid message gets {"error": ...} back; the connection stays open.
         """
@@ -403,6 +414,11 @@ if HAS_FASTAPI:
                             low_cutoff, cutoff, resonance = core.get_filter()
                             core.set_filter(float(msg.get("low_cutoff", low_cutoff)), float(msg.get("cutoff", cutoff)),
                                             float(msg.get("resonance", resonance)))
+                        if "reverb" in msg:
+                            core.set_reverb(float(msg["reverb"]))
+                        if "unison" in msg:
+                            unison = Unison(**msg["unison"])
+                            core.set_unison(unison.voices, unison.detune, unison.spread)
                 except (ValueError, TypeError, AttributeError, RuntimeError) as ex:
                     # Includes invalid JSON, pydantic validation errors and values refused by the core
                     await websocket.send_json({"error": f"Invalid message: {ex}"})
@@ -605,6 +621,53 @@ if HAS_FASTAPI:
             analyzers.clip(), start, end, window_ms, noise_gate_db, reference_hz, harmonic_cents,
         )
 
+    async def find_zone_notes(analyzer: Analyzer, start: float, end: float, window_ms: float, noise_gate_db: float) -> List[NoteSpan]:
+        """The notes heard in a zone, even several at once, and when each starts and ends."""
+        check_analysis_options(window_ms, 0.0, 0.0)
+        if not end > start:
+            raise HTTPException(status_code=422, detail="La zone finit après son début")
+        return await asyncio.to_thread(analyzer.find_notes, start, end, window_ms / 1000, noise_gate_db)
+
+    async def fit_zone_waveform(
+        analyzer: Analyzer, start: float, end: float, window_ms: float, noise_gate_db: float, reference_hz: float,
+    ) -> WaveformFit:
+        """Which waveform the note of a zone is closest to."""
+        check_analysis_options(window_ms, reference_hz, 0.0)
+        if not end > start:
+            raise HTTPException(status_code=422, detail="La zone finit après son début")
+        return await asyncio.to_thread(analyzer.fit_waveform, start, end, window_ms / 1000, noise_gate_db, reference_hz)
+
+    @app.get("/api/analyzer/clip/waveform-fit", response_model=WaveformFit)
+    async def clip_waveform_fit(
+        start: float = Query(ge=0.0, description="Start of the zone, in seconds (a moment: its window around it)"),
+        end: float = Query(gt=0.0, description="End of the zone"),
+        window_ms: float = Query(default=0.0, ge=0.0, description="As for the analysis"),
+        noise_gate_db: float = Query(default=NOISE_GATE_OFF, ge=NOISE_GATE_OFF, le=0.0, description="As for the analysis"),
+        reference_hz: float = Query(default=0.0, ge=0.0, description="The note whose harmonics are measured: 16 to 5000 Hz; 0, the zone's"),
+    ):
+        """Which waveform a note of the loaded file is closest to (sawtooth, square, triangle, pulse, sine), each
+        through the engine's low-pass that fits it best, with the level of each harmonic (synthway_analyzer_fit_waveform)."""
+        if not core:
+            raise HTTPException(status_code=503, detail="Synthway core library not loaded")
+        if analyzers.clip_name is None:
+            raise HTTPException(status_code=404, detail="Aucun fichier chargé")
+        return await fit_zone_waveform(analyzers.clip(), start, end, window_ms, noise_gate_db, reference_hz)
+
+    @app.get("/api/analyzer/clip/notes", response_model=List[NoteSpan])
+    async def clip_notes(
+        start: float = Query(ge=0.0, description="Start of the zone, in seconds"),
+        end: float = Query(gt=0.0, description="End of the zone"),
+        window_ms: float = Query(default=0.0, ge=0.0, description="As for the analysis"),
+        noise_gate_db: float = Query(default=NOISE_GATE_OFF, ge=NOISE_GATE_OFF, le=0.0, description="As for the analysis"),
+    ):
+        """The notes heard in a zone of the loaded file, even several at once (a chord, a melody over a held
+        note), and when each starts and ends (synthway_analyzer_find_notes): by start, then by frequency."""
+        if not core:
+            raise HTTPException(status_code=503, detail="Synthway core library not loaded")
+        if analyzers.clip_name is None:
+            raise HTTPException(status_code=404, detail="Aucun fichier chargé")
+        return await find_zone_notes(analyzers.clip(), start, end, window_ms, noise_gate_db)
+
     async def finished_recording() -> Analyzer:
         if not core:
             raise HTTPException(status_code=503, detail="Synthway core library not loaded")
@@ -664,6 +727,29 @@ if HAS_FASTAPI:
         """The envelopes of a note of the last recording, like /api/analyzer/clip/envelopes."""
         recording = await finished_recording()
         return await measure_note_envelopes(recording, start, end, window_ms, noise_gate_db, reference_hz, harmonic_cents)
+
+    @app.get("/api/analyzer/recording/notes", response_model=List[NoteSpan])
+    async def recording_notes(
+        start: float = Query(ge=0.0, description="Start of the zone, in seconds"),
+        end: float = Query(gt=0.0, description="End of the zone"),
+        window_ms: float = Query(default=0.0, ge=0.0, description="As for the analysis"),
+        noise_gate_db: float = Query(default=NOISE_GATE_OFF, ge=NOISE_GATE_OFF, le=0.0, description="As for the analysis"),
+    ):
+        """The notes heard in a zone of the last recording, like /api/analyzer/clip/notes."""
+        recording = await finished_recording()
+        return await find_zone_notes(recording, start, end, window_ms, noise_gate_db)
+
+    @app.get("/api/analyzer/recording/waveform-fit", response_model=WaveformFit)
+    async def recording_waveform_fit(
+        start: float = Query(ge=0.0, description="Start of the zone, in seconds"),
+        end: float = Query(gt=0.0, description="End of the zone"),
+        window_ms: float = Query(default=0.0, ge=0.0, description="As for the analysis"),
+        noise_gate_db: float = Query(default=NOISE_GATE_OFF, ge=NOISE_GATE_OFF, le=0.0, description="As for the analysis"),
+        reference_hz: float = Query(default=0.0, ge=0.0, description="As for /api/analyzer/clip/waveform-fit"),
+    ):
+        """Which waveform a note of the last recording is closest to, like /api/analyzer/clip/waveform-fit."""
+        recording = await finished_recording()
+        return await fit_zone_waveform(recording, start, end, window_ms, noise_gate_db, reference_hz)
 
     @app.get("/api/analyzer/recording.wav")
     async def recording_wav(request: Request):
@@ -831,7 +917,7 @@ if HAS_FASTAPI:
         finally:
             await stop_listening()
 
-    # ---------- AI-nalyzer: Demucs separates a piece into its sources, in a process of its own ----------
+    # ---------- Decomposer: Demucs separates a piece into its sources, in a process of its own ----------
 
     SOURCE_MEDIA_TYPES = {".wav": "audio/wav", ".flac": "audio/flac", ".mp3": "audio/mpeg", ".ogg": "audio/ogg"}
 

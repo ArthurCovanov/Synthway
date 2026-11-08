@@ -1,5 +1,5 @@
 import { Crosshair, Eraser, GripVertical, Lock, LockOpen, Pause, Play, Plus, Repeat, Square, Trash2 } from 'lucide-react';
-import { useEffect, useRef, useState, type CSSProperties, type PointerEvent, type WheelEvent } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
 import layout from '../components/layout.module.css';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { Badge, Button, Panel, Segmented, cx, inputClass, selectClass } from '../components/ui';
@@ -12,7 +12,8 @@ import {
   type Note,
   type Track,
 } from '../lib/composition';
-import type { Instrument } from '../lib/instruments';
+import { unisonOf, type Instrument } from '../lib/instruments';
+import { useSpaceBar } from '../lib/keyboard';
 import { isBlackKey, midiToFrequency, midiToName } from '../lib/music';
 import { toTimbre } from '../lib/partials';
 import { HUE_VAR, HUES } from '../lib/neon';
@@ -27,6 +28,14 @@ const INITIAL_PITCH_ROWS = 240;
 const PITCH_WINDOW_CENTER = Math.floor(INITIAL_PITCH_ROWS / 2);
 const PITCH_EXTEND_ROWS = 48;
 const PITCH_EXTEND_EDGE = 48;
+/** Horizontal zoom of the piano roll, and how much one notch of a mouse wheel (100 px) changes it */
+const MIN_HORIZONTAL_ZOOM = 0.55;
+const MAX_HORIZONTAL_ZOOM = 2.4;
+const WHEEL_NOTCH_ZOOM = 1.12;
+const WHEEL_NOTCH_PX = 100;
+/** A wheel event counted in lines or pages (Firefox), in pixels */
+const WHEEL_LINE_PX = 33;
+const WHEEL_PAGE_PX = 800;
 const RULER_HEIGHT = 24;
 const NOTE_NAME_TO_PITCH: Record<string, number> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
 
@@ -157,14 +166,16 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
         ratio: (midiToFrequency(note.pitch) / baseFrequency) * partial.ratio,
         amplitude: (partial.amplitude * instrument.volume) / active.length,
         waveform: partial.waveform,
-        envelope: { attack: partial.envelope.attack, decay: partial.envelope.decay, sustain: partial.envelope.sustain, release: partial.envelope.release },
+        envelope: { ...partial.envelope },
       })),
     ).slice(0, engine.maxPartials);
     const filter = active[0].instrument.filter;
-    const signature = JSON.stringify([baseFrequency, partials, filter]);
+    const reverb = active[0].instrument.reverb ?? 0;
+    const unison = unisonOf(active[0].instrument);
+    const signature = JSON.stringify([baseFrequency, partials, filter, reverb, unison]);
     if (signature === lastAudioSignature.current) return;
     lastAudioSignature.current = signature;
-    setParams({ timbre: { partials }, low_cutoff: filter.lowCutoff, cutoff: filter.cutoff, resonance: filter.resonance });
+    setParams({ timbre: { partials }, low_cutoff: filter.lowCutoff, cutoff: filter.cutoff, resonance: filter.resonance, reverb, unison });
     noteOn(baseFrequency, 1);
   }, [playing, playStep, tracks, instruments, engine.maxPartials, noteOff, noteOn, setParams]);
 
@@ -259,7 +270,7 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
   const audition = (pitch: number) => {
     if (!canPlay) return;
     const instrument = instrumentOf(track);
-    if (instrument) setParams({ timbre: toTimbre(instrument.partials, engine.maxPartials), low_cutoff: instrument.filter.lowCutoff, cutoff: instrument.filter.cutoff, resonance: instrument.filter.resonance });
+    if (instrument) setParams({ timbre: toTimbre(instrument.partials, engine.maxPartials), low_cutoff: instrument.filter.lowCutoff, cutoff: instrument.filter.cutoff, resonance: instrument.filter.resonance, reverb: instrument.reverb ?? 0, unison: unisonOf(instrument) });
     noteOn(midiToFrequency(pitch), instrument?.volume ?? 0.3);
     window.clearTimeout(auditionTimer.current);
     auditionTimer.current = window.setTimeout(noteOff, AUDITION_MS);
@@ -324,11 +335,15 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
     updateTrack(track.id, { notes: track.notes.filter((item) => item.id !== note.id) });
   };
 
-  const onRollWheel = (event: WheelEvent<HTMLDivElement>) => {
-    if (!event.altKey) return;
+  /** The wheel scrolls the roll; with Ctrl (a touchpad pinch too) or Alt, it zooms horizontally around the pointer */
+  const onRollWheel = (event: WheelEvent) => {
+    if (!event.ctrlKey && !event.altKey) return;
+    // Taken: the browser does not zoom, the roll does not scroll (the listener is not passive)
     event.preventDefault();
     if (event.deltaY === 0) return;
-    const nextZoom = Math.max(0.55, Math.min(2.4, horizontalZoom * (event.deltaY < 0 ? 1.12 : 1 / 1.12)));
+    const pixels = event.deltaY * (event.deltaMode === 1 ? WHEEL_LINE_PX : event.deltaMode === 2 ? WHEEL_PAGE_PX : 1);
+    const factor = Math.max(0.5, Math.min(2, WHEEL_NOTCH_ZOOM ** (-pixels / WHEEL_NOTCH_PX)));
+    const nextZoom = Math.max(MIN_HORIZONTAL_ZOOM, Math.min(MAX_HORIZONTAL_ZOOM, horizontalZoom * factor));
     const scroller = rollScrollRef.current;
     let targetScrollLeft = 0;
     if (scroller) {
@@ -341,6 +356,16 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
       if (rollScrollRef.current) rollScrollRef.current.scrollLeft = targetScrollLeft;
     });
   };
+  // React's wheel listeners are passive and cannot stop the browser's zoom: a native one, calling the latest handler
+  const rollWheelRef = useRef(onRollWheel);
+  rollWheelRef.current = onRollWheel;
+  useEffect(() => {
+    const scroller = rollScrollRef.current;
+    if (!scroller) return undefined;
+    const listener = (event: WheelEvent) => rollWheelRef.current(event);
+    scroller.addEventListener('wheel', listener, { passive: false });
+    return () => scroller.removeEventListener('wheel', listener);
+  }, []);
 
   const onRollPointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (event.button !== 1) return;
@@ -376,7 +401,7 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
     if (!performers.length || busy || connection !== 'online' || !coreLoaded || !socketOpen) return;
     if (!canPlay) {
       const instrument = instrumentOf(performers[0]);
-      const started = await startAudio(instrument ? { timbre: toTimbre(instrument.partials, engine.maxPartials), low_cutoff: instrument.filter.lowCutoff, cutoff: instrument.filter.cutoff, resonance: instrument.filter.resonance } : {});
+      const started = await startAudio(instrument ? { timbre: toTimbre(instrument.partials, engine.maxPartials), low_cutoff: instrument.filter.lowCutoff, cutoff: instrument.filter.cutoff, resonance: instrument.filter.resonance, reverb: instrument.reverb ?? 0, unison: unisonOf(instrument) } : {});
       if (!started) return;
     }
     const startStep = playStep >= totalSteps ? 0 : playStep;
@@ -392,6 +417,12 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
     noteOff();
     lastAudioSignature.current = null;
   };
+
+  // The space bar is the play / pause button: playback goes on from the playhead
+  useSpaceBar(() => {
+    if (playing) pausePlayback();
+    else void startPlayback();
+  });
 
   // Overview: how many audible notes sound on each step
   const density = new Array<number>(totalSteps).fill(0);
@@ -514,7 +545,8 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
                   data-track-id={item.id}
                   onClick={() => selectTrack(item)}
                   onKeyDown={(event) => {
-                    if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
+                    // Not the space bar: it plays and pauses the score
+                    if (event.target === event.currentTarget && event.key === 'Enter') {
                       event.preventDefault();
                       selectTrack(item);
                     }
@@ -664,7 +696,7 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
               Piano roll <span className={styles.count}>{track?.name}</span>
             </h2>
             <span className={styles.rollHint}>
-              Molette : défiler · Alt + molette : zoom horizontal · clic milieu : déplacer · clic : ajouter une note · clic sur une note : supprimer
+              Molette : défiler · Ctrl + molette : zoom horizontal · clic milieu : déplacer · clic : ajouter une note · clic sur une note : supprimer
               {lockedTracks[track?.id ?? ''] ? ' · piste verrouillée' : ''}
               {canPlay ? ' · aperçu sonore actif' : ''}
             </span>
@@ -673,7 +705,6 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
             className={styles.rollScroll}
             ref={rollScrollRef}
             onScroll={onPitchScroll}
-            onWheel={onRollWheel}
             onPointerDown={onRollPointerDown}
             onPointerMove={onRollPointerMove}
             onPointerUp={() => { panRef.current = null; }}
@@ -768,7 +799,7 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
             className={styles.play}
           disabled={busy || connection !== 'online' || !coreLoaded || !socketOpen}
             aria-label={playing ? 'Pause' : 'Lecture'}
-            title={playing ? 'Mettre en pause' : canPlay ? 'Lire la partition' : 'Démarrer l’audio et lire la partition'}
+            title={playing ? 'Mettre en pause (Espace)' : canPlay ? 'Lire la partition depuis la tête de lecture (Espace)' : 'Démarrer l’audio et lire la partition depuis la tête de lecture (Espace)'}
             onClick={playing ? pausePlayback : startPlayback}
           >
             {playing ? <Pause size={18} fill="currentColor" /> : <Play size={20} fill="currentColor" />}

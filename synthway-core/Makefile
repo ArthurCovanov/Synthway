@@ -74,10 +74,10 @@ TARGET_ANALYSIS_TEST = $(BIN_DIR)/synthway_analysis_test$(EXE_EXT)
 # Library sources, by layer (see README.md); objects mirror this tree in $(OBJ_DIR)
 SRCS = src/synthway.c \
        src/engine/engine.c src/engine/engine_params.c src/engine/engine_offline.c \
-       src/synth/synth.c src/synth/oscillator.c src/synth/envelope.c \
+       src/synth/synth.c src/synth/oscillator.c src/synth/envelope.c src/synth/reverb.c \
        src/interpreter/interpreter.c \
        src/analyzer/analyzer.c \
-       src/analysis/analysis.c src/analysis/pitch.c src/analysis/spectrum.c src/analysis/fft.c \
+       src/analysis/analysis.c src/analysis/notes.c src/analysis/waveform.c src/analysis/pitch.c src/analysis/spectrum.c src/analysis/fft.c \
        src/io/audio_output.c src/io/audio_input.c src/io/audio_file.c src/io/wav_file.c \
        src/io/audio_devices.c src/io/midi_ports.c
 OBJS = $(patsubst src/%.c,$(OBJ_DIR)/%.o,$(SRCS))

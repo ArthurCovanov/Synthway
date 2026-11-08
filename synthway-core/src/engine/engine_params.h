@@ -49,6 +49,10 @@ typedef struct sw_engine_params {
     _Atomic float filter_low_cutoff;
     _Atomic float filter_high_cutoff;
     _Atomic float filter_resonance;
+    _Atomic float reverb_mix;   /* in [0, 1] */
+    _Atomic uint32_t unison_voices;     /* 1 to SYNTHWAY_MAX_UNISON_VOICES */
+    _Atomic float unison_detune_cents;
+    _Atomic float unison_spread;        /* in [0, 1] */
     sw_timbre_exchange timbre;
 } sw_engine_params;
 

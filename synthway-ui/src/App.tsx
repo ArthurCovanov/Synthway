@@ -2,17 +2,17 @@ import { useEffect, useState } from 'react';
 import { NeonDefs } from './components/icons';
 import { Sidebar, type ScreenId } from './components/Sidebar';
 import { AppearanceProvider } from './lib/appearance';
-import { migrateInstruments, PRESET_INSTRUMENTS, type Instrument } from './lib/instruments';
+import { markLaterPresetsOffered, migrateInstruments, PRESET_INSTRUMENTS, type Instrument } from './lib/instruments';
 import { usePersistentState } from './lib/storage';
 import { SynthServerProvider } from './lib/SynthServer';
-import { AINalyzer } from './screens/AINalyzer';
 import { Analyzer } from './screens/Analyzer';
 import { Composer } from './screens/Composer';
+import { Decomposer } from './screens/Decomposer';
 import { InstrumentCreator } from './screens/InstrumentCreator';
 import { Settings } from './screens/Settings';
 import styles from './App.module.css';
 
-const SCREENS: ScreenId[] = ['instruments', 'composer', 'analyzer', 'ainalyzer', 'settings'];
+const SCREENS: ScreenId[] = ['instruments', 'composer', 'analyzer', 'decomposer', 'settings'];
 
 /** The current screen lives in the URL hash, so that a reload keeps it */
 function screenFromHash(): ScreenId {
@@ -31,6 +31,9 @@ export function App() {
     'synthway.selected-instrument.v1',
     () => PRESET_INSTRUMENTS[0].id,
   );
+
+  // The library has its later presets by now (see migrateInstruments): they are not offered again
+  useEffect(markLaterPresetsOffered, []);
 
   useEffect(() => {
     const onHashChange = () => setScreen(screenFromHash());
@@ -69,15 +72,15 @@ export function App() {
             {screen === 'composer' && <Composer instruments={instruments} />}
             {screen === 'analyzer' && (
               <Analyzer
-                onCreateInstrument={(instrument) => {
-                  // A new card at the end of the library, opened in the Instrument Creator
+                onSaveInstrument={(instrument) => {
+                  // The trial instrument saved: a new card at the end of the library, opened in the Instrument Creator
                   setInstruments((list) => [...list, instrument]);
                   setSelectedInstrumentId(instrument.id);
                   navigate('instruments');
                 }}
               />
             )}
-            {screen === 'ainalyzer' && <AINalyzer onOpenAnalyzer={() => navigate('analyzer')} />}
+            {screen === 'decomposer' && <Decomposer onOpenAnalyzer={() => navigate('analyzer')} />}
             {screen === 'settings' && <Settings />}
           </main>
         </div>

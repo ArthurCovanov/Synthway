@@ -33,14 +33,23 @@ export interface HealthResponse {
   core_version: string | null;
 }
 
-/** synthway_envelope_curve_t: how the decay and the release fall */
+/** synthway_envelope_curve_t: how the decay or the release falls */
 export const ENVELOPE_CURVE = {
-  /** Straight ramps: decay and release are the times to reach the sustain level and silence */
+  /** A straight ramp: the decay or release is the time to reach the sustain level or silence */
   Linear: 0,
-  /** A steady fall in dB, like a struck string: decay and release are the times to fall 60 dB */
+  /** A steady fall in dB, like a struck string: the decay or release is the time to fall 60 dB */
   Exponential: 1,
 } as const;
 export type EnvelopeCurve = (typeof ENVELOPE_CURVE)[keyof typeof ENVELOPE_CURVE];
+
+/** synthway_attack_curve_t: how the attack rises */
+export const ATTACK_CURVE = {
+  /** A straight ramp */
+  Linear: 0,
+  /** The square of a straight ramp: slow, then faster and faster, heard as an exponential swell */
+  Convex: 1,
+} as const;
+export type AttackCurve = (typeof ATTACK_CURVE)[keyof typeof ATTACK_CURVE];
 
 /** synthway_engine_set_envelope: times in seconds (0 to 10), sustain level in [0, 1] */
 export interface EnvelopeParams {
@@ -48,9 +57,27 @@ export interface EnvelopeParams {
   decay: number;
   sustain: number;
   release: number;
-  /** Partials only (the single oscillator's envelope is always linear); absent: linear */
+  /** The decay's; partials only (the single oscillator's envelope is always linear); absent: linear */
   curve?: EnvelopeCurve;
+  /** Partials only; absent: a straight attack */
+  attack_curve?: AttackCurve;
+  /** Partials only; absent: the decay's curve */
+  release_curve?: EnvelopeCurve;
 }
+
+/** synthway_engine_set_unison: each partial played by voices detuned oscillators */
+export interface UnisonParams {
+  /** 1 to MAX_UNISON_VOICES; 1: no unison */
+  voices: number;
+  /** Cents between the partial and its outermost voices, below and above (0 to MAX_UNISON_DETUNE_CENTS) */
+  detune: number;
+  /** Stereo width of the voices, 0 (mono) to 1 */
+  spread: number;
+}
+
+/** SYNTHWAY_MAX_UNISON_VOICES and SYNTHWAY_MAX_UNISON_DETUNE_CENTS */
+export const MAX_UNISON_VOICES = 8;
+export const MAX_UNISON_DETUNE_CENTS = 100;
 
 /** synthway_partial_t: ratio in (0, 1000] (1 is the note played), amplitude in [0, 1] */
 export interface PartialParams {
@@ -103,6 +130,9 @@ export interface ToneParams {
   low_cutoff?: number;
   cutoff?: number;
   resonance?: number;
+  /** Share of reverberated sound, 0 (none) to 1 (the reverb alone) */
+  reverb?: number;
+  unison?: UnisonParams;
 }
 
 /** synthway_analysis_partial_t: a peak of the spectrum */
@@ -173,6 +203,75 @@ export interface EnvelopeAnalysis {
   envelopes: EnvelopeParams[];
 }
 
+/** synthway_note_span_t: a note heard in a zone, and when (seconds from the start of the file) */
+export interface NoteSpan {
+  frequency: number;
+  start: number;
+  end: number;
+  /** In (0, 1]: 1 for the strongest note of the zone */
+  strength: number;
+}
+
+/** synthway_wave_shape_t: the shapes a note's harmonics are compared with (the waveforms of WAVEFORM, same values, and a pulse) */
+export const WAVE_SHAPE = {
+  Sine: 0,
+  Square: 1,
+  Triangle: 2,
+  Sawtooth: 3,
+  Pulse: 4,
+} as const;
+export type WaveShape = (typeof WAVE_SHAPE)[keyof typeof WAVE_SHAPE];
+
+/** SYNTHWAY_HARMONIC_*: one harmonic of a waveform fit */
+export const HARMONIC_STATE = {
+  /** Above the background around it */
+  Heard: 0,
+  /** Not above it: missing, or too weak to tell */
+  Faint: 1,
+  /** Also a harmonic of another note heard with it: left out of the fit */
+  Shared: 2,
+} as const;
+export type HarmonicState = (typeof HARMONIC_STATE)[keyof typeof HARMONIC_STATE];
+
+export interface HarmonicLevel {
+  /** dB relative to the strongest heard harmonic (0) */
+  level: number;
+  /** The background around it, on the same scale */
+  background: number;
+  state: HarmonicState;
+}
+
+/** synthway_shape_fit_t: one shape, with the engine's low-pass and the level that bring it closest */
+export interface ShapeFit {
+  shape: WaveShape;
+  /** Share of the period a pulse is high; 0.5 for the square, 0 for the others */
+  duty: number;
+  /** Cutoff of the low-pass in Hz; 0: none */
+  cutoff: number;
+  /** Of that low-pass, in [0, 1] */
+  resonance: number;
+  /** Mean gap in dB between the harmonics measured and the shape's */
+  error_db: number;
+}
+
+/** synthway_waveform_fit_t: the harmonics of a note, and the waveforms closest to them */
+export interface WaveformFit {
+  /** The note in Hz; 0: none */
+  frequency: number;
+  /** Moments of the zone where the note is heard; 0: never alone, no fits */
+  moments: number;
+  /** From the 1st */
+  harmonics: HarmonicLevel[];
+  /** Even harmonics against their odd neighbours, dB: a sawtooth about -1, a square far below */
+  even_db: number;
+  /** Even harmonics compared; 0: even_db tells nothing */
+  even_count: number;
+  /** Fall of the heard harmonics, dB per octave */
+  slope: number;
+  /** One per shape, closest first; empty without a fit */
+  fits: ShapeFit[];
+}
+
 /** A recording of the microphone, in seconds; lost: samples the core had no time to take, now silence */
 export interface RecordingTimes {
   duration: number;
@@ -191,7 +290,7 @@ export type AnalyzerMessage =
   | { type: 'stopped' }
   | { type: 'error'; error: string };
 
-/** A Demucs model of the AI-nalyzer: 4 stems, the same fine-tuned (4 times slower), or 6 stems */
+/** A Demucs model of the Decomposer: 4 stems, the same fine-tuned (4 times slower), or 6 stems */
 export type SeparationModel = 'htdemucs' | 'htdemucs_ft' | 'htdemucs_6s';
 
 /** A stem of a separation: drums, bass, vocals, other, guitar or piano */

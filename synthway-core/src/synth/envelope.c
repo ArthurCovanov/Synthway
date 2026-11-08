@@ -22,16 +22,14 @@ sw_envelope_steps sw_envelope_steps_for(const sw_envelope_settings* settings, fl
 
     sw_envelope_steps steps;
     steps.attack = 1.0f / attack_samples;
+    steps.convex_attack = settings->attack_curve == SYNTHWAY_ATTACK_CONVEX;
     steps.sustain_level = settings->sustain_level;
     steps.release_samples = fmaxf(1.0f, settings->release_s * sample_rate);
-    steps.exponential = settings->curve == SYNTHWAY_ENVELOPE_EXPONENTIAL;
-    if (steps.exponential) {
-        steps.decay = sw_envelope_factor(decay_samples);
-        steps.release_factor = sw_envelope_factor(steps.release_samples);
-    } else {
-        steps.decay = (1.0f - settings->sustain_level) / decay_samples;
-        steps.release_factor = 0.0f;
-    }
+    steps.exponential_decay = settings->curve == SYNTHWAY_ENVELOPE_EXPONENTIAL;
+    steps.exponential_release = settings->release_curve == SYNTHWAY_ENVELOPE_EXPONENTIAL;
+    steps.decay = steps.exponential_decay ? sw_envelope_factor(decay_samples)
+                                          : (1.0f - settings->sustain_level) / decay_samples;
+    steps.release_factor = steps.exponential_release ? sw_envelope_factor(steps.release_samples) : 0.0f;
     return steps;
 }
 
@@ -42,7 +40,7 @@ void sw_envelope_trigger(sw_envelope* envelope) {
 void sw_envelope_release(sw_envelope* envelope, const sw_envelope_steps* steps) {
     if (envelope->stage != SW_ENVELOPE_IDLE) {
         envelope->stage = SW_ENVELOPE_RELEASE;
-        envelope->release_step = steps->exponential ? envelope->level * SW_EXPONENTIAL_END
+        envelope->release_step = steps->exponential_release ? envelope->level * SW_EXPONENTIAL_END
                                                     : envelope->level / steps->release_samples;
     }
 }
@@ -50,14 +48,24 @@ void sw_envelope_release(sw_envelope* envelope, const sw_envelope_steps* steps) 
 float sw_envelope_next(sw_envelope* envelope, const sw_envelope_steps* steps) {
     switch (envelope->stage) {
         case SW_ENVELOPE_ATTACK:
-            envelope->level += steps->attack;
+            if (steps->convex_attack) {
+                /* The square root of the level rises in a straight line: the
+                   level follows its square, from wherever it was (no click) */
+                /* In double, so that GCC does not turn it into sqrtf: glibc 2.43
+                   gave sqrtf a new symbol version, which older systems
+                   (Debian 13) cannot load */
+                const double root = sqrt((double)envelope->level) + (double)steps->attack;
+                envelope->level = (float)(root * root);
+            } else {
+                envelope->level += steps->attack;
+            }
             if (envelope->level >= 1.0f) {
                 envelope->level = 1.0f;
                 envelope->stage = SW_ENVELOPE_DECAY;
             }
             break;
         case SW_ENVELOPE_DECAY:
-            if (steps->exponential) {
+            if (steps->exponential_decay) {
                 /* The level above the sustain shrinks by the same factor each sample */
                 const float above = (envelope->level - steps->sustain_level) * steps->decay;
                 envelope->level = steps->sustain_level + above;
@@ -77,7 +85,7 @@ float sw_envelope_next(sw_envelope* envelope, const sw_envelope_steps* steps) {
             envelope->level = steps->sustain_level; /* follows live sustain changes */
             break;
         case SW_ENVELOPE_RELEASE:
-            if (steps->exponential) {
+            if (steps->exponential_release) {
                 envelope->level *= steps->release_factor;
                 if (envelope->level <= envelope->release_step) {
                     envelope->level = 0.0f;

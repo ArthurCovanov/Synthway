@@ -1,11 +1,31 @@
-import { Circle, Crosshair, Download, FileAudio, Mic, MicOff, Minus, Pause, Play, Plus, Sparkles, Square, Upload } from 'lucide-react';
+import {
+  Circle,
+  Crosshair,
+  Download,
+  FileAudio,
+  Mic,
+  MicOff,
+  Minus,
+  Pause,
+  Play,
+  Plus,
+  RefreshCw,
+  Save,
+  Sparkles,
+  Square,
+  Undo2,
+  Upload,
+  X,
+} from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import { AnalysisSpectrum, partialColor } from '../components/AnalysisSpectrum';
 import { ClipWaveform, type ClipSelection } from '../components/ClipWaveform';
+import { KeyboardDock } from '../components/KeyboardDock';
 import layout from '../components/layout.module.css';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { Badge, Button, Field, Panel, Section, Segmented, Slider, Toggle, inputClass, selectClass } from '../components/ui';
 import { Tuner } from '../components/Tuner';
+import { WaveformFitCard } from '../components/WaveformFitCard';
 import {
   ANALYSIS_WINDOW_DEFAULT_MS,
   ANALYSIS_WINDOW_MAX_MS,
@@ -19,11 +39,23 @@ import {
   type AnalysisOptions,
   type AnalysisTarget,
 } from '../lib/api';
+import { useInstrumentSound } from '../lib/instrumentSound';
 import { instrumentFromPartials, type Instrument } from '../lib/instruments';
+import { useSpaceBar } from '../lib/keyboard';
 import { formatCents, frequencyToNote, harmonicGap, NOTE_NAMES } from '../lib/music';
 import { usePersistentState } from '../lib/storage';
+import { chosenFit, describeShape, shapePartials, type BuildFrom } from '../lib/waveShapes';
 import { useSynthServer } from '../lib/SynthServer';
-import type { Analysis, AnalyzerMessage, ClipInfo, EnvelopeParams, RecordingTimes } from '../types';
+import type {
+  Analysis,
+  AnalyzerMessage,
+  ClipInfo,
+  EnvelopeParams,
+  NoteSpan,
+  RecordingTimes,
+  ShapeFit,
+  WaveformFit,
+} from '../types';
 import styles from './Analyzer.module.css';
 
 /*
@@ -37,9 +69,9 @@ import styles from './Analyzer.module.css';
  *     as a WAV file.
  *   - Fichier: a WAV, FLAC or MP3 file is sent whole to the core, which decodes
  *     it; the note is followed along it, and a cursor picks the moment analyzed.
- *   « Lire » plays the file or the recording in the browser, from the cursor,
- *   which follows it; placing the cursor pauses it. Dragging on the waveform
- *   selects a zone, which « Lire » then plays in a loop.
+ *   « Lire » (or the space bar) plays the file or the recording in the browser,
+ *   from the cursor, which follows it; placing the cursor pauses it. Dragging
+ *   on the waveform selects a zone, which « Lire » then plays in a loop.
  * What the panels below show: without a zone, the moment of the cursor seen
  * through the analysis window (« Fenêtre d'analyse », drawn as green bounds on
  * the waveform); with a zone, the median of its moments, computed by the core.
@@ -47,18 +79,71 @@ import styles from './Analyzer.module.css';
  * low end of its notes, octave errors corrected by the core), or one fixed
  * here, in the octave chosen. « Harmoniques seulement » keeps only partials
  * near a whole ratio, which leaves out most of the other instruments of a mix.
- * « Créer un instrument » makes an Instrument Creator card of those partials.
- * Next steps: hear the file through the core, follow each partial over time
- * (its envelope).
+ * « Essayer l'instrument » makes a trial instrument of those partials (with
+ * each one's envelope, measured on a zone), played on the keyboard at the
+ * bottom, where the note analyzed is marked. It stays as it is while the
+ * selection or the settings change: « Mettre à jour » makes it again from
+ * them, « Revenir à sa sélection » brings back the zone it was made from,
+ * « Lire l'original » plays the zone. « Sauvegarder » adds it to the library
+ * and opens it in the Instrument Creator; leaving the screen loses it.
+ * « Forme d'onde » tells which waveform the note is closest to (sawtooth,
+ * square, triangle, pulse, sine, each through the low-pass that fits it best,
+ * synthway_analyzer_fit_waveform). « Essai fait de » chooses what the trial
+ * instrument is made of: the partials measured, or the harmonics of a shape,
+ * as sines, with its low-pass in the instrument's filter.
  */
 
 type Source = 'micro' | 'file';
 type Listening = 'off' | 'starting' | 'on';
 
+/** The trial instrument: made from the analysis on demand, played at the bottom, saved on demand */
+interface Draft {
+  instrument: Instrument;
+  /** The note its ratios are taken to (MIDI), marked on the keyboard */
+  noteMidi: number | null;
+  /** What it was made from (see analysisBasis): another basis now, « Mettre à jour » takes it */
+  basis: string;
+  /** Where it was made: its source, sound, selection and fixed reference note, to come back to them */
+  source: Source;
+  clipKey: string;
+  target: AnalysisTarget | null;
+  referenceMidi: number | null;
+  /** The volume was set by hand: « Mettre à jour » keeps it */
+  volumeSet: boolean;
+  /** The waveform it was made of (« Dent de scie, passe-bas 5,6 kHz »), null: the partials measured */
+  profile: string | null;
+}
+
+/** The zone a waveform fit looks at: the zone, or the moment's window */
+function fitZone(target: AnalysisTarget, windowMs: number): { start: number; end: number } {
+  if ('start' in target) return target;
+  const half = windowMs / 2000;
+  return { start: Math.max(0, target.time - half), end: target.time + half };
+}
+
+/** A file or a recording, to tell it from another one */
+function clipKeyOf(clip: ClipInfo | null): string {
+  return clip ? `${clip.name}:${clip.frame_count}:${clip.sample_rate}` : '';
+}
+
+/** What an analysis is made from: the sound, the selection and the settings. Live, the microphone alone */
+function analysisBasis(
+  source: Source,
+  clipKey: string,
+  target: AnalysisTarget | null,
+  settings: (string | number | boolean)[],
+): string {
+  if (!target) return `${source}|live`;
+  const where = 'time' in target ? `t${target.time.toFixed(4)}` : `z${target.start.toFixed(4)}-${target.end.toFixed(4)}`;
+  return [source, clipKey, where, ...settings].join('|');
+}
+
 const ACCEPTED_FILES = '.wav,.flac,.mp3,audio/wav,audio/x-wav,audio/flac,audio/mpeg';
 /** Harmonics of a note part from 6 bins of a Blackman window apart: windows shorter than 6 periods mix them */
 const PERIODS_PER_WINDOW = 6;
 /** A fixed reference note, as MIDI notes: C0 (16 Hz) to D#8 (4978 Hz), within what the core accepts */
+/** A note of a zone this strong next to the strongest is played, not a trace of another sound */
+const STRONG_NOTE = 0.5;
 const REFERENCE_MIDI_MIN = 12;
 const REFERENCE_MIDI_MAX = 111;
 /** Track points of a zone on another note than its reference, above this share, earn a warning */
@@ -264,7 +349,7 @@ function useClipPlayer(
   return { playing, toggle, pause };
 }
 
-export function Analyzer({ onCreateInstrument }: { onCreateInstrument: (instrument: Instrument) => void }) {
+export function Analyzer({ onSaveInstrument }: { onSaveInstrument: (instrument: Instrument) => void }) {
   const server = useSynthServer();
   const online = server.connection === 'online' && server.coreLoaded;
   const [source, setSource] = usePersistentState<Source>('synthway.analyzer.source.v1', () => 'micro');
@@ -282,11 +367,16 @@ export function Analyzer({ onCreateInstrument }: { onCreateInstrument: (instrume
   const referenceHz = referenceMidi === null ? 0 : midiFrequency(referenceMidi, a4);
   /** Only the partials near a whole ratio: on by default, a mix holds other instruments */
   const [harmonicsOnly, setHarmonicsOnly] = usePersistentState<boolean>('synthway.analyzer.harmonics-only.v1', () => true);
+  /** What « Essayer l'instrument » makes the instrument of: the partials measured, or a waveform */
+  const [buildFrom, setBuildFrom] = usePersistentState<BuildFrom>('synthway.analyzer.build-from.v1', () => 'measured');
   const optionsRef = useRef<AnalysisOptions>({ noiseGateDb: noiseGate, windowMs, referenceHz, harmonicCents: 0 });
   optionsRef.current = { noiseGateDb: noiseGate, windowMs, referenceHz, harmonicCents: harmonicsOnly ? HARMONIC_CENTS : 0 };
-  /** « Créer un instrument » on a zone: its envelopes are being measured */
+  /** « Essayer l'instrument » on a zone: its envelopes are being measured */
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  /** The trial instrument, played on the keyboard at the bottom; null: none */
+  const [draft, setDraft] = useState<Draft | null>(null);
+  useInstrumentSound(draft?.instrument ?? null);
 
   /* ---------- Microphone ---------- */
 
@@ -534,13 +624,134 @@ export function Analyzer({ onCreateInstrument }: { onCreateInstrument: (instrume
   const setReference = (midi: number) =>
     setReferenceMidi(Math.max(REFERENCE_MIDI_MIN, Math.min(REFERENCE_MIDI_MAX, Math.round(midi))));
 
+  /* ---------- Notes of the zone: several at once, and when each plays ---------- */
+
+  const [zoneNotes, setZoneNotes] = useState<NoteSpan[] | null>(null);
+  /** The zone the notes were found in, while one of them is analyzed alone */
+  const [notesZone, setNotesZone] = useState<ClipSelection | null>(null);
+  const zone = analyzedTarget && 'start' in analyzedTarget ? analyzedTarget : null;
+  const zoneKey = zone ? `${source}:${zone.start.toFixed(4)}:${zone.end.toFixed(4)}` : '';
+  useEffect(() => {
+    if (!online || !zone) {
+      setZoneNotes(null);
+      return undefined;
+    }
+    let cancelled = false;
+    const find = source === 'micro' ? api.recordingNotes : api.clipNotes;
+    find(zone, optionsRef.current)
+      .then((notes) => {
+        if (!cancelled) setZoneNotes(notes);
+      })
+      .catch(() => {
+        if (!cancelled) setZoneNotes(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // zone is followed through zoneKey: it is a new object at every render
+  }, [zoneKey, windowMs, noiseGate, online]);
+  const selectZone = source === 'micro' ? setRecordSelection : setClipSelection;
+  /** One note alone: its time in the zone, and the ratios taken to it (the other notes are left out) */
+  const analyzeNote = (span: NoteSpan) => {
+    const note = frequencyToNote(span.frequency, a4);
+    if (!note) return;
+    setNotesZone((kept) => kept ?? zone);
+    setReference(note.midi);
+    selectZone({ start: span.start, end: span.end });
+  };
+  const backToNotesZone = () => {
+    selectZone(notesZone);
+    setReferenceMidi(null);
+    setNotesZone(null);
+  };
+  /** Another zone chosen by hand: the notes are found again in it */
+  const selectByHand = (select: (zone: ClipSelection | null) => void) => (picked: ClipSelection | null) => {
+    select(picked);
+    setNotesZone(null);
+  };
+  const strongNotes = zoneNotes?.filter((span) => span.strength >= STRONG_NOTE) ?? [];
+
+  /* ---------- Waveform of the note: which shape its harmonics are closest to ---------- */
+
+  const [waveFit, setWaveFit] = useState<WaveformFit | null>(null);
+  const [waveFitLoading, setWaveFitLoading] = useState(false);
+  const [waveFitError, setWaveFitError] = useState<string | null>(null);
+  const fitTarget = analyzedTarget ? fitZone(analyzedTarget, windowMs) : null;
+  const fitKey = fitTarget
+    ? `${source}:${clipKeyOf(zoneClip)}:${fitTarget.start.toFixed(4)}:${fitTarget.end.toFixed(4)}:${referenceHz.toFixed(3)}`
+    : '';
+  useEffect(() => {
+    if (!online || !fitTarget) {
+      setWaveFit(null);
+      setWaveFitError(null);
+      setWaveFitLoading(false);
+      return undefined;
+    }
+    let cancelled = false;
+    setWaveFitLoading(true);
+    const fitOf = source === 'micro' ? api.recordingWaveformFit : api.clipWaveformFit;
+    fitOf(fitTarget, optionsRef.current)
+      .then((fit) => {
+        if (cancelled) return;
+        setWaveFit(fit);
+        setWaveFitError(null);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setWaveFit(null);
+        setWaveFitError(`Mesure de la forme d’onde impossible : ${describe(error)}`);
+      })
+      .finally(() => {
+        if (!cancelled) setWaveFitLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // fitTarget is followed through fitKey: it is a new object at every render
+  }, [fitKey, windowMs, noiseGate, online]);
+  const noteLabel = (frequency: number) => {
+    const note = frequencyToNote(frequency, a4);
+    return note ? `${note.name}${note.octave}` : `${Math.round(frequency)} Hz`;
+  };
+  /** The note fitted is a weak one of the zone (a trace under the notes played): its strength, and the strong ones */
+  const fittedSpan =
+    waveFit && waveFit.frequency > 0
+      ? zoneNotes?.find((span) => Math.abs(1200 * Math.log2(span.frequency / waveFit.frequency)) < 50)
+      : undefined;
+  const weakFittedNote =
+    fittedSpan && fittedSpan.strength < STRONG_NOTE
+      ? { strength: fittedSpan.strength, strong: strongNotes.map((span) => noteLabel(span.frequency)) }
+      : null;
+
+  /* ---------- Trial instrument ---------- */
+
+  const basis = analysisBasis(source, clipKeyOf(zoneClip), analyzedTarget, [
+    windowMs,
+    noiseGate,
+    referenceMidi ?? 'auto',
+    harmonicsOnly,
+    a4,
+    buildFrom,
+  ]);
+  /** The selection or a setting changed since the trial instrument was made */
+  const draftStale = draft !== null && draft.basis !== basis;
+  /** Its zone or moment can be brought back: it was made on the sound still loaded there */
+  const draftSelectionBack =
+    draft !== null &&
+    draft.target !== null &&
+    draft.clipKey === clipKeyOf(draft.source === 'micro' ? recordClip : clip) &&
+    analysisBasis(draft.source, draft.clipKey, draft.target, [draft.referenceMidi ?? 'auto']) !==
+      analysisBasis(source, clipKeyOf(zoneClip), analyzedTarget, [referenceMidi ?? 'auto']);
+  const originalZone = source === 'micro' ? recordSelection : clipSelection;
+  const originalPlaying = source === 'micro' ? recordPlaying : clipPlaying;
+
   /**
-   * A card of the Instrument Creator from the partials shown, which opens it.
-   * A zone also gives each partial its envelope, measured on the note
-   * (synthway_analyzer_measure_envelopes); a moment gives one envelope for all.
+   * An instrument from the partials shown. A zone also gives each partial its
+   * envelope, measured on the note (synthway_analyzer_measure_envelopes); a
+   * moment gives one envelope for all. null: none (createError says why).
    */
-  const createInstrument = async () => {
-    if (!analysis || !canCreate || creating) return;
+  const makeInstrument = async (): Promise<{ instrument: Instrument; noteMidi: number | null; profile: string | null } | null> => {
+    if (!analysis || !canCreate || creating) return null;
     const target = analyzedTarget;
     const described = describeAnalyzed(target, windowMs);
     const origin = source === 'micro' ? (onRecording ? 'l’enregistrement du micro' : 'le micro, en direct') : clip?.name ?? 'un fichier';
@@ -560,31 +771,148 @@ export function Analyzer({ onCreateInstrument }: { onCreateInstrument: (instrume
           .filter((partial) => partial.ratio > 0 && partial.envelope);
       } catch (error) {
         setCreateError(`Mesure des enveloppes impossible : ${describe(error)}`);
-        return;
+        return null;
       } finally {
         setCreating(false);
       }
       if (found.frequency <= 0 || partialsMade.length === 0) {
         setCreateError('La mesure des enveloppes n’a trouvé ni note ni partiel dans cette zone.');
-        return;
+        return null;
       }
     }
+
+    // A waveform: its harmonics as sines, its low-pass in the filter, and one
+    // envelope for all, the one measured on the strongest partial
+    let shape: ShapeFit | null = null;
+    if (buildFrom !== 'measured' && target) {
+      setCreating(true);
+      try {
+        const fitOf = source === 'micro' ? api.recordingWaveformFit : api.clipWaveformFit;
+        const fitted = await fitOf(fitZone(target, windowMs), optionsRef.current);
+        shape = chosenFit(fitted, buildFrom);
+        if (!shape) {
+          setCreateError(
+            fitted.frequency > 0 && fitted.moments === 0
+              ? 'Cette note n’est jamais entendue seule ici : choisis une note dans les puces, ou « Partiels mesurés ».'
+              : 'Pas de forme d’onde mesurée ici : choisis « Partiels mesurés ».',
+          );
+          return null;
+        }
+      } catch (error) {
+        setCreateError(`Mesure de la forme d’onde impossible : ${describe(error)}`);
+        return null;
+      } finally {
+        setCreating(false);
+      }
+      const strongest = partialsMade.reduce<(typeof partialsMade)[number] | undefined>(
+        (best, partial) => (!best || partial.amplitude > best.amplitude ? partial : best),
+        undefined,
+      );
+      partialsMade = shapePartials(shape, found.frequency).map((partial) => ({ ...partial, envelope: strongest?.envelope }));
+    }
+
     const note = frequencyToNote(found.frequency, a4);
     const noteName = note ? `${note.name}${note.octave}` : '';
     const count = partialsMade.length;
-    const envelopes = target && 'start' in target
+    const zoneTarget = target !== null && 'start' in target;
+    const envelopes = zoneTarget
       ? 'une enveloppe mesurée par partiel (exponentielle)'
       : 'une seule enveloppe (une zone d’une seule note donne celle de chaque partiel)';
-    onCreateInstrument(
-      instrumentFromPartials(
-        `${prefix}${noteName ? ` · ${noteName}` : ''}`,
-        `Créé dans l’Analyzer depuis ${origin} : ${described}, rapports à ${noteName || 'la note'}${harmonics}. ${count} partiel${count > 1 ? 's' : ''} mesuré${count > 1 ? 's' : ''}, sinusoïdes, ${envelopes}.`,
-        partialsMade,
-        // Its keyboard starts at the note's octave: C2 analyzed, octave 2
-        note?.octave,
-      ),
+    const made = shape
+      ? `Forme ${describeShape(shape)} (écart ${shape.error_db.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} dB) : ${count} harmonique${
+          count > 1 ? 's' : ''
+        } en sinusoïdes, ${shape.cutoff > 0 ? 'son passe-bas dans le filtre' : 'sans passe-bas'}, ${
+          zoneTarget ? 'l’enveloppe mesurée sur son partiel le plus fort pour toutes' : 'une seule enveloppe'
+        }.`
+      : `${count} partiel${count > 1 ? 's' : ''} mesuré${count > 1 ? 's' : ''}, sinusoïdes, ${envelopes}.`;
+    const instrument = instrumentFromPartials(
+      `${prefix}${noteName ? ` · ${noteName}` : ''}${shape ? ` · ${describeShape({ ...shape, cutoff: 0 })}` : ''}`,
+      `Créé dans l’Analyzer depuis ${origin} : ${described}, rapports à ${noteName || 'la note'}${harmonics}. ${made}`,
+      partialsMade,
+      // Its keyboard starts at the note's octave: C2 analyzed, octave 2
+      note?.octave,
     );
+    return {
+      instrument: shape
+        ? {
+            ...instrument,
+            filter: {
+              lowCutoff: 20,
+              cutoff: shape.cutoff > 0 ? Math.min(20000, Math.round(shape.cutoff)) : 20000,
+              resonance: shape.resonance,
+            },
+          }
+        : instrument,
+      noteMidi: note?.midi ?? null,
+      profile: shape ? describeShape(shape) : null,
+    };
   };
+
+  /** « Essayer l'instrument » and « Mettre à jour »: the trial instrument, made again from the analysis shown */
+  const tryInstrument = async () => {
+    // What it is made from, taken now: the selection can move while the envelopes are measured
+    const made = { basis, source, clipKey: clipKeyOf(zoneClip), target: analyzedTarget, referenceMidi };
+    const result = await makeInstrument();
+    if (!result) return;
+    setDraft((previous) => ({
+      ...made,
+      instrument: previous?.volumeSet ? { ...result.instrument, volume: previous.instrument.volume } : result.instrument,
+      noteMidi: result.noteMidi,
+      volumeSet: previous?.volumeSet ?? false,
+      profile: result.profile,
+    }));
+  };
+
+  const setDraftVolume = (volume: number) =>
+    setDraft((current) => current && { ...current, instrument: { ...current.instrument, volume }, volumeSet: true });
+
+  const setDraftOctave = (octave: number) =>
+    setDraft((current) => current && { ...current, instrument: { ...current.instrument, octave } });
+
+  /** Its zone (or moment) and reference note again, after a click elsewhere on the sound */
+  const backToDraftSelection = () => {
+    if (!draft?.target) return;
+    const { target } = draft;
+    const zone = 'start' in target ? { start: target.start, end: target.end } : null;
+    setSource(draft.source);
+    setReferenceMidi(draft.referenceMidi);
+    setNotesZone(null);
+    if (draft.source === 'micro') {
+      pauseRecordPlayback();
+      stopListening();
+      setRecordSelection(zone);
+      if ('time' in target) setRecordTime(target.time);
+    } else {
+      pauseClipPlayback();
+      setClipSelection(zone);
+      if ('time' in target) setClipTime(target.time);
+    }
+  };
+
+  /** The zone selected, in a loop: the sound to compare the trial instrument with */
+  const playOriginal = () => {
+    if (!originalZone) return;
+    if (source === 'micro') {
+      stopListening();
+      toggleRecordPlayback(originalZone.start);
+    } else {
+      toggleClipPlayback(originalZone.start);
+    }
+  };
+
+  const saveDraft = () => {
+    if (draft) onSaveInstrument(draft.instrument);
+  };
+
+  // The space bar is the « Lire » / « Pause » button of the tab shown, from the cursor
+  useSpaceBar(() => {
+    if (!online) return;
+    if (source === 'file') {
+      if (clip) toggleClipPlayback(clipTime);
+    } else if (recordClip && recording === 'off') {
+      playOrPauseRecording();
+    }
+  });
 
   return (
     <div className={layout.screen}>
@@ -691,7 +1019,7 @@ export function Analyzer({ onCreateInstrument }: { onCreateInstrument: (instrume
                           size="small"
                           disabled={!online}
                           onClick={playOrPauseRecording}
-                          title={recordPlaying ? 'Met la lecture en pause' : 'Lit l’enregistrement à partir du curseur, qui le suit (coupe l’écoute)'}
+                          title={recordPlaying ? 'Met la lecture en pause (Espace)' : 'Lit l’enregistrement à partir du curseur, qui le suit (coupe l’écoute). Espace : lecture / pause'}
                         >
                           {recordPlaying ? <Pause size={13} /> : <Play size={13} />}
                           {recordPlaying ? 'Pause' : 'Lire'}
@@ -726,7 +1054,7 @@ export function Analyzer({ onCreateInstrument }: { onCreateInstrument: (instrume
                       loadWaveform={api.recordingWaveform}
                       onSeek={seekRecording}
                       selection={recordSelection}
-                      onSelect={setRecordSelection}
+                      onSelect={selectByHand(setRecordSelection)}
                       windowSeconds={windowMs / 1000}
                       label="Moment analysé dans l’enregistrement"
                     />
@@ -771,7 +1099,7 @@ export function Analyzer({ onCreateInstrument }: { onCreateInstrument: (instrume
                         size="small"
                         disabled={!online}
                         onClick={() => toggleClipPlayback(clipTime)}
-                        title={clipPlaying ? 'Met la lecture en pause' : 'Lit le fichier à partir du curseur, qui le suit'}
+                        title={clipPlaying ? 'Met la lecture en pause (Espace)' : 'Lit le fichier à partir du curseur, qui le suit. Espace : lecture / pause'}
                       >
                         {clipPlaying ? <Pause size={13} /> : <Play size={13} />}
                         {clipPlaying ? 'Pause' : 'Lire'}
@@ -825,7 +1153,7 @@ export function Analyzer({ onCreateInstrument }: { onCreateInstrument: (instrume
                     loadWaveform={api.clipWaveform}
                     onSeek={seekClip}
                     selection={clipSelection}
-                    onSelect={setClipSelection}
+                    onSelect={selectByHand(setClipSelection)}
                     windowSeconds={windowMs / 1000}
                   />
                 ) : (
@@ -1018,19 +1346,19 @@ export function Analyzer({ onCreateInstrument }: { onCreateInstrument: (instrume
             actions={
               <Button
                 size="small"
-                variant="primary"
+                variant={draft && !draftStale ? 'default' : 'primary'}
                 disabled={!canCreate || creating}
-                onClick={() => void createInstrument()}
+                onClick={() => void tryInstrument()}
                 title={
                   !canCreate
                     ? 'Il faut une note et ses partiels : place le curseur ou choisis une zone sur un son'
-                    : zoneMode
-                      ? 'Crée une carte de l’Instrument Creator avec ces partiels et l’enveloppe de chacun, mesurée sur la zone, et l’ouvre'
-                      : 'Crée une carte de l’Instrument Creator avec ces partiels (rapports et amplitudes), et l’ouvre'
+                    : `${draft ? 'Refait l’instrument à l’essai' : 'Fait un instrument à l’essai'} avec ces partiels${
+                        zoneMode ? ' et l’enveloppe de chacun, mesurée sur la zone' : ' (rapports et amplitudes)'
+                      }, joué au clavier en bas. Rien n’est sauvegardé.`
                 }
               >
-                <Sparkles size={13} />
-                {creating ? 'Mesure des enveloppes…' : 'Créer un instrument'}
+                {draft ? <RefreshCw size={13} /> : <Sparkles size={13} />}
+                {creating ? 'Mesure des enveloppes…' : draft ? 'Mettre à jour l’essai' : 'Essayer l’instrument'}
               </Button>
             }
           >
@@ -1049,20 +1377,74 @@ export function Analyzer({ onCreateInstrument }: { onCreateInstrument: (instrume
                 onChange={setHarmonicsOnly}
               />
             </div>
+            {zoneNotes && zoneNotes.length > 0 && (
+              <div className={styles.zoneNotes}>
+                <p className={strongNotes.length > 1 && !notesZone ? styles.warning : styles.note}>
+                  {notesZone
+                    ? 'Une note seule, sur son temps dans la zone : les rapports sont pris à elle, les autres notes sont écartées (leurs harmoniques communes restent mêlées).'
+                    : strongNotes.length > 1
+                      ? `Plusieurs notes jouées ensemble ou à la suite : l’analyse de la zone les prend pour une seule${
+                          shownNoteName ? `, ${shownNoteName}` : ''
+                        }. Choisis-en une pour son timbre seul, ou garde la zone entière pour un instrument qui joue tout l’accord sur une seule touche.`
+                      : 'Notes entendues dans la zone : un clic en analyse une seule.'}
+                </p>
+                <div className={styles.noteChips}>
+                  {zoneNotes.map((span, index) => {
+                    const note = frequencyToNote(span.frequency, a4);
+                    const name = note ? `${note.name}${note.octave}` : `${Math.round(span.frequency)} Hz`;
+                    return (
+                      <button
+                        key={index}
+                        type="button"
+                        className={styles.noteChip}
+                        data-weak={span.strength < STRONG_NOTE ? 'true' : undefined}
+                        disabled={!online}
+                        onClick={() => analyzeNote(span)}
+                        title={`Analyser ${name} seule, de ${span.start.toFixed(2)} à ${span.end.toFixed(2)} s : rapports pris à ${name} (${span.frequency.toFixed(1)} Hz). Force ${Math.round(span.strength * 100)} % de la plus forte.`}
+                      >
+                        <span className={styles.noteChipName}>{name}</span>
+                        <span className={styles.noteChipTime}>
+                          {span.start.toFixed(2)}–{span.end.toFixed(2)} s
+                        </span>
+                        <span className={styles.noteChipBar}>
+                          <span style={{ width: `${Math.round(span.strength * 100)}%` }} />
+                        </span>
+                      </button>
+                    );
+                  })}
+                  {notesZone && (
+                    <Button size="small" onClick={backToNotesZone} title="Revient à la zone choisie et à la note de référence automatique">
+                      Toute la zone
+                    </Button>
+                  )}
+                </div>
+              </div>
+            )}
             {zoneOtherNotes > OTHER_NOTES_SHARE && (
               <p className={styles.warning}>
                 La zone contient d’autres notes que {shownNoteName} ({Math.round(zoneOtherNotes * 100)} % du temps). Elles sont
                 écartées, mais une zone sur une seule note, de son attaque à la suivante, donne le résultat le plus net.
               </p>
             )}
+            {analyzedTarget !== null && (
+              <WaveformFitCard
+                fit={waveFit}
+                loading={waveFitLoading}
+                error={waveFitError}
+                noteName={noteLabel}
+                weakNote={weakFittedNote}
+                buildFrom={buildFrom}
+                onBuildFrom={setBuildFrom}
+              />
+            )}
             {canCreate && (
               <p className={styles.note}>
                 {zoneMode
-                  ? 'Créer un instrument mesure aussi l’enveloppe de chaque partiel sur la zone : qu’elle aille de l’attaque de la note à la suivante.'
-                  : 'Avec une zone d’une seule note, de son attaque à la suivante, l’instrument créé reçoit aussi l’enveloppe de chaque partiel.'}
+                  ? 'L’instrument à l’essai reçoit aussi l’enveloppe de chaque partiel, mesurée sur la zone : qu’elle aille de l’attaque de la note à la suivante.'
+                  : 'Avec une zone d’une seule note, de son attaque à la suivante, l’instrument à l’essai reçoit aussi l’enveloppe de chaque partiel.'}
               </p>
             )}
-            {createError && <p className={styles.warning}>{createError}</p>}
+            {createError && !draft && <p className={styles.warning}>{createError}</p>}
             {partials.length === 0 ? (
               <p className={styles.note}>
                 {analysis ? 'Aucun pic ne se détache du bruit.' : 'Les partiels du son analysé s’affichent ici, du plus grave au plus aigu.'}
@@ -1118,6 +1500,119 @@ export function Analyzer({ onCreateInstrument }: { onCreateInstrument: (instrume
           </Section>
         </Panel>
       </div>
+
+      {draft && (
+        <Panel as="div" className={styles.trial}>
+          <div className={styles.trialInfo}>
+            <span className={styles.trialHead}>
+              <span className={styles.trialEyebrow}>Instrument à l’essai</span>
+              <span className={styles.trialName} title={draft.instrument.description}>
+                {draft.instrument.name}
+              </span>
+            </span>
+            <span className={styles.note}>
+              {draft.instrument.partials.length} partiel{draft.instrument.partials.length > 1 ? 's' : ''}
+              {draft.noteMidi !== null ? ` · rapports à ${midiLabel(draft.noteMidi)}` : ''}
+              {draft.profile
+                ? ` · ${draft.profile}`
+                : draft.target && 'start' in draft.target
+                  ? ' · une enveloppe mesurée par partiel'
+                  : ' · une seule enveloppe'}
+            </span>
+            {createError ? (
+              <span className={styles.warning}>{createError}</span>
+            ) : draftStale ? (
+              <span className={styles.warning}>
+                La sélection ou les réglages ont changé depuis : l’instrument reste tel quel, « Mettre à jour » le refait avec eux.
+              </span>
+            ) : draft.target === null ? (
+              <span className={styles.note}>
+                Fait sur ce que le micro entendait au clic : « Mettre à jour » reprend ce qu’il entend.
+              </span>
+            ) : (
+              <span className={styles.note}>
+                {draft.noteMidi !== null ? `Joue ${midiLabel(draft.noteMidi)} (le point vert) et` : 'Joue-le et'} compare avec
+                l’original. Rien n’est gardé avant « Sauvegarder ».
+              </span>
+            )}
+          </div>
+          <div className={styles.trialVolume}>
+            <Slider
+              label="Volume"
+              value={draft.instrument.volume}
+              min={0}
+              max={1}
+              step={0.01}
+              format={(volume) => `${Math.round(volume * 100)} %`}
+              onChange={setDraftVolume}
+            />
+          </div>
+          <div className={styles.trialActions}>
+            {draftSelectionBack && (
+              <Button
+                size="small"
+                onClick={backToDraftSelection}
+                title="Remet la zone (ou le moment) et la note de référence d’où vient l’instrument à l’essai"
+              >
+                <Undo2 size={13} />
+                Revenir à sa sélection
+              </Button>
+            )}
+            <Button
+              size="small"
+              variant={draftStale ? 'primary' : 'default'}
+              disabled={!canCreate || creating}
+              onClick={() => void tryInstrument()}
+              title={
+                canCreate
+                  ? 'Refait l’instrument à l’essai depuis la sélection et les réglages affichés'
+                  : 'Il faut une note et ses partiels : place le curseur ou choisis une zone sur un son'
+              }
+            >
+              <RefreshCw size={13} />
+              {creating ? 'Mesure…' : 'Mettre à jour'}
+            </Button>
+            <Button
+              size="small"
+              disabled={!online || !originalZone}
+              onClick={playOriginal}
+              title={
+                originalZone
+                  ? 'Lit en boucle la zone sélectionnée, pour comparer'
+                  : 'Choisis une zone sur le son pour la réécouter en boucle'
+              }
+            >
+              {originalPlaying ? <Pause size={13} /> : <Play size={13} />}
+              {originalPlaying ? 'Pause' : 'Lire l’original'}
+            </Button>
+            <Button size="small" onClick={() => setDraft(null)} title="Ferme l’essai sans rien garder">
+              <X size={13} />
+              Abandonner
+            </Button>
+            <Button
+              size="small"
+              variant="primary"
+              onClick={saveDraft}
+              title="Ajoute l’instrument à la bibliothèque et l’ouvre dans l’Instrument Creator"
+            >
+              <Save size={13} />
+              Sauvegarder
+            </Button>
+          </div>
+        </Panel>
+      )}
+      {draft && (
+        <KeyboardDock
+          instrument={draft.instrument}
+          onOctaveChange={setDraftOctave}
+          markedNote={draft.noteMidi ?? undefined}
+          markedTitle={
+            draft.noteMidi !== null
+              ? `${midiLabel(draft.noteMidi)} : la note analysée, qui doit sonner comme l’original`
+              : undefined
+          }
+        />
+      )}
     </div>
   );
 }

@@ -1,8 +1,9 @@
 import { Minus, Plus, Power } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { instrumentParams } from '../lib/instrumentSound';
 import { keyboardOctave, MAX_OCTAVE, MIN_OCTAVE, type Instrument } from '../lib/instruments';
+import { isTyping } from '../lib/keyboard';
 import { midiToFrequency, midiToName } from '../lib/music';
-import { toTimbre } from '../lib/partials';
 import { playBlocker, useSynthServer } from '../lib/SynthServer';
 import layout from './layout.module.css';
 import { PianoKeyboard } from './PianoKeyboard';
@@ -60,25 +61,24 @@ function useKeyLabel(): (code: string) => string {
   );
 }
 
-function isTyping(target: EventTarget | null): boolean {
-  if (target instanceof HTMLInputElement) {
-    return !['range', 'checkbox', 'radio', 'button'].includes(target.type);
-  }
-  return target instanceof HTMLElement && (target.isContentEditable || ['SELECT', 'TEXTAREA'].includes(target.tagName));
-}
-
 /**
- * Bottom dock of the Instrument Creator: audio power, note readout, keyboard.
- * The keyboard starts at the octave the instrument keeps; onOctaveChange gets
- * every change, to keep it (a locked instrument keeps its own: the change
- * then lasts until another instrument is chosen).
+ * Bottom dock of the Instrument Creator, and of the Analyzer's trial
+ * instrument: audio power, note readout, keyboard. The keyboard starts at the
+ * octave the instrument keeps; onOctaveChange gets every change, to keep it (a
+ * locked instrument keeps its own: the change then lasts until another
+ * instrument is chosen). markedNote, if on the keyboard, is marked on its key.
  */
 export function KeyboardDock({
   instrument,
   onOctaveChange,
+  markedNote,
+  markedTitle,
 }: {
   instrument: Instrument;
   onOctaveChange?: (octave: number) => void;
+  markedNote?: number;
+  /** Tooltip of the marked key */
+  markedTitle?: string;
 }) {
   const server = useSynthServer();
   const { canPlay, noteOn, noteOff, engine, busy } = server;
@@ -143,6 +143,16 @@ export function KeyboardDock({
     }
   }, [canPlay, setHeldNotes]);
 
+  // The dock closing (another screen, a trial instrument dropped) releases a note still held
+  const noteOffRef = useRef(noteOff);
+  noteOffRef.current = noteOff;
+  useEffect(
+    () => () => {
+      if (heldRef.current.length > 0) noteOffRef.current();
+    },
+    [],
+  );
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.repeat || event.ctrlKey || event.metaKey || event.altKey || isTyping(event.target)) return;
@@ -203,13 +213,7 @@ export function KeyboardDock({
           onClick={() =>
             engine.running
               ? void server.stopAudio()
-              : void server.startAudio({
-                  volume: instrument.volume,
-                  timbre: toTimbre(instrument.partials, engine.maxPartials),
-                  low_cutoff: instrument.filter.lowCutoff,
-                  cutoff: instrument.filter.cutoff,
-                  resonance: instrument.filter.resonance,
-                })
+              : void server.startAudio(instrumentParams(instrument, engine.maxPartials))
           }
         >
           <Power size={20} strokeWidth={2} />
@@ -237,6 +241,8 @@ export function KeyboardDock({
           octaves={2}
           activeNotes={held}
           keyLabels={keyLabels}
+          markedNote={markedNote}
+          markedTitle={markedTitle}
           disabled={!canPlay}
           onNoteDown={press}
           onNoteUp={release}

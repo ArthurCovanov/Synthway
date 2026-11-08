@@ -8,11 +8,13 @@ import type {
   EnvelopeAnalysis,
   EnvelopeParams,
   HealthResponse,
+  NoteSpan,
   SeparationModel,
   SeparationStatus,
   SynthStateMessage,
   TimbreParams,
   ToneParams,
+  WaveformFit,
 } from '../types';
 
 // The browser calls synthway-server directly, at the address given to Vite
@@ -89,6 +91,14 @@ function analysisPath(base: string, target: AnalysisTarget, options: AnalysisOpt
   );
 }
 
+function notesPath(base: string, zone: { start: number; end: number }, options: AnalysisOptions): string {
+  return `${base}?start=${zone.start.toFixed(4)}&end=${zone.end.toFixed(4)}&window_ms=${Math.round(options.windowMs)}&noise_gate_db=${options.noiseGateDb}`;
+}
+
+function waveformFitPath(base: string, zone: { start: number; end: number }, options: AnalysisOptions): string {
+  return `${notesPath(base, zone, options)}&reference_hz=${options.referenceHz.toFixed(3)}`;
+}
+
 function post<T>(path: string, body?: unknown): Promise<T> {
   return request<T>(path, {
     method: 'POST',
@@ -133,6 +143,9 @@ export const api = {
   /** The partials of one note of the loaded file and the envelope of each: the zone goes from its attack to the next note */
   clipEnvelopes: (zone: { start: number; end: number }, options: AnalysisOptions) =>
     request<EnvelopeAnalysis>(analysisPath('/api/analyzer/clip/envelopes', zone, options), {}, ZONE_TIMEOUT_MS),
+  /** The notes heard in a zone of the loaded file, even several at once, and when each starts and ends */
+  clipNotes: (zone: { start: number; end: number }, options: AnalysisOptions) =>
+    request<NoteSpan[]>(notesPath('/api/analyzer/clip/notes', zone, options), {}, ZONE_TIMEOUT_MS),
   /** The waveform of frames frames of the loaded file from first, in count parts (never more than frames) */
   clipWaveform: (first: number, frames: number, count: number) =>
     request<ClipWaveformPart>(`/api/analyzer/clip/waveform?first=${first}&frames=${frames}&count=${count}`),
@@ -151,9 +164,18 @@ export const api = {
   /** Like clipEnvelopes, for the last recording */
   recordingEnvelopes: (zone: { start: number; end: number }, options: AnalysisOptions) =>
     request<EnvelopeAnalysis>(analysisPath('/api/analyzer/recording/envelopes', zone, options), {}, ZONE_TIMEOUT_MS),
+  /** Which waveform the note of a zone of the loaded file is closest to (options.referenceHz: that note; 0, the zone's) */
+  clipWaveformFit: (zone: { start: number; end: number }, options: AnalysisOptions) =>
+    request<WaveformFit>(waveformFitPath('/api/analyzer/clip/waveform-fit', zone, options), {}, ZONE_TIMEOUT_MS),
+  /** Like clipWaveformFit, for the last recording */
+  recordingWaveformFit: (zone: { start: number; end: number }, options: AnalysisOptions) =>
+    request<WaveformFit>(waveformFitPath('/api/analyzer/recording/waveform-fit', zone, options), {}, ZONE_TIMEOUT_MS),
+  /** Like clipNotes, for the last recording */
+  recordingNotes: (zone: { start: number; end: number }, options: AnalysisOptions) =>
+    request<NoteSpan[]>(notesPath('/api/analyzer/recording/notes', zone, options), {}, ZONE_TIMEOUT_MS),
   recordingWaveform: (first: number, frames: number, count: number) =>
     request<ClipWaveformPart>(`/api/analyzer/recording/waveform?first=${first}&frames=${frames}&count=${count}`),
-  /** AI-nalyzer: whether Demucs is ready, the piece loaded, the separation and its stems */
+  /** Decomposer: whether Demucs is ready, the piece loaded, the separation and its stems */
   separation: () => request<SeparationStatus>('/api/separation'),
   /** The piece to decompose, in place of the previous one and its stems */
   uploadSeparationSource: (file: File) => uploadAudio<SeparationStatus>('/api/separation/source', file),
@@ -165,7 +187,7 @@ export const api = {
     postExplained<ClipInfo>(`/api/separation/stems/${encodeURIComponent(name)}/analyzer`, undefined, 30000),
 };
 
-/** The piece loaded into the AI-nalyzer, as it was sent */
+/** The piece loaded into the Decomposer, as it was sent */
 export const SEPARATION_SOURCE_URL = serverUrl('/api/separation/source');
 
 /** A stem of the last separation as a WAV file: played, or downloaded */

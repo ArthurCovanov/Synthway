@@ -13,7 +13,7 @@ Synthway est structuré en **3 sous-projets indépendants et hautement découpl�
 flowchart LR
     subgraph UI ["synthway-ui (Frontend)"]
         React["React + TypeScript + Vite"]
-        UI_Controls["Instrument Creator, Composer, Analyzer, AI-nalyzer, Réglages"]
+        UI_Controls["Instrument Creator, Composer, Analyzer, Decomposer, Réglages"]
     end
 
     subgraph Server ["synthway-server (Ordonnanceur)"]
@@ -82,7 +82,7 @@ synthway/
 │       ├── main.py             # Application FastAPI & mode autonome
 │       ├── core_bridge.py      # Pont ctypes vers libsynthway
 │       ├── models.py           # Modèles Pydantic / Dataclasses
-│       └── separation.py       # AI-nalyzer : lance Demucs dans un processus à part
+│       └── separation.py       # Decomposer : lance Demucs dans un processus à part
 │
 ├── synthway-demucs/            # Facultatif : séparation de sources (Demucs v4), essai local
 │   ├── README.md               # Installation (uv sync), licence, désactivation
@@ -98,7 +98,7 @@ synthway/
     ├── scripts/                # Déclinaisons du logo, serveur factice muet
     └── src/                    # Code source de l'IHM
         ├── App.tsx             # Navigation entre les 5 écrans
-        ├── screens/            # Instrument Creator, Composer, Analyzer, AI-nalyzer, Réglages
+        ├── screens/            # Instrument Creator, Composer, Analyzer, Decomposer, Réglages
         ├── components/         # Barre latérale, contrôles, oscilloscope, clavier
         ├── lib/                # Client API/WebSocket, modèles, état partagé
         ├── styles/             # Thème synthwave (couleurs du logo), polices
@@ -156,7 +156,7 @@ Ouvrez [http://localhost:5173](http://localhost:5173) pour utiliser le synthéti
 
 ### Étape 4 (facultative) : la séparation de sources (`synthway-demucs`)
 
-L'onglet AI-nalyzer décompose un morceau en pistes avec Demucs v4. Il lui faut son propre environnement Python, créé par [uv](https://docs.astral.sh/uv/) (environ 3 Go avec PyTorch) :
+L'onglet Decomposer décompose un morceau en pistes avec Demucs v4. Il lui faut son propre environnement Python, créé par [uv](https://docs.astral.sh/uv/) (environ 3 Go avec PyTorch) :
 
 ```bash
 cd synthway-demucs
@@ -197,5 +197,5 @@ Lors de l'ajout de nouvelles fonctionnalités, respectez scrupuleusement les fro
    - Pour une version application de bureau sans navigateur, préférer **Tauri** à Electron pour sa légèreté.
 4. **Règles pour `synthway-demucs` (facultatif)** :
    - Le serveur n'importe jamais PyTorch ni Demucs : il lance `separate.py` avec le Python de `synthway-demucs/.venv`, dans un processus à part, et lit ses lignes JSON.
-   - Tout doit continuer de marcher sans ce dossier : l'AI-nalyzer dit alors pourquoi il ne peut rien décomposer.
+   - Tout doit continuer de marcher sans ce dossier : le Decomposer dit alors pourquoi il ne peut rien décomposer.
    - `vendor/demucs/` reste le dépôt amont, sans modification. Les poids téléchargés (`models/`) ne sont jamais commités.

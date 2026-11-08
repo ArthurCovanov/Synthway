@@ -1,6 +1,6 @@
 """
 Separates a piece of music into its sources (drums, bass, vocals, other...)
-with Demucs v4, for Synthway's AI-nalyzer. Runs with this folder's own Python
+with Demucs v4, for Synthway's Decomposer. Runs with this folder's own Python
 (uv sync), never inside the server: synthway-server starts it as a process.
 
     .venv/Scripts/python separate.py INPUT OUT_DIR [--model htdemucs] [--device auto]

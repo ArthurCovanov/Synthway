@@ -148,6 +148,23 @@ def test_noise_gate(core, analyzer):
     assert analyzer.get_noise_gate() == -21.0
 
 
+@pytest.mark.parametrize("waveform, shape", [
+    (WaveformEnum.SAWTOOTH, 3),
+    (WaveformEnum.SQUARE, 1),
+    (WaveformEnum.TRIANGLE, 2),
+])
+def test_waveform_fit(core, analyzer, tmp_path, waveform, shape):
+    # A held note of each waveform of the engine, rendered then fitted: the closest shape is its own
+    path = tmp_path / "held.wav"
+    core.render_to_wav(str(path), 220.0, 0.8, waveform=waveform, volume=0.5, channels=1)
+    analyzer.load_clip_bytes(path.read_bytes())
+    fit = analyzer.fit_waveform(0.1, 0.7)
+    assert abs(cents(fit.frequency, 220.0)) < 10
+    assert fit.moments > 0 and len(fit.harmonics) == 64 and len(fit.fits) == 5
+    assert int(fit.fits[0].shape) == shape, [(int(f.shape), f.error_db) for f in fit.fits]
+    assert int(fit.harmonics[0].state) == 0 and fit.harmonics[0].level == 0.0
+
+
 def test_envelopes_round_trip(core, analyzer, tmp_path):
     # A card whose harmonics fade exponentially, each at its own speed, rendered by the
     # engine then measured back: the analyzer finds each partial's decay

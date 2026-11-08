@@ -65,6 +65,10 @@ void sw_engine_params_init(sw_engine_params* params) {
     atomic_init(&params->filter_low_cutoff, 20.0f);
     atomic_init(&params->filter_high_cutoff, 20000.0f);
     atomic_init(&params->filter_resonance, 0.0f);
+    atomic_init(&params->reverb_mix, 0.0f);
+    atomic_init(&params->unison_voices, 1u);
+    atomic_init(&params->unison_detune_cents, 0.0f);
+    atomic_init(&params->unison_spread, 0.0f);
     sw_timbre_exchange_init(&params->timbre);
 }
 
@@ -79,9 +83,15 @@ void sw_engine_params_snapshot(sw_engine_params* params, sw_synth_params* out) {
     out->envelope.sustain_level = atomic_load_explicit(&params->env_sustain, memory_order_relaxed);
     out->envelope.release_s = atomic_load_explicit(&params->env_release, memory_order_relaxed);
     out->envelope.curve = SYNTHWAY_ENVELOPE_LINEAR; /* the single oscillator's envelope is always linear */
+    out->envelope.attack_curve = SYNTHWAY_ATTACK_LINEAR;
+    out->envelope.release_curve = SYNTHWAY_ENVELOPE_LINEAR;
     out->filter_low_cutoff_hz = atomic_load_explicit(&params->filter_low_cutoff, memory_order_relaxed);
     out->filter_high_cutoff_hz = atomic_load_explicit(&params->filter_high_cutoff, memory_order_relaxed);
     out->filter_resonance = atomic_load_explicit(&params->filter_resonance, memory_order_relaxed);
+    out->reverb_mix = atomic_load_explicit(&params->reverb_mix, memory_order_relaxed);
+    out->unison_voices = atomic_load_explicit(&params->unison_voices, memory_order_relaxed);
+    out->unison_detune_cents = atomic_load_explicit(&params->unison_detune_cents, memory_order_relaxed);
+    out->unison_spread = atomic_load_explicit(&params->unison_spread, memory_order_relaxed);
 }
 
 SYNTHWAY_API synthway_result_t synthway_engine_set_filter(synthway_engine_t* engine, float low_cutoff_hz, float high_cutoff_hz, float resonance) {
@@ -98,6 +108,38 @@ SYNTHWAY_API synthway_result_t synthway_engine_get_filter(const synthway_engine_
     *out_low_cutoff_hz = atomic_load_explicit((_Atomic float*)&engine->params.filter_low_cutoff, memory_order_relaxed);
     *out_high_cutoff_hz = atomic_load_explicit((_Atomic float*)&engine->params.filter_high_cutoff, memory_order_relaxed);
     *out_resonance = atomic_load_explicit((_Atomic float*)&engine->params.filter_resonance, memory_order_relaxed);
+    return SYNTHWAY_OK;
+}
+
+SYNTHWAY_API synthway_result_t synthway_engine_set_reverb(synthway_engine_t* engine, float mix) {
+    if (!engine || !(mix >= 0.0f && mix <= 1.0f)) {
+        return SYNTHWAY_INVALID_PARAM;
+    }
+    atomic_store_explicit(&engine->params.reverb_mix, mix, memory_order_relaxed);
+    return SYNTHWAY_OK;
+}
+
+SYNTHWAY_API float synthway_engine_get_reverb(const synthway_engine_t* engine) {
+    return engine ? atomic_load_explicit((_Atomic float*)&engine->params.reverb_mix, memory_order_relaxed) : 0.0f;
+}
+
+SYNTHWAY_API synthway_result_t synthway_engine_set_unison(synthway_engine_t* engine, uint32_t voices, float detune_cents, float spread) {
+    if (!engine || voices < 1 || voices > SYNTHWAY_MAX_UNISON_VOICES
+        || !(detune_cents >= 0.0f && detune_cents <= SYNTHWAY_MAX_UNISON_DETUNE_CENTS) /* also false for NaN */
+        || !(spread >= 0.0f && spread <= 1.0f)) {
+        return SYNTHWAY_INVALID_PARAM;
+    }
+    atomic_store_explicit(&engine->params.unison_voices, voices, memory_order_relaxed);
+    atomic_store_explicit(&engine->params.unison_detune_cents, detune_cents, memory_order_relaxed);
+    atomic_store_explicit(&engine->params.unison_spread, spread, memory_order_relaxed);
+    return SYNTHWAY_OK;
+}
+
+SYNTHWAY_API synthway_result_t synthway_engine_get_unison(const synthway_engine_t* engine, uint32_t* out_voices, float* out_detune_cents, float* out_spread) {
+    if (!engine || !out_voices || !out_detune_cents || !out_spread) return SYNTHWAY_INVALID_PARAM;
+    *out_voices = atomic_load_explicit((_Atomic uint32_t*)&engine->params.unison_voices, memory_order_relaxed);
+    *out_detune_cents = atomic_load_explicit((_Atomic float*)&engine->params.unison_detune_cents, memory_order_relaxed);
+    *out_spread = atomic_load_explicit((_Atomic float*)&engine->params.unison_spread, memory_order_relaxed);
     return SYNTHWAY_OK;
 }
 
@@ -202,7 +244,9 @@ static bool sw_valid_partial(const synthway_partial_t* partial) {
         && partial->amplitude >= 0.0f && partial->amplitude <= 1.0f
         && (unsigned)partial->waveform <= SYNTHWAY_WAVEFORM_SAWTOOTH /* negative values wrap above */
         && sw_valid_envelope(envelope->attack_s, envelope->decay_s, envelope->sustain_level, envelope->release_s)
-        && (unsigned)envelope->curve <= SYNTHWAY_ENVELOPE_EXPONENTIAL;
+        && (unsigned)envelope->curve <= SYNTHWAY_ENVELOPE_EXPONENTIAL
+        && (unsigned)envelope->attack_curve <= SYNTHWAY_ATTACK_CONVEX
+        && (unsigned)envelope->release_curve <= SYNTHWAY_ENVELOPE_EXPONENTIAL;
 }
 
 SYNTHWAY_API synthway_result_t synthway_engine_set_timbre(

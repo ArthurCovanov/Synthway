@@ -1,6 +1,6 @@
-import { ENVELOPE_CURVE, WAVEFORM, type EnvelopeCurve, type Waveform } from '../types';
+import { ATTACK_CURVE, ENVELOPE_CURVE, WAVEFORM, type AttackCurve, type EnvelopeCurve, type UnisonParams, type Waveform } from '../types';
 import { HUES, PARTIAL_HUES, type NeonHue } from './neon';
-import { newId } from './storage';
+import { loadJson, newId, saveJson } from './storage';
 
 /** Times in seconds, sustain level in [0, 1] */
 export interface Envelope {
@@ -8,8 +8,17 @@ export interface Envelope {
   decay: number;
   sustain: number;
   release: number;
-  /** How the decay and the release fall; absent: linear (instruments saved before it) */
+  /** How the decay falls; absent: linear (instruments saved before it) */
   curve?: EnvelopeCurve;
+  /** How the attack rises; absent: a straight ramp */
+  attack_curve?: AttackCurve;
+  /** How the release falls; absent: like the decay (instruments saved before each segment had its own) */
+  release_curve?: EnvelopeCurve;
+}
+
+/** The release's curve: its own, or the decay's for an envelope saved before it had one */
+export function releaseCurveOf(envelope: Envelope): EnvelopeCurve {
+  return envelope.release_curve ?? envelope.curve ?? ENVELOPE_CURVE.Linear;
 }
 
 /**
@@ -20,8 +29,10 @@ export interface Envelope {
 export function envelopeLevel(envelope: Envelope, t: number, noteOff: number): number {
   const { attack, decay, sustain, release } = envelope;
   const exponential = envelope.curve === ENVELOPE_CURVE.Exponential;
+  const exponentialRelease = releaseCurveOf(envelope) === ENVELOPE_CURVE.Exponential;
+  const convex = envelope.attack_curve === ATTACK_CURVE.Convex;
   const held = (time: number) => {
-    if (time < attack) return time / attack;
+    if (time < attack) return convex ? (time / attack) ** 2 : time / attack;
     const since = time - attack;
     if (exponential) return decay > 0 ? sustain + (1 - sustain) * Math.pow(10, (-3 * since) / decay) : sustain;
     return since < decay ? 1 - ((1 - sustain) * since) / decay : sustain;
@@ -29,7 +40,7 @@ export function envelopeLevel(envelope: Envelope, t: number, noteOff: number): n
   if (t <= noteOff) return held(t);
   const since = t - noteOff;
   if (release <= 0 || since >= release) return 0;
-  return exponential ? held(noteOff) * Math.pow(10, (-3 * since) / release) : held(noteOff) * (1 - since / release);
+  return exponentialRelease ? held(noteOff) * Math.pow(10, (-3 * since) / release) : held(noteOff) * (1 - since / release);
 }
 
 /** Moments to draw an envelope at, up to total: its corners, and enough in between for its curves */
@@ -72,7 +83,7 @@ export interface TimbrePartial {
   locked?: boolean;
 }
 
-// The partials (the instrument's timbre), volume, and band-pass filter reach the engine.
+// The partials (the instrument's timbre), volume, band-pass filter, reverb and unison reach the engine.
 export interface Instrument {
   id: string;
   name: string;
@@ -82,10 +93,22 @@ export interface Instrument {
   volume: number;
   partials: TimbrePartial[];
   filter: FilterSettings;
+  /** Share of reverberated sound, 0 to 1 (synthway_engine_set_reverb); absent: none */
+  reverb?: number;
+  /** Each partial played by several detuned voices (synthway_engine_set_unison); absent: none */
+  unison?: UnisonParams;
   /** Lowest octave of the keyboard, the last one played (MIN_OCTAVE to MAX_OCTAVE); absent: DEFAULT_OCTAVE */
   octave?: number;
   /** Locked: read only, like a saved version; it still plays, and a copy can be edited */
   locked?: boolean;
+}
+
+/** No unison: one voice per partial, the engine's default */
+export const NO_UNISON: UnisonParams = { voices: 1, detune: 0, spread: 0 };
+
+/** The unison an instrument plays with: NO_UNISON when it has none */
+export function unisonOf(instrument: Instrument): UnisonParams {
+  return instrument.unison ?? NO_UNISON;
 }
 
 /** Octaves the keyboard of the Instrument Creator can start from: it shows two, from C of that octave */
@@ -125,6 +148,26 @@ const stringEnvelope = (harmonic: number): Envelope => ({
   release: 0.15,
 });
 const organEnvelope: Envelope = { attack: 0.02, decay: 0.1, sustain: 0.9, release: 0.12 };
+/** Measured on the A5 of « Chasing Shadows » (other stem, 96.2 s): the level comes back after each kick
+    along the square of a straight ramp, full after 90 ms */
+const shadowEnvelope: Envelope = { attack: 0.09, decay: 0, sustain: 1, release: 0.05, attack_curve: ATTACK_CURVE.Convex };
+/** Its harmonics 1 to 12, relative to the first: a sawtooth whose highs fall off faster (a low-pass) */
+const SHADOW_HARMONICS = [1, 0.423, 0.169, 0.107, 0.068, 0.041, 0.033, 0.021, 0.014, 0.009, 0.008, 0.006];
+/** The chord A5 + D6 of the same beat, as harmonics of D4 (×3 and ×4) with their own harmonics:
+    measured by the core on 116.28-116.78 s, after the kick, where only that chord plays */
+const SHADOW_CHORD_HARMONICS: [number, number][] = [
+  [1, 0.17], [2, 0.19], [3, 1], [4, 0.92], [6, 0.44], [8, 0.33], [9, 0.2], [12, 0.21],
+  [15, 0.08], [16, 0.09], [18, 0.05], [20, 0.04], [21, 0.03], [24, 0.03],
+];
+const shadowChordEnvelope: Envelope = {
+  attack: 0.09,
+  decay: 0,
+  sustain: 1,
+  release: 0.05,
+  curve: ENVELOPE_CURVE.Exponential,
+  attack_curve: ATTACK_CURVE.Convex,
+  release_curve: ENVELOPE_CURVE.Exponential,
+};
 
 export const PRESET_INSTRUMENTS: Instrument[] = [
   {
@@ -235,7 +278,52 @@ export const PRESET_INSTRUMENTS: Instrument[] = [
     ]),
     filter: { lowCutoff: 20, cutoff: 12000, resonance: 0.05 },
   },
+  {
+    id: 'shadow-supersaw',
+    name: 'Shadow Supersaw',
+    description:
+      'Mesurée sur « Chasing Shadows » (piste other, 96,2 s) : douze harmoniques de scie adoucie, 7 voix ' +
+      'désaccordées de ±15 cents étalées en stéréo, attaque convexe de 90 ms. Le morceau la joue en La5 + Ré6.',
+    category: 'lead',
+    hue: 'violet',
+    volume: 0.23,
+    partials: partials(
+      SHADOW_HARMONICS.map((amplitude, index) => [index + 1, amplitude, { ...shadowEnvelope }] as [number, number, Envelope]),
+    ),
+    filter: { lowCutoff: 20, cutoff: 20000, resonance: 0 },
+    reverb: 0.2,
+    unison: { voices: 7, detune: 15, spread: 0.6 },
+    octave: 5,
+  },
+  {
+    id: 'shadow-chord',
+    name: 'Shadow Chord',
+    description:
+      'L’accord La5 + Ré6 de « Chasing Shadows » (piste other, 116,3 s) sur une seule touche : joue Ré4. Ses deux ' +
+      'notes sont les harmoniques 3 et 4 de Ré4, mesurées avec les leurs. 5 voix à ±8 cents, attaque convexe de 90 ms.',
+    category: 'pad',
+    hue: 'magenta',
+    volume: 0.14,
+    partials: partials(SHADOW_CHORD_HARMONICS.map(([ratio, amplitude]) => [ratio, amplitude, { ...shadowChordEnvelope }])),
+    filter: { lowCutoff: 20, cutoff: 20000, resonance: 0 },
+    reverb: 0.2,
+    unison: { voices: 5, detune: 8, spread: 0.5 },
+    octave: 4,
+  },
 ];
+
+/** Presets added after libraries already existed: offered once to each, and not brought back once deleted */
+const LATER_PRESET_IDS = ['shadow-supersaw', 'shadow-chord'];
+/* v1 was written while the state was being created, which React's StrictMode does twice: the second
+   time, the preset counted as offered and was left out. v2 offers it again, once. */
+const OFFERED_PRESETS_KEY = 'synthway.offered-presets.v2';
+
+/** Records that the later presets have been offered: call it once the library is loaded (in an effect,
+    not while creating the state, which must stay pure) */
+export function markLaterPresetsOffered(): void {
+  const offered = loadJson<string[]>(OFFERED_PRESETS_KEY, []);
+  saveJson(OFFERED_PRESETS_KEY, Array.from(new Set([...offered, ...LATER_PRESET_IDS])));
+}
 
 export function createInstrument(): Instrument {
   return {
@@ -331,5 +419,12 @@ export function migrateInstruments(saved: unknown): Instrument[] {
       ...PRESET_INSTRUMENTS.filter((preset) => ADDITIVE_PRESET_IDS.includes(preset.id) && !ids.has(preset.id)),
     );
   }
+  const offered = loadJson<string[]>(OFFERED_PRESETS_KEY, []);
+  const ids = new Set(migrated.map((instrument) => instrument.id));
+  migrated.push(
+    ...PRESET_INSTRUMENTS.filter(
+      (preset) => LATER_PRESET_IDS.includes(preset.id) && !offered.includes(preset.id) && !ids.has(preset.id),
+    ),
+  );
   return migrated;
 }

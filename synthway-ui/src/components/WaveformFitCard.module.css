@@ -1,0 +1,163 @@
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 10px 0 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-m);
+  background: var(--bg-2);
+}
+
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+}
+
+.title {
+  font-family: var(--font-display);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-1);
+}
+
+.meta {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+
+.buildFrom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.buildFrom select {
+  min-width: 170px;
+}
+
+.note {
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+
+.warning {
+  font-size: 12.5px;
+  color: var(--warn);
+}
+
+.fits {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.fit {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--bg-1);
+  color: var(--text-1);
+  font-size: 12.5px;
+  text-align: left;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.fit:hover {
+  border-color: rgba(255, 124, 198, 0.55);
+  background: var(--bg-3);
+}
+
+.fit[data-best] {
+  color: var(--text-0);
+  border-color: var(--line-strong);
+}
+
+.fit[aria-pressed='true'] {
+  border-color: var(--neon-pink-soft);
+  box-shadow: 0 0 0 1px rgba(255, 124, 198, 0.35);
+}
+
+.fitName {
+  white-space: nowrap;
+}
+
+.fitGap {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+
+.fit[data-best] .fitGap {
+  color: var(--ok);
+}
+
+.descriptors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  font-size: 12.5px;
+  color: var(--text-1);
+}
+
+.chart {
+  width: 100%;
+  max-width: 720px;
+  height: auto;
+  display: block;
+}
+
+.gridLine {
+  stroke: var(--line);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.bar {
+  fill: var(--neon-violet);
+  opacity: 0.85;
+}
+
+.bar[data-state='1'] {
+  fill: var(--text-3);
+  opacity: 0.6;
+}
+
+.bar[data-state='2'] {
+  fill: var(--bg-5);
+  opacity: 1;
+}
+
+.axis {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  fill: var(--text-3);
+  text-anchor: middle;
+}
+
+.modelLine {
+  fill: none;
+  stroke: var(--neon-cyan);
+  stroke-width: 1.5;
+  opacity: 0.8;
+  vector-effect: non-scaling-stroke;
+}
+
+.modelDot {
+  fill: var(--neon-cyan);
+}
+
+.legend {
+  font-size: 11.5px;
+  color: var(--text-3);
+}

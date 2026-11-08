@@ -12,13 +12,15 @@ from typing import List, Optional, Sequence, Tuple
 
 try:
     from models import (
-        ANALYSIS_SPECTRUM_POINTS, MAX_PARTIALS, Analysis, AnalysisPartial, ClipTrack, ClipWaveform, DeviceInfo,
-        DeviceTypeEnum, Envelope, MidiPortInfo, MidiPortTypeEnum, Timbre, WaveformEnum,
+        ANALYSIS_SPECTRUM_POINTS, MAX_PARTIALS, MAX_UNISON_DETUNE_CENTS, MAX_UNISON_VOICES, Analysis, AnalysisPartial,
+        ClipTrack, ClipWaveform, DeviceInfo, DeviceTypeEnum, Envelope, HarmonicLevel, HarmonicStateEnum, MidiPortInfo,
+        MidiPortTypeEnum, NoteSpan, ShapeFit, Timbre, WaveformEnum, WaveformFit, WaveShapeEnum,
     )
 except ImportError:
     from .models import (
-        ANALYSIS_SPECTRUM_POINTS, MAX_PARTIALS, Analysis, AnalysisPartial, ClipTrack, ClipWaveform, DeviceInfo,
-        DeviceTypeEnum, Envelope, MidiPortInfo, MidiPortTypeEnum, Timbre, WaveformEnum,
+        ANALYSIS_SPECTRUM_POINTS, MAX_PARTIALS, MAX_UNISON_DETUNE_CENTS, MAX_UNISON_VOICES, Analysis, AnalysisPartial,
+        ClipTrack, ClipWaveform, DeviceInfo, DeviceTypeEnum, Envelope, HarmonicLevel, HarmonicStateEnum, MidiPortInfo,
+        MidiPortTypeEnum, NoteSpan, ShapeFit, Timbre, WaveformEnum, WaveformFit, WaveShapeEnum,
     )
 
 # synthway_result_t codes the server tells apart
@@ -86,6 +88,8 @@ class SynthwayEnvelopeC(ctypes.Structure):
         ("sustain_level", ctypes.c_float),
         ("release_s", ctypes.c_float),
         ("curve", ctypes.c_int),  # synthway_envelope_curve_t: 0 linear, 1 exponential
+        ("attack_curve", ctypes.c_int),  # synthway_attack_curve_t: 0 straight, 1 convex
+        ("release_curve", ctypes.c_int),  # synthway_envelope_curve_t, as curve (which is the decay's)
     ]
 
 
@@ -111,15 +115,61 @@ def _timbre_to_c(timbre: Timbre) -> SynthwayTimbreC:
     c_timbre = SynthwayTimbreC(partial_count=len(timbre.partials))
     for i, partial in enumerate(timbre.partials):
         envelope = partial.envelope
+        curve = int(getattr(envelope, "curve", 0))
+        release_curve = getattr(envelope, "release_curve", None)  # absent: the decay's
         c_timbre.partials[i] = SynthwayPartialC(
             ratio=partial.ratio,
             amplitude=partial.amplitude,
             waveform=int(partial.waveform),
             envelope=SynthwayEnvelopeC(
-                envelope.attack, envelope.decay, envelope.sustain, envelope.release, int(getattr(envelope, "curve", 0)),
+                envelope.attack, envelope.decay, envelope.sustain, envelope.release, curve,
+                int(getattr(envelope, "attack_curve", 0)), curve if release_curve is None else int(release_curve),
             ),
         )
     return c_timbre
+
+
+class SynthwayNoteSpanC(ctypes.Structure):
+    _fields_ = [
+        ("start_s", ctypes.c_double),
+        ("end_s", ctypes.c_double),
+        ("frequency_hz", ctypes.c_float),
+        ("strength", ctypes.c_float),
+    ]
+
+
+# Most note spans asked for in one zone
+MAX_NOTE_SPANS = 32
+
+# SYNTHWAY_SHAPE_COUNT and SYNTHWAY_WAVEFORM_FIT_HARMONICS of synthway-core
+SHAPE_COUNT = 5
+WAVEFORM_FIT_HARMONICS = 64
+
+
+class SynthwayShapeFitC(ctypes.Structure):
+    _fields_ = [
+        ("shape", ctypes.c_uint32),
+        ("duty", ctypes.c_float),
+        ("cutoff_hz", ctypes.c_float),
+        ("resonance", ctypes.c_float),
+        ("error_db", ctypes.c_float),
+    ]
+
+
+class SynthwayWaveformFitC(ctypes.Structure):
+    _fields_ = [
+        ("frequency_hz", ctypes.c_float),
+        ("moment_count", ctypes.c_uint32),
+        ("harmonic_count", ctypes.c_uint32),
+        ("harmonic_db", ctypes.c_float * WAVEFORM_FIT_HARMONICS),
+        ("background_db", ctypes.c_float * WAVEFORM_FIT_HARMONICS),
+        ("harmonic_state", ctypes.c_uint8 * WAVEFORM_FIT_HARMONICS),
+        ("even_db", ctypes.c_float),
+        ("even_count", ctypes.c_uint32),
+        ("slope_db_per_octave", ctypes.c_float),
+        ("fit_count", ctypes.c_uint32),
+        ("fits", SynthwayShapeFitC * SHAPE_COUNT),
+    ]
 
 
 class SynthwayAnalysisPartialC(ctypes.Structure):
@@ -391,11 +441,88 @@ class Analyzer:
         envelopes = [
             Envelope(
                 attack=_number(e.attack_s, 4), decay=_number(e.decay_s, 4), sustain=_number(e.sustain_level, 4),
-                release=_number(e.release_s, 4), curve=int(e.curve),
+                release=_number(e.release_s, 4), curve=int(e.curve), attack_curve=int(e.attack_curve),
+                release_curve=int(e.release_curve),
             )
             for e in c_envelopes[: len(analysis.partials)]
         ]
         return analysis, envelopes
+
+    def find_notes(self, start_s: float, end_s: float, window_s: float = WINDOW_AUTO, noise_gate_db: Optional[float] = None) -> List[NoteSpan]:
+        """The notes heard in a zone, even several at once, and when each starts and ends
+        (synthway_analyzer_find_notes): by start, then by frequency."""
+        spans = (SynthwayNoteSpanC * MAX_NOTE_SPANS)()
+        count = ctypes.c_uint32(0)
+        with self._lock:
+            if noise_gate_db is not None:
+                _check_result(
+                    self._lib, self._lib.synthway_analyzer_set_noise_gate(self._handle, noise_gate_db),
+                    "Setting the noise gate",
+                )
+            _check_result(
+                self._lib,
+                self._lib.synthway_analyzer_find_notes(
+                    self._handle, ctypes.c_double(start_s), ctypes.c_double(end_s), ctypes.c_double(window_s),
+                    spans, MAX_NOTE_SPANS, ctypes.byref(count),
+                ),
+                "Finding the notes",
+            )
+        return [
+            NoteSpan(
+                frequency=_number(s.frequency_hz, 2), start=_number(s.start_s, 4), end=_number(s.end_s, 4),
+                strength=_number(s.strength, 3),
+            )
+            for s in spans[: count.value]
+        ]
+
+    def fit_waveform(
+        self,
+        start_s: float,
+        end_s: float,
+        window_s: float = WINDOW_AUTO,
+        noise_gate_db: Optional[float] = None,
+        reference_hz: float = REFERENCE_AUTO,
+    ) -> WaveformFit:
+        """Which waveform a note of a zone is closest to, each shape through the low-pass that
+        fits it best (synthway_analyzer_fit_waveform); no fits without a note heard alone."""
+        c_fit = SynthwayWaveformFitC()
+        with self._lock:
+            if noise_gate_db is not None:
+                _check_result(
+                    self._lib, self._lib.synthway_analyzer_set_noise_gate(self._handle, noise_gate_db),
+                    "Setting the noise gate",
+                )
+            _check_result(
+                self._lib,
+                self._lib.synthway_analyzer_fit_waveform(
+                    self._handle, ctypes.c_double(start_s), ctypes.c_double(end_s), ctypes.c_double(window_s),
+                    ctypes.c_float(reference_hz), ctypes.byref(c_fit),
+                ),
+                "Fitting the waveform",
+            )
+        count = min(int(c_fit.harmonic_count), WAVEFORM_FIT_HARMONICS)
+        return WaveformFit(
+            frequency=_number(c_fit.frequency_hz, 2),
+            moments=int(c_fit.moment_count),
+            harmonics=[
+                HarmonicLevel(
+                    level=_number(c_fit.harmonic_db[k], 1, -120.0),
+                    background=_number(c_fit.background_db[k], 1, -120.0),
+                    state=HarmonicStateEnum(min(int(c_fit.harmonic_state[k]), int(HarmonicStateEnum.SHARED))),
+                )
+                for k in range(count)
+            ],
+            even_db=_number(c_fit.even_db, 1),
+            even_count=int(c_fit.even_count),
+            slope=_number(c_fit.slope_db_per_octave, 1),
+            fits=[
+                ShapeFit(
+                    shape=WaveShapeEnum(int(f.shape)), duty=_number(f.duty, 4), cutoff=_number(f.cutoff_hz, 0),
+                    resonance=_number(f.resonance, 2), error_db=_number(f.error_db, 2),
+                )
+                for f in c_fit.fits[: min(int(c_fit.fit_count), SHAPE_COUNT)]
+            ],
+        )
 
     def clip_overview(self, count: int) -> List[float]:
         """Peak of each of count equal parts of the file, for the waveform."""
@@ -495,6 +622,8 @@ class SynthwayCore:
     _envelope = Envelope()
     _timbre: Optional[Timbre] = None  # None: the single oscillator plays
     _filter = (20.0, 20000.0, 0.0)
+    _reverb = 0.0
+    _unison = (1, 0.0, 0.0)  # voices, detune in cents, stereo spread: no unison
 
     def __init__(self, lib_path: Optional[str] = None):
         self.lib_path = lib_path or _find_library()
@@ -574,6 +703,12 @@ class SynthwayCore:
         self._lib.synthway_engine_set_filter.argtypes = [ctypes.c_void_p] + [ctypes.c_float] * 3
         self._lib.synthway_engine_set_filter.restype = ctypes.c_int
 
+        self._lib.synthway_engine_set_reverb.argtypes = [ctypes.c_void_p, ctypes.c_float]
+        self._lib.synthway_engine_set_reverb.restype = ctypes.c_int
+
+        self._lib.synthway_engine_set_unison.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_float, ctypes.c_float]
+        self._lib.synthway_engine_set_unison.restype = ctypes.c_int
+
         self._lib.synthway_engine_set_frequency.argtypes = [ctypes.c_void_p, ctypes.c_float]
         self._lib.synthway_engine_set_frequency.restype = ctypes.c_int
 
@@ -648,6 +783,16 @@ class SynthwayCore:
             "synthway_analyzer_measure_envelopes": (
                 [analyzer, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_float, ctypes.c_float, analysis,
                  ctypes.POINTER(SynthwayEnvelopeC)],
+                ctypes.c_int,
+            ),
+            "synthway_analyzer_find_notes": (
+                [analyzer, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.POINTER(SynthwayNoteSpanC),
+                 ctypes.c_uint32, ctypes.POINTER(ctypes.c_uint32)],
+                ctypes.c_int,
+            ),
+            "synthway_analyzer_fit_waveform": (
+                [analyzer, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_float,
+                 ctypes.POINTER(SynthwayWaveformFitC)],
                 ctypes.c_int,
             ),
             "synthway_analyzer_get_clip_overview": ([analyzer, floats, ctypes.c_uint32], ctypes.c_int),
@@ -754,6 +899,8 @@ class SynthwayCore:
         self._lib.synthway_engine_set_tone_enabled(self._engine, False)
         self._apply_envelope(self._engine, self._envelope)
         self._apply_filter(self._engine, *self._filter)
+        self._apply_reverb(self._engine, self._reverb)
+        self._apply_unison(self._engine, *self._unison)
         if self._timbre is not None:
             self._apply_timbre(self._engine, self._timbre)
 
@@ -788,6 +935,42 @@ class SynthwayCore:
 
     def get_filter(self):
         return self._filter
+
+    # ---------- Reverb ----------
+
+    def _apply_reverb(self, engine, mix: float):
+        self._check(self._lib.synthway_engine_set_reverb(engine, mix), "Setting the reverb")
+
+    def set_reverb(self, mix: float):
+        """Share of reverberated sound, 0 (none) to 1 (the reverb alone): see synthway_engine_set_reverb."""
+        if not 0.0 <= mix <= 1.0:
+            raise ValueError(f"Invalid reverb mix {mix:g} (0 to 1)")
+        if self._engine:
+            self._apply_reverb(self._engine, mix)
+        self._reverb = mix
+
+    def get_reverb(self) -> float:
+        return self._reverb
+
+    # ---------- Unison ----------
+
+    def _apply_unison(self, engine, voices: int, detune: float, spread: float):
+        self._check(self._lib.synthway_engine_set_unison(engine, voices, detune, spread), "Setting the unison")
+
+    def set_unison(self, voices: int, detune: float, spread: float):
+        """Each partial played by voices detuned oscillators, up to detune cents away, spread across the
+        stereo field (0 to 1): see synthway_engine_set_unison. 1 voice: no unison."""
+        if not (1 <= voices <= MAX_UNISON_VOICES and 0.0 <= detune <= MAX_UNISON_DETUNE_CENTS and 0.0 <= spread <= 1.0):
+            raise ValueError(
+                f"Invalid unison: {voices} voice(s) (1 to {MAX_UNISON_VOICES}), detune {detune:g} cents "
+                f"(0 to {MAX_UNISON_DETUNE_CENTS:g}), spread {spread:g} (0 to 1)"
+            )
+        if self._engine:
+            self._apply_unison(self._engine, voices, detune, spread)
+        self._unison = (voices, detune, spread)
+
+    def get_unison(self):
+        return self._unison
 
     # ---------- Envelope ----------
 
@@ -842,6 +1025,7 @@ class SynthwayCore:
         channels: int,
         envelope: Optional[Envelope] = None,
         timbre: Optional[Timbre] = None,
+        unison: Optional[Tuple[int, float, float]] = None,
     ):
         """Separate engine for offline rendering; the live engine is left untouched."""
         engine = self._lib.synthway_engine_create()
@@ -860,6 +1044,8 @@ class SynthwayCore:
                 self._apply_envelope(engine, envelope)
             if timbre is not None:
                 self._apply_timbre(engine, timbre)
+            if unison is not None:
+                self._apply_unison(engine, *unison)
         except RuntimeError:
             self._lib.synthway_engine_destroy(engine)
             raise
@@ -881,10 +1067,12 @@ class SynthwayCore:
         channels: int = 1,
         envelope: Optional[Envelope] = None,
         timbre: Optional[Timbre] = None,
+        unison: Optional[Tuple[int, float, float]] = None,
     ) -> List[float]:
         """Renders a tone into memory (interleaved samples in [-1, 1]) without any audio device.
-        With a timbre, its partials play instead of the waveform and envelope."""
-        engine = self._offline_engine(frequency, waveform, volume, sample_rate, channels, envelope, timbre)
+        With a timbre, its partials play instead of the waveform and envelope, in unison when given
+        (voices, detune in cents, stereo spread)."""
+        engine = self._offline_engine(frequency, waveform, volume, sample_rate, channels, envelope, timbre, unison)
         try:
             frames = int(seconds * sample_rate)
             buffer = (ctypes.c_float * (frames * channels))()
@@ -904,11 +1092,12 @@ class SynthwayCore:
         channels: int = 2,
         envelope: Optional[Envelope] = None,
         timbre: Optional[Timbre] = None,
+        unison: Optional[Tuple[int, float, float]] = None,
     ) -> None:
         """Renders a tone into a 16-bit PCM WAV file without any audio device."""
         # The core opens the file with fopen(): ANSI code page on Windows, UTF-8 elsewhere
         native_path = os.fspath(path).encode("mbcs" if sys.platform.startswith("win") else "utf-8")
-        engine = self._offline_engine(frequency, waveform, volume, sample_rate, channels, envelope, timbre)
+        engine = self._offline_engine(frequency, waveform, volume, sample_rate, channels, envelope, timbre, unison)
         try:
             frames = int(seconds * sample_rate)
             self._check(self._lib.synthway_engine_render_to_wav(engine, native_path, frames), "WAV rendering")

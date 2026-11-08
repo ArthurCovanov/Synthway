@@ -6,6 +6,7 @@ import styles from './PianoKeyboard.module.css';
 /**
  * On-screen keyboard from `startMidi` over `octaves` octaves (plus the final C).
  * Mouse glissando is supported: dragging across keys moves the played note.
+ * markedNote gets a dot on its key, and markedTitle as its tooltip.
  */
 export function PianoKeyboard({
   startMidi,
@@ -15,6 +16,8 @@ export function PianoKeyboard({
   disabled,
   onNoteDown,
   onNoteUp,
+  markedNote,
+  markedTitle,
 }: {
   startMidi: number;
   octaves: number;
@@ -23,6 +26,8 @@ export function PianoKeyboard({
   disabled: boolean;
   onNoteDown: (midi: number) => void;
   onNoteUp: (midi: number) => void;
+  markedNote?: number;
+  markedTitle?: string;
 }) {
   const pointerNote = useRef<number | null>(null);
 
@@ -61,6 +66,8 @@ export function PianoKeyboard({
 
   const keyProps = (midi: number) => ({
     'data-midi': midi,
+    'data-marked': midi === markedNote ? 'true' : undefined,
+    title: midi === markedNote && markedTitle ? markedTitle : midiToName(midi),
     onPointerDown: (event: PointerEvent) => {
       event.preventDefault();
       press(midi);
@@ -81,7 +88,6 @@ export function PianoKeyboard({
               key={midi}
               className={cx(styles.black, active && styles.active)}
               style={{ left: `${left}%`, width: `${whiteWidth * 0.64}%` }}
-              title={midiToName(midi)}
               {...keyProps(midi)}
             >
               {label}
@@ -93,7 +99,6 @@ export function PianoKeyboard({
           <div
             key={midi}
             className={cx(styles.white, active && styles.active)}
-            title={midiToName(midi)}
             {...keyProps(midi)}
           >
             {label && <span>{label}</span>}

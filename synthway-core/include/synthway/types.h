@@ -65,18 +65,26 @@ typedef enum synthway_waveform {
    ADSR Envelope
    -------------------------------------------------------------------------- */
 
-/* How the decay and the release fall (the attack is always a straight ramp) */
+/* How the decay or the release falls (curve and release_curve below; the attack has its own curves) */
 typedef enum synthway_envelope_curve {
-    SYNTHWAY_ENVELOPE_LINEAR      = 0,  /* straight ramps: decay_s and release_s are the times to reach the sustain level and silence */
-    SYNTHWAY_ENVELOPE_EXPONENTIAL = 1   /* a steady fall in dB, like a struck string: decay_s and release_s are the times to fall by 60 dB */
+    SYNTHWAY_ENVELOPE_LINEAR      = 0,  /* a straight ramp: decay_s or release_s is the time to reach the sustain level or silence */
+    SYNTHWAY_ENVELOPE_EXPONENTIAL = 1   /* a steady fall in dB, like a struck string: decay_s or release_s is the time to fall by 60 dB */
 } synthway_envelope_curve_t;
+
+/* How the attack rises, from the current level to the top in attack_s */
+typedef enum synthway_attack_curve {
+    SYNTHWAY_ATTACK_LINEAR = 0,  /* a straight ramp */
+    SYNTHWAY_ATTACK_CONVEX = 1   /* the square of a straight ramp: slow, then faster and faster (heard as an exponential swell) */
+} synthway_attack_curve_t;
 
 typedef struct synthway_envelope {
     float attack_s;                /* 0 to 10 s */
     float decay_s;                 /* 0 to 10 s */
     float sustain_level;           /* in [0, 1] */
     float release_s;               /* 0 to 10 s */
-    synthway_envelope_curve_t curve; /* SYNTHWAY_ENVELOPE_LINEAR (0) when zeroed */
+    synthway_envelope_curve_t curve; /* the decay's; SYNTHWAY_ENVELOPE_LINEAR (0) when zeroed */
+    synthway_attack_curve_t attack_curve; /* SYNTHWAY_ATTACK_LINEAR (0) when zeroed */
+    synthway_envelope_curve_t release_curve; /* SYNTHWAY_ENVELOPE_LINEAR (0) when zeroed */
 } synthway_envelope_t;
 
 /* --------------------------------------------------------------------------
@@ -86,6 +94,10 @@ typedef struct synthway_envelope {
 /* Most partials a timbre can hold. Fixed at build time: the audio thread
    never allocates memory. */
 #define SYNTHWAY_MAX_PARTIALS 64
+
+/* Unison (synthway_engine_set_unison): most voices per partial, and widest detune */
+#define SYNTHWAY_MAX_UNISON_VOICES 8
+#define SYNTHWAY_MAX_UNISON_DETUNE_CENTS 100.0f
 
 /* Fixed limits keep composition playback allocation-free in the audio thread. */
 #define SYNTHWAY_INTERPRETER_MAX_TRACKS 16

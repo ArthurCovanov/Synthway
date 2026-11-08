@@ -1,6 +1,5 @@
 import { AlertTriangle, Copy, Lock, LockOpen, Magnet, Plus, Search, Trash2, Upload } from 'lucide-react';
 import {
-  useEffect,
   useMemo,
   useState,
   type CSSProperties,
@@ -29,6 +28,7 @@ import {
 } from '../components/ui';
 import { WaveScope } from '../components/WaveScope';
 import { useAppearance } from '../lib/appearance';
+import { useInstrumentSound } from '../lib/instrumentSound';
 import {
   CATEGORY_LABEL,
   createInstrument,
@@ -37,7 +37,9 @@ import {
   type FilterSettings,
   type Instrument,
   type InstrumentCategory,
+  releaseCurveOf,
   type TimbrePartial,
+  unisonOf,
 } from '../lib/instruments';
 import { midiToName, WAVEFORM_OPTIONS } from '../lib/music';
 import { HUE_HEX, HUE_LABEL, HUE_VAR, HUES, PARTIAL_HUES, type NeonHue } from '../lib/neon';
@@ -50,11 +52,18 @@ import {
   MIN_RATIO,
   newPartial,
   peakSum,
-  toTimbre,
 } from '../lib/partials';
 import { usePersistentState } from '../lib/storage';
 import { useSynthServer } from '../lib/SynthServer';
-import { ENVELOPE_CURVE, WAVEFORM, type Waveform } from '../types';
+import {
+  ATTACK_CURVE,
+  ENVELOPE_CURVE,
+  MAX_UNISON_DETUNE_CENTS,
+  MAX_UNISON_VOICES,
+  WAVEFORM,
+  type UnisonParams,
+  type Waveform,
+} from '../types';
 import styles from './InstrumentCreator.module.css';
 
 function formatSeconds(seconds: number): string {
@@ -76,6 +85,9 @@ const percentEdit = (value: number, onChange: (value: number) => void): ValueEdi
   decimals: 1,
   onCommit: (typed) => onChange(Number((typed / 100).toFixed(4))),
 });
+
+/** End of the unison detune slider, in cents: typing goes up to MAX_UNISON_DETUNE_CENTS */
+const UNISON_DETUNE_SLIDER_MAX = 50;
 
 /** Longest envelope time synthway-server accepts; the sliders stop before it */
 const ENVELOPE_MAX_SECONDS = 10;
@@ -115,6 +127,78 @@ function TimeSlider({
     />
   );
 }
+
+/** Fastest and slowest exponential falls the sliders reach: 60 dB in 10 ms, and in 10 s */
+const FALL_RATE_MAX = 6000;
+const FALL_RATE_MIN = 6;
+
+function formatRate(dbPerSecond: number): string {
+  return `${dbPerSecond < 100 ? dbPerSecond.toFixed(1) : Math.round(dbPerSecond)} dB/s`;
+}
+
+/**
+ * A decay or a release: a time in seconds when it is a straight ramp; a speed
+ * in dB per second when it is exponential (the engine's time to fall 60 dB,
+ * shown as how fast it falls), on a logarithmic bar
+ */
+function FallSlider({
+  label,
+  seconds,
+  exponential,
+  onChange,
+  disabled,
+}: {
+  label: string;
+  seconds: number;
+  exponential: boolean;
+  onChange: (seconds: number) => void;
+  disabled?: boolean;
+}) {
+  if (!exponential) {
+    return <TimeSlider label={label} value={seconds} max={4} disabled={disabled} onChange={onChange} />;
+  }
+  const rate = 60 / Math.max(seconds, 60 / FALL_RATE_MAX / 10);
+  const span = Math.log(FALL_RATE_MAX / FALL_RATE_MIN);
+  const toSeconds = (dbPerSecond: number) => Number((60 / dbPerSecond).toFixed(5));
+  return (
+    <Slider
+      label={label}
+      value={Math.min(1, Math.max(0, Math.log(rate / FALL_RATE_MIN) / span))}
+      min={0}
+      max={1}
+      step={0.001}
+      disabled={disabled}
+      format={() => `${formatRate(rate)} · −60 dB en ${formatSeconds(seconds)}`}
+      onChange={(position) => onChange(toSeconds(FALL_RATE_MIN * Math.exp(position * span)))}
+      edit={{
+        value: rate,
+        min: 60 / ENVELOPE_MAX_SECONDS,
+        max: FALL_RATE_MAX * 10,
+        unit: 'dB/s',
+        decimals: 1,
+        onCommit: (typed) => onChange(toSeconds(typed)),
+      }}
+    />
+  );
+}
+
+const ATTACK_CURVE_OPTIONS = [
+  { value: ATTACK_CURVE.Linear, label: 'Linéaire', title: 'Le niveau monte en ligne droite jusqu’au sommet' },
+  {
+    value: ATTACK_CURVE.Convex,
+    label: 'Exponentielle',
+    title: 'Lente au début, puis de plus en plus rapide (le carré d’une rampe droite) : une montée qu’on entend exponentielle',
+  },
+];
+
+const FALL_CURVE_OPTIONS = [
+  { value: ENVELOPE_CURVE.Linear, label: 'Linéaire', title: 'Une rampe droite, réglée par sa durée' },
+  {
+    value: ENVELOPE_CURVE.Exponential,
+    label: 'Exponentielle',
+    title: 'Le niveau perd autant de dB chaque seconde, comme une corde pincée : réglée par cette vitesse, en dB/s',
+  },
+];
 
 /**
  * Band-pass bounds on one logarithmic bar, from 20 Hz to 20 kHz. At its ends a
@@ -323,7 +407,7 @@ export function InstrumentCreator({
   setSelectedId: (id: string) => void;
 }) {
   const { animate } = useAppearance();
-  const { engine, setParams, audioConfig } = useSynthServer();
+  const { engine, audioConfig } = useSynthServer();
   const [query, setQuery] = useState('');
   const [magnet, setMagnet] = usePersistentState<boolean>('synthway.spectrum-magnet.v1', () => true);
   const [selectedPartialId, setSelectedPartialId] = useState<string | null>(null);
@@ -337,17 +421,15 @@ export function InstrumentCreator({
   const frozen = (item: TimbrePartial) => locked || !!item.locked;
   const partialFrozen = partial ? frozen(partial) : true;
   // Exponential decay and release are times to fall 60 dB, which can last much longer
-  const exponential = partial?.envelope.curve === ENVELOPE_CURVE.Exponential;
+  const decayExponential = partial?.envelope.curve === ENVELOPE_CURVE.Exponential;
+  const releaseExponential = partial ? releaseCurveOf(partial.envelope) === ENVELOPE_CURVE.Exponential : false;
   const maxPartials = engine.maxPartials;
   const sampleRate = engine.sampleRate ?? audioConfig.sampleRate;
 
-  // Volume and partials drive the engine live while the audio is on
-  const timbre = useMemo(() => toTimbre(partials, maxPartials), [partials, maxPartials]);
-  useEffect(() => {
-    if (engine.running) {
-      setParams({ volume: selected.volume, timbre, low_cutoff: selected.filter.lowCutoff, cutoff: selected.filter.cutoff, resonance: selected.filter.resonance });
-    }
-  }, [engine.running, selected.volume, selected.filter.lowCutoff, selected.filter.cutoff, selected.filter.resonance, timbre, setParams]);
+  // Volume, partials, filter, reverb and unison drive the engine live while the audio is on
+  useInstrumentSound(selected);
+  const reverb = selected.reverb ?? 0;
+  const { voices, detune, spread } = unisonOf(selected);
 
   // Warnings: active partials above half the sample rate on the keyboard's notes, possible clipping
   const aliasing = useMemo(() => {
@@ -360,6 +442,10 @@ export function InstrumentCreator({
   }, [active, sampleRate]);
   const aliasingIds = useMemo(() => new Set(aliasing.keys()), [aliasing]);
   const peak = peakSum(partials) * selected.volume;
+  // The reverb raises the peaks, measured on held notes up to about 1 + 2 × its mix
+  const reverbPeak = peak * (1 + 2 * reverb);
+  // Unison voices are each scaled by 1 / √voices: when they happen to line up, the peaks reach √voices times
+  const unisonPeak = reverbPeak * Math.sqrt(voices);
   const atLimit = partials.length >= maxPartials;
   // A partial is named by its place in the list (1, 2, 3…), which does not move with its ratio
   const partialNumber = (id: string) => partials.findIndex((item) => item.id === id) + 1;
@@ -369,6 +455,7 @@ export function InstrumentCreator({
     setInstruments((list) =>
       list.map((item) => (item.id === selected.id && !item.locked ? { ...item, ...patch } : item)),
     );
+  const updateUnison = (patch: Partial<UnisonParams>) => update({ unison: { ...unisonOf(selected), ...patch } });
   // The bound that moves stops at the other one, and both stay between 20 Hz and 20 kHz
   const updateFilter = (patch: Partial<FilterSettings>) => {
     const filter = { ...selected.filter, ...patch };
@@ -625,7 +712,7 @@ export function InstrumentCreator({
               estompé.
             </p>
 
-            {(atLimit || aliasingList.length > 0 || peak > 1) && (
+            {(atLimit || aliasingList.length > 0 || unisonPeak > 1) && (
               <ul className={styles.warnings}>
                 {atLimit && (
                   <li>
@@ -660,6 +747,24 @@ export function InstrumentCreator({
                     <span>
                       Saturation possible : la somme des amplitudes × le volume atteint {percent(peak)}. Si les partiels
                       culminent ensemble, le son dépasse 100 % et sera écrêté.
+                    </span>
+                  </li>
+                )}
+                {peak <= 1 && reverbPeak > 1 && (
+                  <li>
+                    <AlertTriangle size={14} />
+                    <span>
+                      Saturation possible avec la réverbération : elle peut porter les crêtes vers {percent(reverbPeak)}.
+                      Baisse le volume si le son est écrêté.
+                    </span>
+                  </li>
+                )}
+                {reverbPeak <= 1 && unisonPeak > 1 && (
+                  <li>
+                    <AlertTriangle size={14} />
+                    <span>
+                      Saturation possible avec l’unisson : quand ses {voices} voix se retrouvent en phase, les crêtes
+                      peuvent monter vers {percent(unisonPeak)}. Baisse le volume si le son est écrêté.
                     </span>
                   </li>
                 )}
@@ -749,6 +854,71 @@ export function InstrumentCreator({
                 onChange={(resonance) => updateFilter({ resonance })}
                 edit={percentEdit(selected.filter.resonance, (resonance) => updateFilter({ resonance }))}
               />
+            </Section>
+
+            <Section title="Réverbération" badge={<LiveBadge />}>
+              <Slider
+                label={reverb > 0 ? 'Son réverbéré' : 'Son réverbéré (aucune réverbération)'}
+                value={reverb}
+                min={0}
+                max={1}
+                step={0.01}
+                format={percent}
+                disabled={locked}
+                onChange={(value) => update({ reverb: value })}
+                edit={percentEdit(reverb, (value) => update({ reverb: value }))}
+              />
+              <p className={styles.hint}>
+                Une salle d’environ 2 s, qui continue de sonner après la note. À 100 %, seule la réverbération reste.
+              </p>
+            </Section>
+
+            <Section title="Unisson" badge={<LiveBadge />}>
+              <Slider
+                label={voices > 1 ? 'Voix par partiel' : 'Voix par partiel (pas d’unisson)'}
+                value={voices}
+                min={1}
+                max={MAX_UNISON_VOICES}
+                step={1}
+                format={(value) => `${value}`}
+                disabled={locked}
+                onChange={(value) => updateUnison({ voices: Math.round(value) })}
+              />
+              <Slider
+                label="Désaccord"
+                value={Math.min(detune, UNISON_DETUNE_SLIDER_MAX)}
+                min={0}
+                max={UNISON_DETUNE_SLIDER_MAX}
+                step={0.5}
+                format={() => `±${detune} cents`}
+                disabled={locked || voices < 2}
+                onChange={(value) => updateUnison({ detune: value })}
+                edit={{
+                  value: detune,
+                  min: 0,
+                  max: MAX_UNISON_DETUNE_CENTS,
+                  prefix: '±',
+                  unit: 'cents',
+                  decimals: 1,
+                  onCommit: (value) => updateUnison({ detune: Number(value.toFixed(1)) }),
+                }}
+              />
+              <Slider
+                label="Largeur stéréo"
+                value={spread}
+                min={0}
+                max={1}
+                step={0.01}
+                format={percent}
+                disabled={locked || voices < 2}
+                onChange={(value) => updateUnison({ spread: value })}
+                edit={percentEdit(spread, (value) => updateUnison({ spread: value }))}
+              />
+              <p className={styles.hint}>
+                Chaque partiel est joué par plusieurs oscillateurs un peu désaccordés, qui battent entre eux : le son
+                s’épaissit, comme une « supersaw ». 5 à 7 voix à ±10–20 cents donnent l’épaisseur classique ; la largeur
+                les répartit entre gauche et droite.
+              </p>
             </Section>
 
             <Section title="Couleur de l'instrument">
@@ -994,58 +1164,74 @@ export function InstrumentCreator({
                 <div className={styles.envelopeGraph}>
                   <EnvelopeGraph envelope={partial.envelope} />
                 </div>
-                <Segmented
-                  label="Courbe"
-                  options={[
-                    {
-                      value: ENVELOPE_CURVE.Linear,
-                      label: 'Linéaire',
-                      title: 'Rampes droites : déclin et relâchement sont les temps pour atteindre le maintien et le silence',
-                    },
-                    {
-                      value: ENVELOPE_CURVE.Exponential,
-                      label: 'Exponentielle',
-                      title:
-                        'Le niveau perd autant de dB chaque seconde, comme une corde pincée : déclin et relâchement sont les temps pour perdre 60 dB',
-                    },
-                  ]}
-                  value={partial.envelope.curve ?? ENVELOPE_CURVE.Linear}
-                  disabled={partialFrozen}
-                  onChange={(curve) => updatePartialEnvelope(partial.id, { curve })}
-                />
-                <div className={styles.row2}>
-                  <TimeSlider
-                    label="Attaque"
-                    value={partial.envelope.attack}
-                    max={2}
-                    disabled={partialFrozen}
-                    onChange={(attack) => updatePartialEnvelope(partial.id, { attack })}
-                  />
-                  <TimeSlider
-                    label={exponential ? 'Déclin (−60 dB)' : 'Déclin'}
-                    value={partial.envelope.decay}
-                    max={exponential ? ENVELOPE_MAX_SECONDS : 4}
-                    disabled={partialFrozen}
-                    onChange={(decay) => updatePartialEnvelope(partial.id, { decay })}
-                  />
-                  <Slider
-                    label="Maintien"
-                    value={partial.envelope.sustain}
-                    min={0}
-                    max={1}
-                    step={0.01}
-                    format={percent}
-                    disabled={partialFrozen}
-                    onChange={(sustain) => updatePartialEnvelope(partial.id, { sustain })}
-                    edit={percentEdit(partial.envelope.sustain, (sustain) => updatePartialEnvelope(partial.id, { sustain }))}
-                  />
-                  <TimeSlider
-                    label={exponential ? 'Relâchement (−60 dB)' : 'Relâchement'}
-                    value={partial.envelope.release}
-                    max={4}
-                    disabled={partialFrozen}
-                    onChange={(release) => updatePartialEnvelope(partial.id, { release })}
-                  />
+                <div className={styles.segments}>
+                  <div className={styles.segment}>
+                    <TimeSlider
+                      label="Attaque"
+                      value={partial.envelope.attack}
+                      max={2}
+                      disabled={partialFrozen}
+                      onChange={(attack) => updatePartialEnvelope(partial.id, { attack })}
+                    />
+                    <Segmented
+                      compact
+                      label="Courbe de l’attaque"
+                      options={ATTACK_CURVE_OPTIONS}
+                      value={partial.envelope.attack_curve ?? ATTACK_CURVE.Linear}
+                      disabled={partialFrozen}
+                      onChange={(attack_curve) => updatePartialEnvelope(partial.id, { attack_curve })}
+                    />
+                  </div>
+                  <div className={styles.segment}>
+                    <FallSlider
+                      label="Déclin"
+                      seconds={partial.envelope.decay}
+                      exponential={decayExponential}
+                      disabled={partialFrozen}
+                      onChange={(decay) => updatePartialEnvelope(partial.id, { decay })}
+                    />
+                    <Segmented
+                      compact
+                      label="Courbe du déclin"
+                      options={FALL_CURVE_OPTIONS}
+                      value={partial.envelope.curve ?? ENVELOPE_CURVE.Linear}
+                      disabled={partialFrozen}
+                      // The release keeps its curve: saved without one, it followed the decay's
+                      onChange={(curve) =>
+                        updatePartialEnvelope(partial.id, { curve, release_curve: releaseCurveOf(partial.envelope) })
+                      }
+                    />
+                  </div>
+                  <div className={styles.segment}>
+                    <Slider
+                      label="Maintien"
+                      value={partial.envelope.sustain}
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      format={percent}
+                      disabled={partialFrozen}
+                      onChange={(sustain) => updatePartialEnvelope(partial.id, { sustain })}
+                      edit={percentEdit(partial.envelope.sustain, (sustain) => updatePartialEnvelope(partial.id, { sustain }))}
+                    />
+                  </div>
+                  <div className={styles.segment}>
+                    <FallSlider
+                      label="Relâchement"
+                      seconds={partial.envelope.release}
+                      exponential={releaseExponential}
+                      disabled={partialFrozen}
+                      onChange={(release) => updatePartialEnvelope(partial.id, { release })}
+                    />
+                    <Segmented
+                      compact
+                      label="Courbe du relâchement"
+                      options={FALL_CURVE_OPTIONS}
+                      value={releaseCurveOf(partial.envelope)}
+                      disabled={partialFrozen}
+                      onChange={(release_curve) => updatePartialEnvelope(partial.id, { release_curve })}
+                    />
+                  </div>
                 </div>
               </Section>
 

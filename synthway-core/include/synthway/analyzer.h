@@ -319,6 +319,119 @@ SYNTHWAY_API synthway_result_t synthway_analyzer_measure_envelopes(
     synthway_envelope_t* out_envelopes
 );
 
+/* A note heard in a zone, and when (synthway_analyzer_find_notes) */
+typedef struct synthway_note_span {
+    double start_s;            /* seconds from the start of the file */
+    double end_s;
+    float frequency_hz;        /* its fundamental, the geometric mean over its moments */
+    float strength;            /* in (0, 1]: 1 for the strongest note of the zone */
+} synthway_note_span_t;
+
+/* Most notes heard at once, at one moment */
+#define SYNTHWAY_ANALYZER_MAX_NOTES_AT_ONCE 4
+
+/**
+ * The notes heard in a zone of the loaded file, even several at once (a chord,
+ * a melody over a held note), and when each starts and ends. The zone is
+ * analyzed at the same moments as synthway_analyzer_analyze_clip_range (same
+ * window_s). At each moment, the note whose harmonics explain the most of the
+ * partials is found first (each harmonic weighed down when it stands far above
+ * its neighbours, and a note whose own fundamental is much weaker than its
+ * other harmonics weighed down too: the 3rd and 4th harmonics of D4 are A5 and
+ * D6, which a missing D4 would explain as well as A5 and D6 played together);
+ * its harmonics are taken out, and the next note is looked for in what is
+ * left, up to SYNTHWAY_ANALYZER_MAX_NOTES_AT_ONCE, while it stays above a fifth
+ * of the first. A note followed from moment to moment (within half a
+ * semitone, up to 3 missing moments in a row) becomes a span; one heard for
+ * less than 60 ms is dropped, unless the zone is shorter. out_notes gets up to capacity spans, by start
+ * then by frequency; out_count the number written. SYNTHWAY_INVALID_PARAM as
+ * synthway_analyzer_analyze_clip_range, or without out_notes or out_count.
+ */
+SYNTHWAY_API synthway_result_t synthway_analyzer_find_notes(
+    synthway_analyzer_t* analyzer,
+    double start_s,
+    double end_s,
+    double window_s,
+    synthway_note_span_t* out_notes,
+    uint32_t capacity,
+    uint32_t* out_count
+);
+
+/* Shapes a note's harmonics are compared with (synthway_analyzer_fit_waveform):
+   the engine's waveforms, with the values of synthway_waveform_t, and a pulse */
+typedef enum synthway_wave_shape {
+    SYNTHWAY_SHAPE_SINE = 0,       /* the fundamental alone */
+    SYNTHWAY_SHAPE_SQUARE = 1,     /* odd harmonics, in 1/n */
+    SYNTHWAY_SHAPE_TRIANGLE = 2,   /* odd harmonics, in 1/n² */
+    SYNTHWAY_SHAPE_SAWTOOTH = 3,   /* every harmonic, in 1/n */
+    SYNTHWAY_SHAPE_PULSE = 4       /* every harmonic, in |sin(π n duty)| / n: a gap every 1/duty harmonics */
+} synthway_wave_shape_t;
+#define SYNTHWAY_SHAPE_COUNT 5
+
+/* Most harmonics a waveform fit measures, from the 1st */
+#define SYNTHWAY_WAVEFORM_FIT_HARMONICS 64
+
+/* What one harmonic of the note is, in a waveform fit */
+#define SYNTHWAY_HARMONIC_HEARD 0    /* stands above the background around it */
+#define SYNTHWAY_HARMONIC_FAINT 1    /* does not: missing, or too weak to tell */
+#define SYNTHWAY_HARMONIC_SHARED 2   /* also a harmonic of another note heard with it: left out of the fit */
+
+/* One shape, with the low-pass and the level that bring it closest to the harmonics measured */
+typedef struct synthway_shape_fit {
+    uint32_t shape;            /* synthway_wave_shape_t */
+    float duty;                /* share of the period a pulse is high, in (0, 0.5); 0.5 for the square, 0 for the others */
+    float cutoff_hz;           /* the engine's low-pass (12 dB per octave, synthway_engine_set_filter) that fits best; 0: none */
+    float resonance;           /* of that low-pass, in [0, 1] as synthway_engine_set_filter */
+    float error_db;            /* mean gap between the harmonics measured and the shape's, through that low-pass */
+} synthway_shape_fit_t;
+
+/* The harmonics of a note, and the waveforms closest to them (synthway_analyzer_fit_waveform) */
+typedef struct synthway_waveform_fit {
+    float frequency_hz;        /* the note whose harmonics are measured; 0: no note */
+    uint32_t moment_count;     /* moments of the zone where that note is heard (0: none, then no fit) */
+    uint32_t harmonic_count;   /* harmonics measured, from the 1st: below 16 kHz and 45 % of the sample rate */
+    float harmonic_db[SYNTHWAY_WAVEFORM_FIT_HARMONICS];   /* level of each, dB relative to the strongest heard (0) */
+    float background_db[SYNTHWAY_WAVEFORM_FIT_HARMONICS]; /* level of the background around each, on the same scale */
+    uint8_t harmonic_state[SYNTHWAY_WAVEFORM_FIT_HARMONICS]; /* SYNTHWAY_HARMONIC_* */
+    float even_db;             /* even harmonics against the mean of their odd neighbours, in dB: a sawtooth about -1, a square far below */
+    uint32_t even_count;       /* even harmonics compared (0: even_db tells nothing) */
+    float slope_db_per_octave; /* how fast the heard harmonics fall: -6 for a sawtooth or a square, -12 for a triangle */
+    uint32_t fit_count;        /* SYNTHWAY_SHAPE_COUNT; 0 without a note, a note never heard alone, or no harmonic heard */
+    synthway_shape_fit_t fits[SYNTHWAY_SHAPE_COUNT]; /* one per shape, closest first */
+} synthway_waveform_fit_t;
+
+/**
+ * Which waveform a note of the loaded file is closest to: sawtooth, square,
+ * triangle, pulse or sine, each through the low-pass of the engine that fits
+ * best, since a synthesizer's sound is seldom heard unfiltered (a filtered
+ * sawtooth falls as fast as a triangle; its even harmonics tell them apart).
+ * The note is the one synthway_analyzer_analyze_clip_range finds in the zone
+ * (keeping only harmonics, within 30 cents), or reference_hz when given. At
+ * each moment of the zone (the same moments, same window_s) where that note
+ * is heard (synthway_analyzer_find_notes would find it), the level of each
+ * of its harmonics is measured, even a missing one: the power within 40
+ * cents of it (or 3 bins), so that a unison spread over a few cents counts
+ * whole, against the background between harmonics. A harmonic that is also a
+ * harmonic of another note heard at that moment is left out there (A5 x 4 is
+ * D6 x 3). The medians over the moments are compared with each shape, its
+ * level and low-pass (cutoff, resonance) set to come closest; the gap is
+ * weighed down for higher harmonics (by the square root of their rank), and
+ * a shape's harmonics below the background count as the background.
+ * Ratios are not phases: two waveforms with the same harmonics read the same.
+ * With no note, or a note never heard alone (a chord on its missing
+ * fundamental), out_fit has no fit (fit_count 0), and SYNTHWAY_OK.
+ * SYNTHWAY_INVALID_PARAM as synthway_analyzer_analyze_clip_range, or without
+ * out_fit; SYNTHWAY_ERROR when memory runs out.
+ */
+SYNTHWAY_API synthway_result_t synthway_analyzer_fit_waveform(
+    synthway_analyzer_t* analyzer,
+    double start_s,
+    double end_s,
+    double window_s,
+    float reference_hz,
+    synthway_waveform_fit_t* out_fit
+);
+
 /**
  * Waveform of the whole file, for display: cuts it into count equal parts and
  * writes the peak (largest absolute sample) of each into out_peaks.

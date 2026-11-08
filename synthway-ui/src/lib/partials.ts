@@ -1,5 +1,5 @@
 import { WAVEFORM, type TimbreParams, type Waveform } from '../types';
-import type { Envelope, TimbrePartial } from './instruments';
+import { releaseCurveOf, type Envelope, type TimbrePartial } from './instruments';
 import { PARTIAL_HUES, type NeonHue } from './neon';
 import { newId } from './storage';
 
@@ -99,7 +99,8 @@ export function toTimbre(partials: TimbrePartial[], maxPartials: number): Timbre
       ratio,
       amplitude,
       waveform,
-      envelope: { ...envelope },
+      // Explicit release curve: an envelope saved before it had one releases like it decays
+      envelope: { ...envelope, release_curve: releaseCurveOf(envelope) },
     })),
   };
 }

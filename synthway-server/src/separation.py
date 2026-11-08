@@ -1,5 +1,5 @@
 """
-AI-nalyzer: separates a piece of music into its sources (drums, bass, vocals,
+Decomposer: separates a piece of music into its sources (drums, bass, vocals,
 other...) with Demucs v4. Demucs lives apart, in synthway-demucs/, with its own
 Python and torch: the server never imports them, it runs
 synthway-demucs/separate.py as a process and follows the JSON lines it prints.
@@ -7,10 +7,10 @@ This is offline work on a file; no audio stream goes through Python.
 
 Optional: without synthway-demucs (or its environment, made by `uv sync`), or
 with SYNTHWAY_DEMUCS=0, the rest of the server works the same and the
-AI-nalyzer says why it cannot decompose.
+Decomposer says why it cannot decompose.
 
 Environment:
-    SYNTHWAY_DEMUCS      0 turns the AI-nalyzer off
+    SYNTHWAY_DEMUCS      0 turns the Decomposer off
     SYNTHWAY_DEMUCS_DIR  the synthway-demucs folder (default: next to synthway-server)
 """
 
@@ -85,7 +85,7 @@ class Separation:
     def unavailable_reason(self) -> Optional[str]:
         """Why nothing can be decomposed, None when Demucs is ready"""
         if not self.enabled:
-            return "AI-nalyzer désactivé (SYNTHWAY_DEMUCS=0)"
+            return "Decomposer désactivé (SYNTHWAY_DEMUCS=0)"
         if not self.script.is_file():
             return f"Demucs n’est pas installé : {self.script} est introuvable"
         if not self.python.is_file():

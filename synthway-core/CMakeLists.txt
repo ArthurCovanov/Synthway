@@ -78,9 +78,12 @@ set(SYNTHWAY_SOURCES
     ${SYNTHWAY_SRC_DIR}/synth/synth.c
     ${SYNTHWAY_SRC_DIR}/synth/oscillator.c
     ${SYNTHWAY_SRC_DIR}/synth/envelope.c
+    ${SYNTHWAY_SRC_DIR}/synth/reverb.c
       ${SYNTHWAY_SRC_DIR}/interpreter/interpreter.c
     ${SYNTHWAY_SRC_DIR}/analyzer/analyzer.c
     ${SYNTHWAY_SRC_DIR}/analysis/analysis.c
+    ${SYNTHWAY_SRC_DIR}/analysis/notes.c
+    ${SYNTHWAY_SRC_DIR}/analysis/waveform.c
     ${SYNTHWAY_SRC_DIR}/analysis/pitch.c
     ${SYNTHWAY_SRC_DIR}/analysis/spectrum.c
     ${SYNTHWAY_SRC_DIR}/analysis/fft.c

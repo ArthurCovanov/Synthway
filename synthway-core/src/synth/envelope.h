@@ -4,9 +4,9 @@
 #include <stdbool.h>
 #include "synthway/types.h"
 
-/* ADSR envelope: a straight attack, then a linear or exponential decay and
-   release (see synthway_envelope_curve_t). IDLE is 0 so that a zeroed
-   envelope starts silent. */
+/* ADSR envelope: a straight or convex attack (see synthway_attack_curve_t),
+   then a decay and a release, each linear or exponential (see
+   synthway_envelope_curve_t). IDLE is 0 so that a zeroed envelope starts silent. */
 typedef enum sw_envelope_stage {
     SW_ENVELOPE_IDLE = 0,
     SW_ENVELOPE_ATTACK,
@@ -20,12 +20,14 @@ typedef synthway_envelope_t sw_envelope_settings;
 
 /* Per-sample increments, derived from the settings once per block */
 typedef struct sw_envelope_steps {
-    float attack;
+    float attack;          /* straight: increment of the level; convex: of its square root */
+    bool convex_attack;
     float decay;           /* linear: decrement; exponential: factor applied to the level above the sustain */
     float sustain_level;
     float release_samples;
-    bool exponential;
-    float release_factor;  /* exponential: factor applied to the level */
+    bool exponential_decay;
+    bool exponential_release;
+    float release_factor;  /* exponential release: factor applied to the level */
 } sw_envelope_steps;
 
 typedef struct sw_envelope {

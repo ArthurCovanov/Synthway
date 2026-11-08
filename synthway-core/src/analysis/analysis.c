@@ -54,6 +54,14 @@ uint32_t sw_analysis_frames_for(double seconds, uint32_t sample_rate) {
     return wanted >= SW_ANALYSIS_MAX_WINDOW ? SW_ANALYSIS_MAX_WINDOW : (uint32_t)wanted;
 }
 
+uint32_t sw_analysis_fft_size(uint32_t frames) {
+    uint32_t fft_size = SW_ANALYSIS_MIN_WINDOW;
+    while (fft_size < frames) {
+        fft_size <<= 1;
+    }
+    return fft_size;
+}
+
 /* Samples the note is taken on, in the middle of a window of frames: its
    central half, but at least half the usual window when the window allows it */
 static uint32_t sw_analysis_pitch_frames(uint32_t frames, uint32_t sample_rate) {
@@ -171,10 +179,7 @@ void sw_analysis_run(
     sw_analysis_run_pitch(window, frames, sample_rate, workspace, &frequency, &out->clarity, &out->level_db);
 
     /* The spectrum of the whole window, padded with silence up to a power of two */
-    uint32_t fft_size = SW_ANALYSIS_MIN_WINDOW;
-    while (fft_size < frames) {
-        fft_size <<= 1;
-    }
+    const uint32_t fft_size = sw_analysis_fft_size(frames);
     sw_spectrum_compute(window, frames, fft_size, workspace->re, workspace->im, workspace->mag_db);
     sw_spectrum_find_partials(workspace->mag_db, frames, fft_size, (float)sample_rate, noise_gate_db, out);
     sw_spectrum_display(workspace->mag_db, fft_size, (float)sample_rate, out);
@@ -483,6 +488,8 @@ void sw_analysis_fit_envelope(
     out->sustain_level = 1.0f;
     out->release_s = ENVELOPE_RELEASE_S;
     out->curve = SYNTHWAY_ENVELOPE_EXPONENTIAL;
+    out->attack_curve = SYNTHWAY_ATTACK_LINEAR;
+    out->release_curve = SYNTHWAY_ENVELOPE_EXPONENTIAL;
     *out_peak_db = SW_SPECTRUM_FLOOR_DB;
     if (count == 0) {
         return;

@@ -1,4 +1,4 @@
-"""AI-nalyzer: the separation process is followed, refused when it must be, and
+"""Decomposer: the separation process is followed, refused when it must be, and
 its stems served or sent to the Analyzer. Demucs is replaced with a fake
 script: no model is loaded, nothing is played."""
 import os

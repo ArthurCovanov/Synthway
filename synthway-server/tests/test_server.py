@@ -10,8 +10,8 @@ import core_bridge
 import main
 from core_bridge import CoreError
 from models import (
-    MAX_PARTIALS, Analysis, AnalysisPartial, ClipTrack, ClipWaveform, DeviceInfo, DeviceTypeEnum, Envelope, Timbre,
-    WaveformEnum,
+    MAX_PARTIALS, Analysis, AnalysisPartial, ClipTrack, ClipWaveform, DeviceInfo, DeviceTypeEnum, Envelope,
+    HarmonicLevel, HarmonicStateEnum, NoteSpan, Partial, ShapeFit, Timbre, WaveformEnum, WaveformFit, WaveShapeEnum,
 )
 
 
@@ -40,6 +40,14 @@ class FakeLib:
 
     def synthway_engine_set_filter(self, engine, low_cutoff, high_cutoff, resonance):
         self.calls.append(("filter", low_cutoff, high_cutoff, resonance))
+        return 0
+
+    def synthway_engine_set_reverb(self, engine, mix):
+        self.calls.append(("reverb", mix))
+        return 0
+
+    def synthway_engine_set_unison(self, engine, voices, detune, spread):
+        self.calls.append(("unison", voices, detune, spread))
         return 0
 
     def synthway_engine_set_timbre(self, engine, timbre):
@@ -156,6 +164,28 @@ class FakeCore:
 
     def get_filter(self):
         return self.filter
+
+    # Like the real bridge, the reverb is kept even without an engine
+    reverb = 0.0
+
+    def set_reverb(self, mix):
+        if not 0.0 <= mix <= 1.0:
+            raise ValueError("Invalid reverb mix")
+        self.reverb = mix
+
+    def get_reverb(self):
+        return self.reverb
+
+    # Like the real bridge, the unison is kept even without an engine
+    unison = (1, 0.0, 0.0)
+
+    def set_unison(self, voices, detune, spread):
+        if not (1 <= voices <= 8 and 0.0 <= detune <= 100.0 and 0.0 <= spread <= 1.0):
+            raise ValueError("Invalid unison")
+        self.unison = (voices, detune, spread)
+
+    def get_unison(self):
+        return self.unison
 
     def get_max_partials(self):
         return MAX_PARTIALS
@@ -279,6 +309,35 @@ class FakeAnalyzer:
         self.reference = (reference_hz, harmonic_cents)
         return fake_analysis(330.0)
 
+    def find_notes(self, start_s, end_s, window_s=0.0, noise_gate_db=None):
+        if noise_gate_db is not None:
+            self.set_noise_gate(noise_gate_db)
+        self.noted = (round(start_s, 6), round(end_s, 6), window_s)
+        middle = round((start_s + end_s) / 2, 6)
+        return [
+            NoteSpan(frequency=932.33, start=start_s, end=middle, strength=0.9),
+            NoteSpan(frequency=1174.66, start=start_s, end=end_s, strength=0.8),
+            NoteSpan(frequency=880.0, start=middle, end=end_s, strength=1.0),
+        ]
+
+    def fit_waveform(self, start_s, end_s, window_s=0.0, noise_gate_db=None, reference_hz=0.0):
+        if noise_gate_db is not None:
+            self.set_noise_gate(noise_gate_db)
+        self.fitted = (round(start_s, 6), round(end_s, 6), window_s, reference_hz)
+        return WaveformFit(
+            frequency=reference_hz or 880.0, moments=12,
+            harmonics=[
+                HarmonicLevel(level=0.0, background=-40.0, state=HarmonicStateEnum.HEARD),
+                HarmonicLevel(level=-6.0, background=-42.0, state=HarmonicStateEnum.HEARD),
+                HarmonicLevel(level=-20.0, background=-45.0, state=HarmonicStateEnum.SHARED),
+            ],
+            even_db=-0.8, even_count=1, slope=-7.5,
+            fits=[
+                ShapeFit(shape=WaveShapeEnum.SAWTOOTH, duty=0.0, cutoff=5588.0, resonance=0.0, error_db=1.8),
+                ShapeFit(shape=WaveShapeEnum.PULSE, duty=0.375, cutoff=5588.0, resonance=0.0, error_db=3.2),
+            ],
+        )
+
     def measure_envelopes(self, start_s, end_s, window_s=0.0, noise_gate_db=None, reference_hz=0.0, harmonic_cents=0.0):
         self.measured = (round(start_s, 6), round(end_s, 6), window_s, reference_hz, harmonic_cents)
         analysis = fake_analysis(330.0)
@@ -344,6 +403,51 @@ def test_filter_is_kept_across_engine_restarts():
         with pytest.raises(ValueError):
             bridge.set_filter(*band)
     assert bridge.get_filter() == (200.0, 5000.0, 0.3)
+
+
+def test_reverb_is_kept_across_engine_restarts():
+    lib = FakeLib()
+    bridge = bridge_with(lib)
+    bridge.set_reverb(0.35)  # no engine yet
+    bridge.start_engine()
+    bridge.start_engine()
+    applied = [call for call in lib.calls if call[0] == "reverb"]
+    assert applied == [("reverb", 0.35)] * 2
+    assert lib.calls.index(applied[0]) < lib.calls.index("start")
+
+    for mix in (-0.1, 1.5):
+        with pytest.raises(ValueError):
+            bridge.set_reverb(mix)
+    assert bridge.get_reverb() == 0.35
+
+
+def test_unison_is_kept_across_engine_restarts():
+    lib = FakeLib()
+    bridge = bridge_with(lib)
+    bridge.set_unison(7, 12.0, 0.8)  # no engine yet
+    bridge.start_engine()
+    bridge.start_engine()
+    applied = [call for call in lib.calls if call[0] == "unison"]
+    assert applied == [("unison", 7, 12.0, 0.8)] * 2
+    assert lib.calls.index(applied[0]) < lib.calls.index("start")
+
+    for unison in [(0, 10.0, 0.5), (9, 10.0, 0.5), (4, -1.0, 0.5), (4, 101.0, 0.5), (4, 10.0, 1.5)]:
+        with pytest.raises(ValueError):
+            bridge.set_unison(*unison)
+    assert bridge.get_unison() == (7, 12.0, 0.8)
+
+
+def test_attack_curve_reaches_the_core():
+    timbre = Timbre(partials=[Partial(ratio=1.0, amplitude=0.5, envelope=Envelope(attack=0.1, attack_curve=1))])
+    c_timbre = core_bridge._timbre_to_c(timbre)
+    assert c_timbre.partials[0].envelope.attack_curve == 1 and c_timbre.partials[0].envelope.curve == 0
+    with pytest.raises(ValueError):
+        Envelope(attack_curve=2)
+
+    # The release has its own curve; absent, it is the decay's (instruments made before it sound the same)
+    same = core_bridge._timbre_to_c(Timbre(partials=[Partial(envelope=Envelope(curve=1))])).partials[0].envelope
+    apart = core_bridge._timbre_to_c(Timbre(partials=[Partial(envelope=Envelope(curve=1, release_curve=0))])).partials[0].envelope
+    assert (same.curve, same.release_curve) == (1, 1) and (apart.curve, apart.release_curve) == (1, 0)
 
 
 def test_failed_start_releases_the_engine():
@@ -420,7 +524,7 @@ def test_health_without_core(monkeypatch):
 
 def test_envelope_route_validates_and_applies(server):
     client, fake = server
-    envelope = {"attack": 0.2, "decay": 0.1, "sustain": 0.6, "release": 0.8, "curve": 0}
+    envelope = {"attack": 0.2, "decay": 0.1, "sustain": 0.6, "release": 0.8, "curve": 0, "attack_curve": 0, "release_curve": 0}
     assert client.post("/api/synth/envelope", json=envelope).json() == envelope
     assert fake.envelope == Envelope(**envelope)
     assert client.post("/api/synth/envelope", json={**envelope, "sustain": 1.5}).status_code == 422
@@ -450,6 +554,36 @@ def test_filter_bounds_are_updated_separately(server):
     assert fake.filter == (200.0, 5000.0, 0.4)
 
 
+def test_reverb_is_set_by_route_and_websocket(server):
+    client, fake = server
+    assert client.post("/api/synth/tone", json={"reverb": 0.3}).status_code == 200
+    assert fake.reverb == 0.3
+    assert client.post("/api/synth/tone", json={"reverb": 1.2}).status_code == 422
+    assert fake.reverb == 0.3
+    with client.websocket_connect("/ws/synth") as ws:
+        ws.send_json({"type": "set_param", "reverb": 0.6, "cutoff": 5000.0})
+        ws.receive_json()
+        assert fake.reverb == 0.6 and fake.filter[1] == 5000.0
+        ws.send_json({"type": "set_param", "reverb": -1})
+        assert "error" in ws.receive_json()
+    assert fake.reverb == 0.6
+
+
+def test_unison_is_set_by_route_and_websocket(server):
+    client, fake = server
+    assert client.post("/api/synth/tone", json={"unison": {"voices": 7, "detune": 12, "spread": 0.8}}).status_code == 200
+    assert fake.unison == (7, 12.0, 0.8)
+    assert client.post("/api/synth/tone", json={"unison": {"voices": 9}}).status_code == 422
+    assert fake.unison == (7, 12.0, 0.8)
+    with client.websocket_connect("/ws/synth") as ws:
+        ws.send_json({"type": "set_param", "unison": {"voices": 3, "detune": 5, "spread": 0}})
+        ws.receive_json()
+        assert fake.unison == (3, 5.0, 0.0)
+        ws.send_json({"type": "set_param", "unison": {"voices": 4, "detune": 200}})
+        assert "error" in ws.receive_json()
+    assert fake.unison == (3, 5.0, 0.0)
+
+
 def test_ws_invalid_message_keeps_the_connection(server):
     client, _ = server
     with client.websocket_connect("/ws/synth") as ws:
@@ -465,8 +599,8 @@ def test_timbre_route_validates_and_applies(server):
     client, fake = server
     timbre = {
         "partials": [
-            {"ratio": 1.0, "amplitude": 0.8, "waveform": 0, "envelope": {"attack": 0.01, "decay": 0.2, "sustain": 0.5, "release": 0.3, "curve": 0}},
-            {"ratio": 2.76, "amplitude": 0.3, "waveform": 3, "envelope": {"attack": 0.0, "decay": 0.1, "sustain": 0.0, "release": 0.1, "curve": 1}},
+            {"ratio": 1.0, "amplitude": 0.8, "waveform": 0, "envelope": {"attack": 0.01, "decay": 0.2, "sustain": 0.5, "release": 0.3, "curve": 0, "attack_curve": 1, "release_curve": 1}},
+            {"ratio": 2.76, "amplitude": 0.3, "waveform": 3, "envelope": {"attack": 0.0, "decay": 0.1, "sustain": 0.0, "release": 0.1, "curve": 1, "attack_curve": 0, "release_curve": 1}},
         ]
     }
     assert client.post("/api/synth/timbre", json=timbre).json() == timbre
@@ -476,7 +610,7 @@ def test_timbre_route_validates_and_applies(server):
     assert status["max_partials"] == MAX_PARTIALS
     assert status["sample_rate"] is None  # no engine running
 
-    bad_partials = [{"ratio": 0}, {"ratio": 1001}, {"amplitude": 1.5}, {"waveform": 4}, {"envelope": {"sustain": 2}}, {"envelope": {"curve": 2}}]
+    bad_partials = [{"ratio": 0}, {"ratio": 1001}, {"amplitude": 1.5}, {"waveform": 4}, {"envelope": {"sustain": 2}}, {"envelope": {"curve": 2}}, {"envelope": {"attack_curve": 2}}, {"envelope": {"release_curve": 2}}]
     for bad in bad_partials:
         assert client.post("/api/synth/timbre", json={"partials": [bad]}).status_code == 422, bad
     too_many = {"partials": [{"ratio": n + 1} for n in range(MAX_PARTIALS + 1)]}
@@ -546,6 +680,38 @@ def test_clip_upload_shows_waveform_and_note(server):
     assert ranged.status_code == 206
     assert ranged.headers["content-range"] == f"bytes 0-3/{len(wav.content)}"
     assert ranged.content == b"RIFF"
+
+
+def test_clip_notes(server):
+    client, fake = server
+    assert client.get("/api/analyzer/clip/notes?start=0&end=0.6").status_code == 404
+    client.post("/api/analyzer/clip", content=b"RIFF")
+    notes = client.get("/api/analyzer/clip/notes?start=0.1&end=0.7&window_ms=120&noise_gate_db=-70").json()
+    assert [n["frequency"] for n in notes] == [932.33, 1174.66, 880.0]
+    assert notes[0] == {"frequency": 932.33, "start": 0.1, "end": 0.4, "strength": 0.9}
+    clip_analyzer = fake.analyzers[-1]
+    assert clip_analyzer.noted == (0.1, 0.7, 0.12) and clip_analyzer.noise_gate == -70
+    assert client.get("/api/analyzer/clip/notes?start=0.5&end=0.2").status_code == 422
+    assert client.get("/api/analyzer/clip/notes?start=0&end=0.5&window_ms=5").status_code == 422
+    assert client.get("/api/analyzer/recording/notes?start=0&end=0.5").status_code == 404
+
+
+def test_clip_waveform_fit(server):
+    client, fake = server
+    assert client.get("/api/analyzer/clip/waveform-fit?start=0&end=0.6").status_code == 404
+    client.post("/api/analyzer/clip", content=b"RIFF")
+    fit = client.get(
+        "/api/analyzer/clip/waveform-fit?start=0.1&end=0.7&window_ms=120&noise_gate_db=-70&reference_hz=880"
+    ).json()
+    assert (fit["frequency"], fit["moments"], fit["even_count"], fit["slope"]) == (880.0, 12, 1, -7.5)
+    assert fit["harmonics"][2] == {"level": -20.0, "background": -45.0, "state": 2}
+    assert fit["fits"][0] == {"shape": 3, "duty": 0.0, "cutoff": 5588.0, "resonance": 0.0, "error_db": 1.8}
+    clip_analyzer = fake.analyzers[-1]
+    assert clip_analyzer.fitted == (0.1, 0.7, 0.12, 880.0) and clip_analyzer.noise_gate == -70
+    assert client.get("/api/analyzer/clip/waveform-fit?start=0.5&end=0.2").status_code == 422
+    assert client.get("/api/analyzer/clip/waveform-fit?start=0&end=0.5&reference_hz=6000").status_code == 422
+    assert client.get("/api/analyzer/clip/waveform-fit?start=0&end=0.5&window_ms=5").status_code == 422
+    assert client.get("/api/analyzer/recording/waveform-fit?start=0&end=0.5").status_code == 404
 
 
 def test_clip_waveform_of_a_part(server):
@@ -807,7 +973,7 @@ def test_note_envelopes(server):
     url = "/api/analyzer/clip/envelopes"
     body = client.get(f"{url}?start=0.2&end=0.6&window_ms=120&reference_hz=330&harmonic_cents=30").json()
     assert body["analysis"]["frequency"] == 330.0
-    assert body["envelopes"] == [{"attack": 0.002, "decay": 1.5, "sustain": 0.0, "release": 0.3, "curve": 1}]
+    assert body["envelopes"] == [{"attack": 0.002, "decay": 1.5, "sustain": 0.0, "release": 0.3, "curve": 1, "attack_curve": 0, "release_curve": 1}]
     assert clip_analyzer.measured == (0.2, 0.6, 0.12, 330.0, 30.0)
     for query in ("start=0.6&end=0.2", "end=0.5", "start=0.2&end=0.6&window_ms=5", "start=0.2&end=0.6&reference_hz=6000"):
         assert client.get(f"{url}?{query}").status_code == 422, query

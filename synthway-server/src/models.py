@@ -7,7 +7,7 @@ from enum import IntEnum
 from typing import List, Optional
 
 try:
-    from pydantic import BaseModel, Field
+    from pydantic import BaseModel, Field, model_validator
     HAS_PYDANTIC = True
 except ImportError:
     from dataclasses import dataclass, field
@@ -26,6 +26,23 @@ class WaveformEnum(IntEnum):
     SAWTOOTH = 3
 
 
+class WaveShapeEnum(IntEnum):
+    """Shapes a note's harmonics are compared with (synthway_wave_shape_t): the
+    waveforms of WaveformEnum, same values, and a pulse."""
+    SINE = 0
+    SQUARE = 1
+    TRIANGLE = 2
+    SAWTOOTH = 3
+    PULSE = 4
+
+
+class HarmonicStateEnum(IntEnum):
+    """One harmonic of a waveform fit (SYNTHWAY_HARMONIC_*)."""
+    HEARD = 0   # above the background around it
+    FAINT = 1   # not above it: missing, or too weak to tell
+    SHARED = 2  # also a harmonic of another note heard with it: left out of the fit
+
+
 class DeviceTypeEnum(IntEnum):
     PLAYBACK = 0
     CAPTURE = 1
@@ -39,6 +56,10 @@ class MidiPortTypeEnum(IntEnum):
 # SYNTHWAY_MAX_PARTIALS of synthway-core, fixed when the core is built. The
 # bridge checks it against synthway_get_max_partials() when it loads the library.
 MAX_PARTIALS = 64
+
+# SYNTHWAY_MAX_UNISON_VOICES and SYNTHWAY_MAX_UNISON_DETUNE_CENTS of synthway-core
+MAX_UNISON_VOICES = 8
+MAX_UNISON_DETUNE_CENTS = 100.0
 
 # SYNTHWAY_ANALYSIS_SPECTRUM_POINTS of synthway-core. The bridge checks the size
 # of the whole analysis structure (synthway_analysis_get_size) when it loads the library.
@@ -69,6 +90,15 @@ if HAS_PYDANTIC:
         channels: int = Field(default=2, description="Number of audio channels (e.g. 2 for stereo)")
         device_index: int = Field(default=-1, description="-1 for system default playback device")
 
+    class Unison(BaseModel):
+        """Each partial of the timbre played by several detuned voices, spread across the stereo field."""
+        voices: int = Field(default=1, ge=1, le=MAX_UNISON_VOICES, description="Voices per partial; 1: no unison")
+        detune: float = Field(
+            default=0.0, ge=0.0, le=MAX_UNISON_DETUNE_CENTS,
+            description="Cents between the partial and its outermost voices, below and above",
+        )
+        spread: float = Field(default=0.0, ge=0.0, le=1.0, description="Stereo width of the voices (0: mono)")
+
     class ToneControlRequest(BaseModel):
         frequency: Optional[float] = Field(default=None, ge=10.0, le=22000.0, description="Frequency in Hz")
         volume: Optional[float] = Field(default=None, ge=0.0, le=1.0, description="Normalized volume (0.0 to 1.0)")
@@ -77,6 +107,8 @@ if HAS_PYDANTIC:
         low_cutoff: Optional[float] = Field(default=None, ge=20.0, le=20000.0)
         cutoff: Optional[float] = Field(default=None, ge=20.0, le=20000.0)
         resonance: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+        reverb: Optional[float] = Field(default=None, ge=0.0, le=1.0, description="Share of reverberated sound (0: none)")
+        unison: Optional[Unison] = Field(default=None, description="Detuned voices per partial (synthway_engine_set_unison)")
 
     class Envelope(BaseModel):
         """ADSR envelope of every note; defaults are the core's (synthway_engine_set_envelope)."""
@@ -86,9 +118,24 @@ if HAS_PYDANTIC:
         release: float = Field(default=0.01, ge=0.0, le=10.0, description="Release time in seconds")
         curve: int = Field(
             default=0, ge=0, le=1,
-            description="0: straight ramps; 1: exponential, decay and release are the times to fall 60 dB "
+            description="The decay's: 0, a straight ramp; 1, exponential, the decay is the time to fall 60 dB "
             "(partials only: the single oscillator's envelope is always linear)",
         )
+        attack_curve: int = Field(
+            default=0, ge=0, le=1,
+            description="0: straight attack; 1: convex, slow then faster and faster (the square of the straight one; "
+            "partials only)",
+        )
+        release_curve: Optional[int] = Field(
+            default=None, ge=0, le=1,
+            description="The release's, as curve; absent: the decay's (as before the release had its own)",
+        )
+
+        @model_validator(mode="after")
+        def _release_like_decay(self):
+            if self.release_curve is None:
+                self.release_curve = self.curve
+            return self
 
     class Partial(BaseModel):
         """One partial of a timbre: its own oscillator and envelope (synthway_partial_t)."""
@@ -163,11 +210,42 @@ if HAS_PYDANTIC:
         right_low: List[float] = Field(default_factory=list)
         right_high: List[float] = Field(default_factory=list)
 
+    class NoteSpan(BaseModel):
+        """A note heard in a zone, and when (synthway_note_span_t)."""
+        frequency: float = Field(description="Its fundamental in Hz")
+        start: float = Field(description="Seconds from the start of the file")
+        end: float
+        strength: float = Field(description="In (0, 1]: 1 for the strongest note of the zone")
+
     class EnvelopeAnalysis(BaseModel):
         """A note's partials with the envelope of each (synthway_analyzer_measure_envelopes):
         envelopes[i] goes with analysis.partials[i], whose amplitude is its peak."""
         analysis: Analysis
         envelopes: List[Envelope] = Field(default_factory=list)
+
+    class HarmonicLevel(BaseModel):
+        """One harmonic of the note, in a waveform fit."""
+        level: float = Field(description="dB relative to the strongest heard harmonic (0)")
+        background: float = Field(description="The background around it, dB on the same scale")
+        state: HarmonicStateEnum
+
+    class ShapeFit(BaseModel):
+        """One shape with the low-pass and level that bring it closest (synthway_shape_fit_t)."""
+        shape: WaveShapeEnum
+        duty: float = Field(description="Share of the period a pulse is high; 0.5 for the square, 0 for the others")
+        cutoff: float = Field(description="Cutoff in Hz of the engine's low-pass that fits best; 0, none")
+        resonance: float = Field(description="Of that low-pass, in [0, 1]")
+        error_db: float = Field(description="Mean gap in dB between the harmonics measured and the shape's")
+
+    class WaveformFit(BaseModel):
+        """The harmonics of a note and the waveforms closest to them (synthway_analyzer_fit_waveform)."""
+        frequency: float = Field(description="The note in Hz; 0, none")
+        moments: int = Field(description="Moments of the zone where the note is heard; 0: never alone, no fit")
+        harmonics: List[HarmonicLevel] = Field(default_factory=list, description="From the 1st")
+        even_db: float = Field(description="Even harmonics against their odd neighbours, dB (sawtooth about -1, square far below)")
+        even_count: int = Field(description="Even harmonics compared; 0: even_db tells nothing")
+        slope: float = Field(description="Fall of the heard harmonics, dB per octave")
+        fits: List[ShapeFit] = Field(default_factory=list, description="One per shape, closest first; empty without a fit")
 
 else:
     @dataclass
@@ -206,6 +284,14 @@ else:
         low_cutoff: Optional[float] = None
         cutoff: Optional[float] = None
         resonance: Optional[float] = None
+        reverb: Optional[float] = None
+        unison: Optional["Unison"] = None
+
+    @dataclass
+    class Unison:
+        voices: int = 1
+        detune: float = 0.0
+        spread: float = 0.0
 
     @dataclass
     class Envelope:
@@ -214,6 +300,12 @@ else:
         sustain: float = 1.0
         release: float = 0.01
         curve: int = 0
+        attack_curve: int = 0
+        release_curve: Optional[int] = None
+
+        def __post_init__(self):
+            if self.release_curve is None:
+                self.release_curve = self.curve
 
     @dataclass
     class Partial:
@@ -283,6 +375,37 @@ else:
         right_high: List[float] = field(default_factory=list)
 
     @dataclass
+    class NoteSpan:
+        frequency: float = 0.0
+        start: float = 0.0
+        end: float = 0.0
+        strength: float = 0.0
+
+    @dataclass
     class EnvelopeAnalysis:
         analysis: Analysis = field(default_factory=Analysis)
         envelopes: List[Envelope] = field(default_factory=list)
+
+    @dataclass
+    class HarmonicLevel:
+        level: float = 0.0
+        background: float = -120.0
+        state: HarmonicStateEnum = HarmonicStateEnum.FAINT
+
+    @dataclass
+    class ShapeFit:
+        shape: WaveShapeEnum = WaveShapeEnum.SINE
+        duty: float = 0.0
+        cutoff: float = 0.0
+        resonance: float = 0.0
+        error_db: float = 0.0
+
+    @dataclass
+    class WaveformFit:
+        frequency: float = 0.0
+        moments: int = 0
+        harmonics: List[HarmonicLevel] = field(default_factory=list)
+        even_db: float = 0.0
+        even_count: int = 0
+        slope: float = 0.0
+        fits: List[ShapeFit] = field(default_factory=list)

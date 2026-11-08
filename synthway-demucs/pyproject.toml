@@ -1,9 +1,9 @@
-# Demucs for Synthway's AI-nalyzer, in its own environment (uv sync): the
+# Demucs for Synthway's Decomposer, in its own environment (uv sync): the
 # server never imports torch, it runs separate.py with this environment's Python.
 [project]
 name = "synthway-demucs"
 version = "0.1.0"
-description = "Music source separation (Demucs v4) for Synthway's AI-nalyzer"
+description = "Music source separation (Demucs v4) for Synthway's Decomposer"
 requires-python = ">=3.10,<3.14"
 dependencies = [
     "demucs",

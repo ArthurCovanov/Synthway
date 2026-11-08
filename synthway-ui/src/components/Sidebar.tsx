@@ -3,10 +3,10 @@ import type { ReactNode } from 'react';
 import emblem from '../assets/brand/emblem-256.png';
 import { SERVER_PORT } from '../lib/api';
 import { useSynthServer, type Connection } from '../lib/SynthServer';
-import { AINalyzerIcon, AnalyzerIcon, ComposerIcon, InstrumentIcon } from './icons';
+import { AnalyzerIcon, ComposerIcon, DecomposerIcon, InstrumentIcon } from './icons';
 import styles from './Sidebar.module.css';
 
-export type ScreenId = 'instruments' | 'composer' | 'analyzer' | 'ainalyzer' | 'settings';
+export type ScreenId = 'instruments' | 'composer' | 'analyzer' | 'decomposer' | 'settings';
 
 const CONNECTION_LABEL: Record<Connection, string> = {
   connecting: 'Connexion au serveur…',
@@ -69,9 +69,9 @@ export function Sidebar({ current, onNavigate }: { current: ScreenId; onNavigate
           onNavigate={onNavigate}
         />
         <NavItem
-          id="ainalyzer"
-          label="AI-nalyzer"
-          icon={<AINalyzerIcon size={23} />}
+          id="decomposer"
+          label="Decomposer"
+          icon={<DecomposerIcon size={23} />}
           current={current}
           onNavigate={onNavigate}
         />
@@ -98,7 +98,7 @@ export function Sidebar({ current, onNavigate }: { current: ScreenId; onNavigate
         <span className={styles.dot} data-state={connection === 'online' && !coreLoaded ? 'foreign' : connection} />
         <span className={styles.tip}>{statusLabel}</span>
       </div>
-      <span className={styles.version}>v0.1</span>
+      <span className={styles.version}>v0.2</span>
     </nav>
   );
 }

@@ -96,13 +96,44 @@ SYNTHWAY_API synthway_result_t synthway_engine_get_envelope(
 SYNTHWAY_API synthway_result_t synthway_engine_set_filter(synthway_engine_t* engine, float low_cutoff_hz, float high_cutoff_hz, float resonance);
 SYNTHWAY_API synthway_result_t synthway_engine_get_filter(const synthway_engine_t* engine, float* out_low_cutoff_hz, float* out_high_cutoff_hz, float* out_resonance);
 
+/**
+ * Reverb, after the filter: mix in [0, 1] is the share of reverberated sound,
+ * as an equal-power crossfade (0: none, the default; 0.5: as much of each;
+ * 1: the reverb alone). A room whose tail takes about 2 s to fall 60 dB and
+ * keeps ringing after the note ends; its left and right channels differ.
+ * A held note keeps about its level, but its peaks get higher: up to two or
+ * three times at full mix. Back at 0, the tail stops within a millisecond.
+ */
+SYNTHWAY_API synthway_result_t synthway_engine_set_reverb(synthway_engine_t* engine, float mix);
+SYNTHWAY_API float synthway_engine_get_reverb(const synthway_engine_t* engine);
+
+/**
+ * Unison, for the timbre (not the single oscillator): each partial is played
+ * by voices oscillators (1 to SYNTHWAY_MAX_UNISON_VOICES; 1, the default: no
+ * unison), from detune_cents below to detune_cents above it (0 to
+ * SYNTHWAY_MAX_UNISON_DETUNE_CENTS), closer together near the partial so that
+ * they never all come back in phase at regular intervals. Their beating thickens the sound,
+ * as the many detuned saws of a "supersaw". spread in [0, 1] places them
+ * across the stereo field, alternately left and right (0: all in the middle,
+ * mono; 1: the outermost at the far left and right). The voices of a partial
+ * share its envelope; each starts at its own point of the waveform, and the
+ * sum is scaled by 1 / sqrt(voices) to keep about the same loudness.
+ * Takes effect at the next audio block, also while a note is held.
+ * Returns SYNTHWAY_INVALID_PARAM, and keeps the unison in place, when a value
+ * is out of range.
+ */
+SYNTHWAY_API synthway_result_t synthway_engine_set_unison(synthway_engine_t* engine, uint32_t voices, float detune_cents, float spread);
+SYNTHWAY_API synthway_result_t synthway_engine_get_unison(const synthway_engine_t* engine, uint32_t* out_voices, float* out_detune_cents, float* out_spread);
+
 /* --------------------------------------------------------------------------
    Additive Synthesis (timbre)
    -------------------------------------------------------------------------- */
 /**
  * Plays every note as a sum of partials: each one is an oscillator at
  * ratio × the note's frequency, with its own amplitude, waveform and envelope
- * (linear or exponential, see synthway_envelope_curve_t).
+ * (linear or exponential, see synthway_envelope_curve_t, with a straight or
+ * convex attack, see synthway_attack_curve_t), or several detuned ones (see
+ * synthway_engine_set_unison).
  * The sum is then scaled by the volume. A timbre replaces the single
  * oscillator (set_waveform, set_envelope); NULL goes back to it, which is the
  * default. A timbre with no partial is silent.

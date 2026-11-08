@@ -26,6 +26,11 @@ uint32_t sw_analysis_window_frames(uint32_t sample_rate);
 /* Samples in a window of about `seconds`, from SW_ANALYSIS_MIN_WINDOW to SW_ANALYSIS_MAX_WINDOW */
 uint32_t sw_analysis_frames_for(double seconds, uint32_t sample_rate);
 
+/* Size of the spectrum sw_analysis_run computes for a window of frames
+   samples: the power of two that holds it, at least SW_ANALYSIS_MIN_WINDOW.
+   After sw_analysis_run, workspace->mag_db holds fft_size / 2 + 1 levels. */
+uint32_t sw_analysis_fft_size(uint32_t frames);
+
 /* Analyzes window (frames mono samples, SW_ANALYSIS_MIN_WINDOW to
    SW_ANALYSIS_MAX_WINDOW; any count, the spectrum pads it with silence up to a
    power of two): level and note from its centre, partials and spectrum from

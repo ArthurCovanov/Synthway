@@ -373,6 +373,92 @@ static void test_filter_cutoff_and_resonance(void) {
     free(high_passed_samples);
 }
 
+/* Square note at 220 Hz, volume 0.2, stereo, held for held_frames then released */
+static float* render_reverb(float mix, uint32_t held_frames, uint32_t after_frames) {
+    synthway_engine_t* engine = offline_engine(2);
+    synthway_engine_set_frequency(engine, 220.0f);
+    synthway_engine_set_volume(engine, 0.2f);
+    synthway_engine_set_waveform(engine, SYNTHWAY_WAVEFORM_SQUARE);
+    synthway_engine_set_reverb(engine, mix);
+    float* samples = (float*)malloc(sizeof(float) * 2 * (held_frames + after_frames));
+    if (!samples) exit(2);
+    synthway_engine_render(engine, samples, held_frames);
+    synthway_engine_set_tone_enabled(engine, false);
+    synthway_engine_render(engine, samples + 2 * held_frames, after_frames);
+    synthway_engine_destroy(engine);
+    return samples;
+}
+
+static void test_reverb(void) {
+    synthway_engine_t* engine = offline_engine(1);
+    const float default_mix = synthway_engine_get_reverb(engine);
+    check(default_mix == 0.0f
+        && synthway_engine_set_reverb(engine, -0.1f) == SYNTHWAY_INVALID_PARAM
+        && synthway_engine_set_reverb(engine, 1.1f) == SYNTHWAY_INVALID_PARAM
+        && synthway_engine_set_reverb(engine, NAN) == SYNTHWAY_INVALID_PARAM
+        && synthway_engine_set_reverb(engine, 0.4f) == SYNTHWAY_OK
+        && synthway_engine_get_reverb(engine) == 0.4f,
+        "reverb mix validated", "off by default, 0 to 1");
+    synthway_engine_destroy(engine);
+
+    /* Held 1 s, then 3.5 s of tail */
+    const uint32_t held = SAMPLE_RATE, after = SAMPLE_RATE * 7 / 2, window = SAMPLE_RATE / 5;
+    float* dry = render_reverb(0.0f, held, after);
+    float* half = render_reverb(0.5f, held, after);
+    float* full = render_reverb(1.0f, held, after);
+    const float* held_dry = dry + 2 * (held - window);
+    const double dry_rms = measure_rms(held_dry, window, 2);
+    const double full_rms = measure_rms(full + 2 * (held - window), window, 2);
+    const double early_tail = measure_rms(half + 2 * (held + SAMPLE_RATE / 10), window, 2);
+    const double late_tail = measure_rms(half + 2 * (held + 3 * SAMPLE_RATE), window, 2);
+    const double dry_tail = measure_peak(dry + 2 * (held + SAMPLE_RATE / 10), window, 2);
+    double cross = 0.0, left = 0.0, right = 0.0;
+    const float* held_half = half + 2 * (held - window);
+    for (uint32_t i = 0; i < window; ++i) {
+        cross += (double)held_half[2 * i] * held_half[2 * i + 1];
+        left += (double)held_half[2 * i] * held_half[2 * i];
+        right += (double)held_half[2 * i + 1] * held_half[2 * i + 1];
+    }
+    const double correlation = cross / sqrt(left * right);
+    const double peak = measure_peak(full, held + after, 2);
+    char detail[200];
+    snprintf(detail, sizeof(detail),
+        "held RMS dry %.4f, full mix %.4f; tail at 0.1 s %.4f, at 3 s %.6f, dry %.4f; L/R correlation %.3f; peak %.3f",
+        dry_rms, full_rms, early_tail, late_tail, dry_tail, correlation, peak);
+    check(full_rms > dry_rms * 0.7 && full_rms < dry_rms * 1.4
+        && early_tail > dry_rms * 0.03 && late_tail < dry_rms * 0.001 && dry_tail == 0.0
+        && correlation < 0.9 && isfinite(peak) && peak < 0.2 * 4.0,
+        "reverb keeps the level, rings after the note, decays, and is stereo", detail);
+    free(dry);
+    free(half);
+    free(full);
+
+    /* Back at 0, it fades out within a block, then the output is again exactly
+       the dry one (mono: the mean of both sides while it plays) */
+    synthway_engine_t* plain = offline_engine(1);
+    synthway_engine_t* turned_off = offline_engine(1);
+    synthway_engine_set_reverb(turned_off, 0.5f);
+    float* before = render(turned_off, SAMPLE_RATE / 10);
+    synthway_engine_set_reverb(turned_off, 0.0f);
+    float* fading = render(turned_off, SAMPLE_RATE / 50);
+    float* off_samples = render(turned_off, SAMPLE_RATE / 10);
+    float* plain_samples = render(plain, SAMPLE_RATE / 10 + SAMPLE_RATE / 50 + SAMPLE_RATE / 10);
+    const float* plain_after = plain_samples + SAMPLE_RATE / 10 + SAMPLE_RATE / 50;
+    int same = 1;
+    for (uint32_t i = 0; i < SAMPLE_RATE / 10; ++i) {
+        same &= off_samples[i] == plain_after[i];
+    }
+    snprintf(detail, sizeof(detail), "mono, after a 20 ms block back at 0; peak with reverb %.4f",
+        measure_peak(before, SAMPLE_RATE / 10, 1));
+    check(same, "reverb back at 0 leaves the sound untouched", detail);
+    free(before);
+    free(fading);
+    free(plain_samples);
+    free(off_samples);
+    synthway_engine_destroy(plain);
+    synthway_engine_destroy(turned_off);
+}
+
 static void test_timbre_partials(void) {
     /* 200 Hz note: 0.5 s after the warm-up holds whole periods of every partial */
     const uint32_t n = SAMPLE_RATE / 2;
@@ -438,7 +524,7 @@ static void test_timbre_exponential_envelope(void) {
 
     synthway_partial_t held = sine_partial(1.0f, 0.5f);
     held.envelope.release_s = 0.4f;
-    held.envelope.curve = SYNTHWAY_ENVELOPE_EXPONENTIAL;
+    held.envelope.release_curve = SYNTHWAY_ENVELOPE_EXPONENTIAL;
     timbre = timbre_of(1, &held);
     engine = timbre_engine(440.0f, &timbre);
     float* before = render(engine, SAMPLE_RATE / 5);
@@ -595,6 +681,159 @@ static void test_timbre_validation(void) {
     synthway_engine_destroy(engine);
 }
 
+static void test_decay_and_release_curves_apart(void) {
+    /* One square partial (|sample| = volume × level), volume 0.5: an exponential decay of 1 s down
+       to a sustain of 0 is 15 dB down after 0.25 s, then a linear release of 0.2 s from wherever it
+       is halves the level after 0.1 s. Before, both shared one curve. */
+    synthway_partial_t partial = sine_partial(1.0f, 1.0f);
+    partial.waveform = SYNTHWAY_WAVEFORM_SQUARE;
+    partial.envelope.attack_s = 0.0f;
+    partial.envelope.decay_s = 1.0f;
+    partial.envelope.sustain_level = 0.0f;
+    partial.envelope.release_s = 0.2f;
+    partial.envelope.curve = SYNTHWAY_ENVELOPE_EXPONENTIAL;
+    partial.envelope.release_curve = SYNTHWAY_ENVELOPE_LINEAR;
+    synthway_timbre_t timbre = timbre_of(1, &partial);
+    synthway_engine_t* engine = timbre_engine(440.0f, &timbre);
+    synthway_engine_set_volume(engine, 0.5f);
+    free(render(engine, WARMUP_FRAMES)); /* the volume settles while the tone is off */
+    synthway_engine_set_tone_enabled(engine, false);
+    free(render(engine, SAMPLE_RATE / 2));
+    synthway_engine_set_tone_enabled(engine, true);
+    float* held = render(engine, SAMPLE_RATE / 4);
+    const double before = level_at(held, 0.25 - 1.0 / SAMPLE_RATE);
+    synthway_engine_set_tone_enabled(engine, false);
+    float* released = render(engine, SAMPLE_RATE / 4);
+    const double halfway = level_at(released, 0.1);
+    const double after = level_at(released, 0.21);
+    free(held);
+    free(released);
+    synthway_engine_destroy(engine);
+    char detail[160];
+    snprintf(detail, sizeof(detail), "decay to %.4f (%.4f expected), release halfway %.4f, after %.4f",
+             before, 0.5 * pow(10.0, -0.75), halfway, after);
+    check(fabs(before - 0.5 * pow(10.0, -0.75)) < 0.003 && fabs(halfway - 0.5 * before) < 0.003 && after == 0.0,
+          "exponential decay, then a linear release: each segment has its own curve", detail);
+}
+
+static void test_convex_attack(void) {
+    /* One square partial (|sample| = volume × level), 100 ms attack, volume
+       0.5: halfway, a straight attack is at 0.25, a convex one at 0.125 (the
+       square of one half); both reach 0.5 at the end */
+    synthway_partial_t partial = sine_partial(1.0f, 1.0f);
+    partial.waveform = SYNTHWAY_WAVEFORM_SQUARE;
+    partial.envelope.attack_s = 0.1f;
+    double halfway[2], quarter[2], top[2];
+    for (int convex = 0; convex < 2; ++convex) {
+        partial.envelope.attack_curve = convex ? SYNTHWAY_ATTACK_CONVEX : SYNTHWAY_ATTACK_LINEAR;
+        synthway_timbre_t timbre = timbre_of(1, &partial);
+        synthway_engine_t* engine = timbre_engine(440.0f, &timbre);
+        synthway_engine_set_volume(engine, 0.5f);
+        free(render(engine, WARMUP_FRAMES)); /* the volume settles while the tone is off */
+        synthway_engine_set_tone_enabled(engine, false);
+        free(render(engine, SAMPLE_RATE / 10));
+        synthway_engine_set_tone_enabled(engine, true);
+        float* x = render(engine, SAMPLE_RATE / 5);
+        quarter[convex] = level_at(x, 0.025);
+        halfway[convex] = level_at(x, 0.05);
+        top[convex] = level_at(x, 0.15);
+        free(x);
+        synthway_engine_destroy(engine);
+    }
+    char detail[160];
+    snprintf(detail, sizeof(detail), "straight %.4f / %.4f / %.4f, convex %.4f / %.4f / %.4f (at 25, 50, 150 ms)",
+             quarter[0], halfway[0], top[0], quarter[1], halfway[1], top[1]);
+    check(near(quarter[0], 0.125) && near(halfway[0], 0.25) && near(top[0], 0.5)
+              && near(quarter[1], 0.03125) && near(halfway[1], 0.125) && near(top[1], 0.5),
+          "convex attack follows the square of the straight one", detail);
+}
+
+/* A held note of timbre, volume 1, rendered on channels channels with this unison */
+static float* render_unison(const synthway_timbre_t* timbre, uint32_t channels, uint32_t voices,
+                            float detune, float spread, uint32_t frames, synthway_result_t* result) {
+    synthway_engine_t* engine = offline_engine(channels);
+    synthway_engine_set_frequency(engine, 440.0f);
+    synthway_engine_set_volume(engine, 1.0f);
+    synthway_engine_set_timbre(engine, timbre);
+    *result = synthway_engine_set_unison(engine, voices, detune, spread);
+    synthway_engine_set_tone_enabled(engine, true);
+    float* x = render(engine, frames);
+    synthway_engine_destroy(engine);
+    return x;
+}
+
+static void test_unison(void) {
+    const synthway_partial_t partials[] = { sine_partial(1.0f, 0.5f), sine_partial(2.0f, 0.25f) };
+    const synthway_timbre_t timbre = timbre_of(2, partials);
+    /* 4 s: frequency resolution fine enough to tell voices 1.7 Hz apart */
+    const uint32_t frames = SAMPLE_RATE * 4;
+    synthway_result_t result;
+
+    /* Off by default; one voice is exactly the timbre without unison, whatever the detune and spread */
+    synthway_engine_t* engine = offline_engine(2);
+    uint32_t voices = 0;
+    float detune = -1.0f, spread = -1.0f;
+    synthway_engine_get_unison(engine, &voices, &detune, &spread);
+    const int refused = synthway_engine_set_unison(engine, 0, 10.0f, 0.5f) == SYNTHWAY_INVALID_PARAM
+        && synthway_engine_set_unison(engine, SYNTHWAY_MAX_UNISON_VOICES + 1, 10.0f, 0.5f) == SYNTHWAY_INVALID_PARAM
+        && synthway_engine_set_unison(engine, 4, -1.0f, 0.5f) == SYNTHWAY_INVALID_PARAM
+        && synthway_engine_set_unison(engine, 4, 101.0f, 0.5f) == SYNTHWAY_INVALID_PARAM
+        && synthway_engine_set_unison(engine, 4, NAN, 0.5f) == SYNTHWAY_INVALID_PARAM
+        && synthway_engine_set_unison(engine, 4, 10.0f, 1.1f) == SYNTHWAY_INVALID_PARAM;
+    uint32_t kept_voices = 0;
+    synthway_engine_get_unison(engine, &kept_voices, &detune, &spread);
+    synthway_engine_destroy(engine);
+    char detail[240];
+    snprintf(detail, sizeof(detail), "default %u voice(s), out-of-range values refused, kept %u / %.1f / %.1f",
+             voices, kept_voices, detune, spread);
+    check(voices == 1 && refused && kept_voices == 1 && detune == 0.0f && spread == 0.0f,
+          "unison off by default, validated", detail);
+
+    float* plain = render_unison(&timbre, 2, 1, 0.0f, 0.0f, frames, &result);
+    float* single = render_unison(&timbre, 2, 1, 30.0f, 1.0f, frames, &result);
+    check(memcmp(plain, single, sizeof(float) * frames * 2) == 0, "one unison voice leaves the sound untouched",
+          "1 voice, 30 cents, spread 1");
+
+    /* 7 voices, 20 cents apart at most, spread wide: the voices of the
+       fundamental sit at 440 Hz and up to 20 cents on each side, each at
+       0.5 / sqrt(7) in mono; they beat, and left and right differ */
+    float* wide = render_unison(&timbre, 2, 7, 20.0f, 1.0f, frames, &result);
+    float* mono = render_unison(&timbre, 1, 7, 20.0f, 0.0f, frames, &result);
+    const uint32_t settled = SAMPLE_RATE / 10, span = frames - settled;
+    const double centre = measure_amplitude(mono + settled, span, 440.0);
+    const double outer = measure_amplitude(mono + settled, span, 440.0 * pow(2.0, 20.0 / 1200.0));
+    const double voice = 0.5 / sqrt(7.0);
+    double sum_lr = 0.0, sum_ll = 0.0, sum_rr = 0.0;
+    for (uint32_t i = settled; i < frames; ++i) {
+        const double l = wide[2 * i], r = wide[2 * i + 1];
+        sum_lr += l * r;
+        sum_ll += l * l;
+        sum_rr += r * r;
+    }
+    const double correlation = sum_lr / sqrt(sum_ll * sum_rr);
+    /* Beating: the level over 50 ms windows rises and falls */
+    double lowest = 1e9, highest = 0.0;
+    for (uint32_t start = settled; start + SAMPLE_RATE / 20 <= frames; start += SAMPLE_RATE / 20) {
+        const double rms = measure_rms(mono + start, SAMPLE_RATE / 20, 1);
+        lowest = fmin(lowest, rms);
+        highest = fmax(highest, rms);
+    }
+    const double plain_rms = measure_rms(plain + 2 * settled, span, 2);
+    const double mono_rms = measure_rms(mono + settled, span, 1);
+    snprintf(detail, sizeof(detail),
+             "voice at 440 Hz %.4f and +20 cents %.4f (each %.4f expected); left/right correlation %.2f; "
+             "level %.4f to %.4f over 50 ms; RMS %.4f vs %.4f without unison",
+             centre, outer, voice, correlation, lowest, highest, mono_rms, plain_rms);
+    check(result == SYNTHWAY_OK && fabs(centre - voice) < 0.03 && fabs(outer - voice) < 0.03 && correlation < 0.9
+              && highest > 1.5 * lowest && fabs(20.0 * log10(mono_rms / plain_rms)) < 3.0,
+          "unison: detuned voices beat, spread across left and right, at about the same loudness", detail);
+
+    free(plain);
+    free(single);
+    free(wide);
+    free(mono);
+}
+
 static void test_wav_export(const char* path) {
     const uint32_t frames = SAMPLE_RATE / 2;
     synthway_engine_t* engine = offline_engine(2);
@@ -668,6 +907,7 @@ int main(int argc, char* argv[]) {
     test_stereo_channels_match();
     test_guards();
     test_filter_cutoff_and_resonance();
+    test_reverb();
     test_timbre_partials();
     test_timbre_envelopes();
     test_timbre_exponential_envelope();
@@ -675,6 +915,9 @@ int main(int argc, char* argv[]) {
     test_timbre_live_changes();
     test_timbre_partial_above_sample_rate();
     test_timbre_validation();
+    test_decay_and_release_curves_apart();
+    test_convex_attack();
+    test_unison();
     test_wav_export(wav_path);
 
     printf("%s: %d failure(s)\n", failures ? "FAILED" : "OK", failures);

@@ -257,6 +257,73 @@ function analyzeQuery(url, moment) {
   return relate(fakeAnalysis(m.frequency, m.level, m.clarity, gate), referenceHz, harmonicCents);
 }
 
+/** The notes of a zone, like synthway_analyzer_find_notes: the fake note all along, its fifth above in the
+    second half, and a quiet octave below in the first (to see several notes at once and a change) */
+function notesResponse(res, url, note) {
+  const start = Number(url.searchParams.get('start'));
+  const end = Number(url.searchParams.get('end'));
+  if (!(end > start)) return error(res, 422, 'La zone finit après son début');
+  const middle = Math.round(((start + end) / 2) * 1e4) / 1e4;
+  return json(res, [
+    { frequency: note / 2, start, end: middle, strength: 0.35 },
+    { frequency: note, start, end, strength: 1 },
+    { frequency: note * 1.5, start: middle, end, strength: 0.8 },
+  ]);
+}
+
+/** Which waveform a note is closest to, like synthway_analyzer_fit_waveform: the fake note is a sawtooth
+    through a low-pass at 3 kHz, its fifth a square, the octave below is never heard alone (no fit) */
+function waveformFitResponse(res, url, note) {
+  const start = Number(url.searchParams.get('start'));
+  const end = Number(url.searchParams.get('end'));
+  if (!(end > start)) return error(res, 422, 'La zone finit après son début');
+  const reference = Number(url.searchParams.get('reference_hz')) || note;
+  const cents = (f) => Math.abs(1200 * Math.log2(f / reference));
+  const lowpass = (f, cutoff) => {
+    const x = Math.tan((Math.PI * f) / 48000) / Math.tan((Math.PI * cutoff) / 48000);
+    return -10 * Math.log10((1 - x * x) ** 2 + (x / 0.7071) ** 2);
+  };
+  const empty = { frequency: reference, moments: 0, harmonics: [], even_db: 0, even_count: 0, slope: 0, fits: [] };
+  if (cents(note / 2) < 50) return json(res, empty);
+  const square = cents(note * 1.5) < 50;
+  const count = Math.min(64, Math.floor(16000 / reference));
+  const harmonics = [];
+  for (let n = 1; n <= count; n += 1) {
+    const missing = square && n % 2 === 0;
+    const level = missing ? -55 : -20 * Math.log10(n) + (square ? 0 : lowpass(n * reference, 3000));
+    const background = -55 - n * 0.2;
+    harmonics.push({
+      level: Math.round(Math.max(level, background) * 10) / 10,
+      background: Math.round(background * 10) / 10,
+      state: level > background + 6 ? 0 : 1,
+    });
+  }
+  const fits = square
+    ? [
+        { shape: 1, duty: 0.5, cutoff: 0, resonance: 0, error_db: 1.2 },
+        { shape: 2, duty: 0, cutoff: 9400, resonance: 0.3, error_db: 6.8 },
+        { shape: 4, duty: 0.45, cutoff: 0, resonance: 0, error_db: 8.1 },
+        { shape: 3, duty: 0, cutoff: 0, resonance: 0, error_db: 11.6 },
+        { shape: 0, duty: 0, cutoff: 0, resonance: 0, error_db: 21.4 },
+      ]
+    : [
+        { shape: 3, duty: 0, cutoff: 3136, resonance: 0, error_db: 0.4 },
+        { shape: 4, duty: 0.275, cutoff: 3136, resonance: 0, error_db: 3.9 },
+        { shape: 1, duty: 0.5, cutoff: 3136, resonance: 0, error_db: 10.7 },
+        { shape: 2, duty: 0, cutoff: 7902, resonance: 0, error_db: 12.6 },
+        { shape: 0, duty: 0, cutoff: 0, resonance: 0, error_db: 20.4 },
+      ];
+  return json(res, {
+    frequency: reference,
+    moments: 24,
+    harmonics,
+    even_db: square ? -35.6 : -0.1,
+    even_count: Math.min(8, Math.floor((count - 1) / 2)),
+    slope: square ? -6 : -10.7,
+    fits,
+  });
+}
+
 function analyzerRoute(req, res, url, raw) {
   if (req.method === 'POST' && url.pathname === '/api/analyzer/clip') {
     // Like the core: refuses what is not WAV, FLAC or MP3
@@ -285,6 +352,14 @@ function analyzerRoute(req, res, url, raw) {
     if (!clip) return error(res, 404, 'Aucun fichier chargé');
     return envelopesResponse(res, url, clipMoment);
   }
+  if (req.method === 'GET' && url.pathname === '/api/analyzer/clip/notes') {
+    if (!clip) return error(res, 404, 'Aucun fichier chargé');
+    return notesResponse(res, url, NOTE_HZ);
+  }
+  if (req.method === 'GET' && url.pathname === '/api/analyzer/clip/waveform-fit') {
+    if (!clip) return error(res, 404, 'Aucun fichier chargé');
+    return waveformFitResponse(res, url, NOTE_HZ);
+  }
   if (req.method === 'GET' && url.pathname === '/api/analyzer/clip/waveform') {
     if (!clip) return error(res, 404, 'Aucun fichier chargé');
     return waveformResponse(res, url, clip.duration, clipMoment, NOTE_HZ);
@@ -301,6 +376,14 @@ function analyzerRoute(req, res, url, raw) {
     if (!take) return error(res, 404, 'Aucun enregistrement');
     return envelopesResponse(res, url, singerMoment);
   }
+  if (req.method === 'GET' && url.pathname === '/api/analyzer/recording/notes') {
+    if (!take) return error(res, 404, 'Aucun enregistrement');
+    return notesResponse(res, url, 220);
+  }
+  if (req.method === 'GET' && url.pathname === '/api/analyzer/recording/waveform-fit') {
+    if (!take) return error(res, 404, 'Aucun enregistrement');
+    return waveformFitResponse(res, url, 220);
+  }
   if (req.method === 'GET' && url.pathname === '/api/analyzer/recording/waveform') {
     if (!take) return error(res, 404, 'Aucun enregistrement');
     return waveformResponse(res, url, take.duration, singerMoment, 220);
@@ -312,7 +395,7 @@ function analyzerRoute(req, res, url, raw) {
   return false;
 }
 
-// ---------- AI-nalyzer: a fake Demucs, no model loaded, silent stems ----------
+// ---------- Decomposer: a fake Demucs, no model loaded, silent stems ----------
 
 const SEPARATION_MODELS = ['htdemucs', 'htdemucs_ft', 'htdemucs_6s'];
 const SEPARATION_SECONDS = 30; // every fake piece lasts 30 s
@@ -561,7 +644,11 @@ const server = createServer(async (req, res) => {
 function describeTimbre(value) {
   if (!value) return 'single oscillator';
   return `${value.partials.length} partials [${value.partials
-    .map((p) => `x${p.ratio}:${p.amplitude}${p.envelope?.curve === 1 ? `:exp${p.envelope.decay}s` : ''}`)
+    .map(
+      (p) =>
+        `x${p.ratio}:${p.amplitude}${p.envelope?.curve === 1 ? `:exp${p.envelope.decay}s` : ''}` +
+        `${p.envelope?.attack_curve === 1 ? `:convex${p.envelope.attack}s` : ''}`,
+    )
     .join(' ')}]`;
 }
 

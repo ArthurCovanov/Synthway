@@ -1,8 +1,8 @@
 # Synthway Demucs (`synthway-demucs`)
 
-Séparation de sources pour l'onglet **AI-nalyzer** de l'interface : un morceau est décomposé en pistes (batterie, basse, voix, autres ; guitare et piano avec le modèle à 6 sources) par [Demucs v4](https://github.com/adefossez/demucs), un réseau de neurones. On peut ensuite analyser une piste seule dans l'Analyzer, sans le beat ni les autres instruments.
+Séparation de sources pour l'onglet **Decomposer** de l'interface : un morceau est décomposé en pistes (batterie, basse, voix, autres ; guitare et piano avec le modèle à 6 sources) par [Demucs v4](https://github.com/adefossez/demucs), un réseau de neurones. On peut ensuite analyser une piste seule dans l'Analyzer, sans le beat ni les autres instruments.
 
-Cette partie est **facultative et à part** : elle a son propre Python et PyTorch, que le serveur n'importe jamais. Sans elle, le reste de Synthway marche pareil et l'onglet AI-nalyzer dit pourquoi il ne peut rien décomposer.
+Cette partie est **facultative et à part** : elle a son propre Python et PyTorch, que le serveur n'importe jamais. Sans elle, le reste de Synthway marche pareil et l'onglet Decomposer dit pourquoi il ne peut rien décomposer.
 
 ## ⚠️ Licence : essai local seulement
 
@@ -67,5 +67,5 @@ Demucs sépare par catégorie : deux synthés rangés dans « autres » restent 
 
 ## Désactiver ou retirer
 
-- **Désactiver :** lancer le serveur avec `SYNTHWAY_DEMUCS=0`. L'onglet reste, mais dit que l'AI-nalyzer est désactivé.
-- **Retirer :** supprimer ce dossier. Pour enlever aussi l'onglet : `synthway-ui/src/screens/AINalyzer.*`, son entrée dans `Sidebar.tsx`, `App.tsx` et `icons.tsx`, ses fonctions dans `lib/api.ts` et `types.ts`, ses routes dans `scripts/mock-server.mjs` ; côté serveur, `src/separation.py`, `tests/test_separation.py` et la section « AI-nalyzer » de `src/main.py`.
+- **Désactiver :** lancer le serveur avec `SYNTHWAY_DEMUCS=0`. L'onglet reste, mais dit que le Decomposer est désactivé.
+- **Retirer :** supprimer ce dossier. Pour enlever aussi l'onglet : `synthway-ui/src/screens/Decomposer.*`, son entrée dans `Sidebar.tsx`, `App.tsx` et `icons.tsx`, ses fonctions dans `lib/api.ts` et `types.ts`, ses routes dans `scripts/mock-server.mjs` ; côté serveur, `src/separation.py`, `tests/test_separation.py` et la section « Decomposer » de `src/main.py`.

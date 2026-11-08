@@ -89,10 +89,10 @@ fi
 # Library sources, relative to src/ and by layer (see README.md); objects mirror this tree in $OBJ_DIR
 SOURCES="synthway
          engine/engine engine/engine_params engine/engine_offline
-         synth/synth synth/oscillator synth/envelope
+         synth/synth synth/oscillator synth/envelope synth/reverb
          interpreter/interpreter
          analyzer/analyzer
-         analysis/analysis analysis/pitch analysis/spectrum analysis/fft
+         analysis/analysis analysis/notes analysis/waveform analysis/pitch analysis/spectrum analysis/fft
          io/audio_output io/audio_input io/audio_file io/wav_file io/audio_devices io/midi_ports"
 OBJECTS=""
 for name in $SOURCES; do
