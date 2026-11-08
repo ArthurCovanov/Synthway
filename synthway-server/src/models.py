@@ -74,6 +74,9 @@ if HAS_PYDANTIC:
         volume: Optional[float] = Field(default=None, ge=0.0, le=1.0, description="Normalized volume (0.0 to 1.0)")
         waveform: Optional[WaveformEnum] = Field(default=None, description="Waveform type (0=Sine, 1=Square, 2=Triangle, 3=Sawtooth)")
         enabled: Optional[bool] = Field(default=None, description="Enable or mute synthesizer tone")
+        low_cutoff: Optional[float] = Field(default=None, ge=20.0, le=20000.0)
+        cutoff: Optional[float] = Field(default=None, ge=20.0, le=20000.0)
+        resonance: Optional[float] = Field(default=None, ge=0.0, le=1.0)
 
     class Envelope(BaseModel):
         """ADSR envelope of every note; defaults are the core's (synthway_engine_set_envelope)."""
@@ -81,6 +84,11 @@ if HAS_PYDANTIC:
         decay: float = Field(default=0.0, ge=0.0, le=10.0, description="Decay time in seconds")
         sustain: float = Field(default=1.0, ge=0.0, le=1.0, description="Sustain level (0.0 to 1.0)")
         release: float = Field(default=0.01, ge=0.0, le=10.0, description="Release time in seconds")
+        curve: int = Field(
+            default=0, ge=0, le=1,
+            description="0: straight ramps; 1: exponential, decay and release are the times to fall 60 dB "
+            "(partials only: the single oscillator's envelope is always linear)",
+        )
 
     class Partial(BaseModel):
         """One partial of a timbre: its own oscillator and envelope (synthway_partial_t)."""
@@ -155,6 +163,12 @@ if HAS_PYDANTIC:
         right_low: List[float] = Field(default_factory=list)
         right_high: List[float] = Field(default_factory=list)
 
+    class EnvelopeAnalysis(BaseModel):
+        """A note's partials with the envelope of each (synthway_analyzer_measure_envelopes):
+        envelopes[i] goes with analysis.partials[i], whose amplitude is its peak."""
+        analysis: Analysis
+        envelopes: List[Envelope] = Field(default_factory=list)
+
 else:
     @dataclass
     class DeviceInfo:
@@ -189,6 +203,9 @@ else:
         volume: Optional[float] = None
         waveform: Optional[WaveformEnum] = None
         enabled: Optional[bool] = None
+        low_cutoff: Optional[float] = None
+        cutoff: Optional[float] = None
+        resonance: Optional[float] = None
 
     @dataclass
     class Envelope:
@@ -196,6 +213,7 @@ else:
         decay: float = 0.0
         sustain: float = 1.0
         release: float = 0.01
+        curve: int = 0
 
     @dataclass
     class Partial:
@@ -263,3 +281,8 @@ else:
         left_high: List[float] = field(default_factory=list)
         right_low: List[float] = field(default_factory=list)
         right_high: List[float] = field(default_factory=list)
+
+    @dataclass
+    class EnvelopeAnalysis:
+        analysis: Analysis = field(default_factory=Analysis)
+        envelopes: List[Envelope] = field(default_factory=list)

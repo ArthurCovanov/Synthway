@@ -1,22 +1,25 @@
-import type { TimbrePartial } from '../lib/instruments';
+import { envelopeLevel, envelopeTimes, type TimbrePartial } from '../lib/instruments';
 import { HUE_HEX } from '../lib/neon';
 import styles from './EnvelopesGraph.module.css';
 
 const W = 320;
 const H = 110;
 const PAD = 6;
+/** The note is held at most this long on the graph: a slow exponential decay would squeeze the rest */
+const MAX_HELD = 4;
 
 function formatSeconds(seconds: number): string {
   return seconds < 1 ? `${Math.round(seconds * 1000)} ms` : `${seconds.toFixed(1)} s`;
 }
 
 /**
- * Loudness of every partial over one note (amplitude × envelope), in its
- * colour: the note is held until the slowest partial reaches its sustain,
- * then released. The selected partial is drawn on top.
+ * Loudness of every partial over one note (amplitude × envelope, linear or
+ * exponential), in its colour: the note is held until the slowest partial
+ * reaches its sustain (4 s at most), then released. The selected partial is
+ * drawn on top.
  */
 export function EnvelopesGraph({ partials, selectedId }: { partials: TimbrePartial[]; selectedId: string | null }) {
-  const attackDecay = Math.max(0.001, ...partials.map((p) => p.envelope.attack + p.envelope.decay));
+  const attackDecay = Math.min(MAX_HELD, Math.max(0.001, ...partials.map((p) => p.envelope.attack + p.envelope.decay)));
   const noteOff = attackDecay + Math.max(0.15, attackDecay * 0.3);
   const total = noteOff + Math.max(0.001, ...partials.map((p) => p.envelope.release));
   const x = (t: number) => PAD + (t / total) * (W - 2 * PAD);
@@ -38,15 +41,10 @@ export function EnvelopesGraph({ partials, selectedId }: { partials: TimbreParti
         ))}
         <line x1={x(noteOff)} x2={x(noteOff)} y1={PAD} y2={H - PAD} className={styles.noteOff} />
         {ordered.map((partial) => {
-          const { attack, decay, sustain, release } = partial.envelope;
           const a = partial.amplitude;
-          const line = [
-            `M${x(0)} ${y(0)}`,
-            `L${x(attack)} ${y(a)}`,
-            `L${x(attack + decay)} ${y(a * sustain)}`,
-            `L${x(noteOff)} ${y(a * sustain)}`,
-            `L${x(noteOff + release)} ${y(0)}`,
-          ].join(' ');
+          const line = envelopeTimes(partial.envelope, noteOff, total)
+            .map((t, i) => `${i ? 'L' : 'M'}${x(t).toFixed(1)} ${y(a * envelopeLevel(partial.envelope, t, noteOff)).toFixed(1)}`)
+            .join(' ');
           const isSelected = partial.id === selectedId;
           return (
             <path

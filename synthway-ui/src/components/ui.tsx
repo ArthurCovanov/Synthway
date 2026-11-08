@@ -200,6 +200,73 @@ export function Slider({
   );
 }
 
+/** One bound of a RangeSlider: its handle's position (0 to 1) and how it is shown */
+export interface RangeBound {
+  label: string;
+  position: number;
+  display: string;
+  onChange: (position: number) => void;
+  edit?: ValueEdit;
+}
+
+/**
+ * Two handles on one bar, for a range such as a filter's band. The parent
+ * keeps the lower bound under the upper one.
+ */
+export function RangeSlider({
+  label,
+  low,
+  high,
+  step,
+  disabled,
+}: {
+  label: string;
+  low: RangeBound;
+  high: RangeBound;
+  step: number;
+  disabled?: boolean;
+}) {
+  // Two handles on the same spot: the one with room to move goes on top
+  const lowOnTop = low.position > 0.5;
+  const value = (bound: RangeBound) =>
+    bound.edit ? (
+      <ValueButton label={bound.label} display={bound.display} edit={bound.edit} disabled={disabled} />
+    ) : (
+      <span className={styles.sliderValue}>{bound.display}</span>
+    );
+  const handle = (bound: RangeBound, onTop: boolean) => (
+    <input
+      type="range"
+      className={cx(styles.range, onTop && styles.rangeOnTop)}
+      aria-label={bound.label}
+      aria-valuetext={bound.display}
+      min={0}
+      max={1}
+      step={step}
+      value={bound.position}
+      disabled={disabled}
+      onChange={(event) => bound.onChange(Number(event.target.value))}
+    />
+  );
+  return (
+    <div className={styles.slider}>
+      <span className={styles.sliderHead}>
+        <span>{label}</span>
+        <span className={styles.rangeValues}>
+          {value(low)}
+          <span aria-hidden>–</span>
+          {value(high)}
+        </span>
+      </span>
+      <div className={styles.dualRange} style={{ '--from': low.position, '--to': high.position } as CSSProperties}>
+        <div className={styles.dualTrack} />
+        {handle(low, lowOnTop)}
+        {handle(high, !lowOnTop)}
+      </div>
+    </div>
+  );
+}
+
 function ValueButton({
   label,
   display,

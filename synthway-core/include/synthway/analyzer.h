@@ -273,9 +273,9 @@ SYNTHWAY_API synthway_result_t synthway_analyzer_analyze_clip(
  * notes are left out of the medians of the partials; the result's note is the
  * median of the moments kept.
  * harmonic_cents: SYNTHWAY_ANALYZER_ALL_PARTIALS keeps every partial; above 0,
- * only those within that many cents of a whole ratio (1, 2, 3…), which leaves
- * out most of the other instruments of a mix (amplitudes relative to the
- * strongest kept).
+ * only those within that many cents of a whole ratio (1, 2, 3…), and the
+ * strongest one of each harmonic, which leaves out most of the other
+ * instruments of a mix (amplitudes relative to the strongest kept).
  * SYNTHWAY_INVALID_PARAM without a file, when end_s <= start_s, or for a
  * window, reference or tolerance out of range; SYNTHWAY_ERROR when memory runs out.
  */
@@ -287,6 +287,36 @@ SYNTHWAY_API synthway_result_t synthway_analyzer_analyze_clip_range(
     float reference_hz,
     float harmonic_cents,
     synthway_analysis_t* out_analysis
+);
+
+/**
+ * The envelope of each partial over a zone that holds one note, from its
+ * attack to the next note: finds the partials as synthway_analyzer_analyze_clip_range
+ * does (same parameters), then follows each one's level every 5 ms at its
+ * frequency, over a window of 6 periods of the note (20 to 100 ms), and fits
+ * an exponential envelope to it (SYNTHWAY_ENVELOPE_EXPONENTIAL): the attack
+ * is the rise to its peak; the decay its steady fall after it, until it fades
+ * out or the next note rises (decay_s: the time to fall 60 dB at that speed);
+ * a partial that falls slower than 3 dB/s is held (sustain 1); one whose fall
+ * levels off settles at that level; otherwise it decays to silence
+ * (sustain 0). The release lasts 0.3 s, as a damper stops a string, or less
+ * for a partial that fades faster: a note cut by the next one tells nothing of it.
+ * out_envelopes gets one envelope per partial of out_analysis, in the same
+ * order (room for SYNTHWAY_ANALYSIS_MAX_PARTIALS); the partials' amplitudes
+ * become their peaks, relative to the strongest. Very short attacks read
+ * longer than they are: a few milliseconds become about 10 ms.
+ * Returns what synthway_analyzer_analyze_clip_range returns, and
+ * SYNTHWAY_INVALID_PARAM without out_envelopes.
+ */
+SYNTHWAY_API synthway_result_t synthway_analyzer_measure_envelopes(
+    synthway_analyzer_t* analyzer,
+    double start_s,
+    double end_s,
+    double window_s,
+    float reference_hz,
+    float harmonic_cents,
+    synthway_analysis_t* out_analysis,
+    synthway_envelope_t* out_envelopes
 );
 
 /**

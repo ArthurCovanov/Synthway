@@ -59,6 +59,35 @@ void sw_analysis_run_pitch(
     float* out_level_db
 );
 
+/* Amplitude of the component at frequency in x (n samples), weighed by
+   weights (a window whose values sum to weights_sum): a sine of amplitude A,
+   alone at that frequency, reads A. One Goertzel filter. */
+float sw_analysis_tone_amplitude(
+    const float* x,
+    const float* weights,
+    uint32_t n,
+    double weights_sum,
+    double frequency,
+    double sample_rate
+);
+
+/* Fits an exponential envelope to the levels of one partial over a note (dB,
+   count of them, step_s apart, each measured over window_s): the attack is
+   the rise to the peak (less the smearing of the window), the decay the
+   steady fall after it, in dB per second, until the partial fades out or the
+   next note rises. A partial that falls slower than 3 dB/s is held (sustain
+   1); one whose fall levels off settles at that level; otherwise it decays to
+   silence (sustain 0). The release lasts 0.3 s, as a damper stops a string,
+   or less for a partial that fades faster. out_peak_db gets the peak level. */
+void sw_analysis_fit_envelope(
+    const float* levels_db,
+    uint32_t count,
+    double step_s,
+    double window_s,
+    synthway_envelope_t* out,
+    float* out_peak_db
+);
+
 /* One partial of one analysis, while sw_analysis_combine matches them */
 typedef struct sw_analysis_peak {
     float key;                 /* ratio to the note, or frequency without a note */
@@ -71,7 +100,7 @@ typedef struct sw_analysis_peak {
    it (within 1.5 semitones of one of its octaves, and clear), else the
    reference itself, and every ratio is to that note. harmonic_cents > 0 then
    keeps only the partials within that many cents of a whole ratio (1, 2, 3…),
-   amplitudes relative to the strongest kept. */
+   the strongest one of each harmonic, amplitudes relative to the strongest kept. */
 void sw_analysis_relate(synthway_analysis_t* out, float reference_hz, float harmonic_cents);
 
 /* Combines the analyses of count moments of a zone (count >= 1) into one, by

@@ -325,6 +325,54 @@ static synthway_engine_t* timbre_engine(float frequency, const synthway_timbre_t
     return engine;
 }
 
+static void test_filter_cutoff_and_resonance(void) {
+    const uint32_t frames = WARMUP_FRAMES + SAMPLE_RATE;
+    synthway_engine_t* open = offline_engine(1);
+    synthway_engine_t* filtered = offline_engine(1);
+    synthway_engine_t* corner = offline_engine(1);
+    synthway_engine_t* resonant = offline_engine(1);
+    synthway_engine_t* low_open = offline_engine(1);
+    synthway_engine_t* high_passed = offline_engine(1);
+    synthway_engine_t* engines[] = { open, filtered, corner, resonant, low_open, high_passed };
+    const float frequencies[] = { 6000.0f, 6000.0f, 1000.0f, 1000.0f, 100.0f, 100.0f };
+    for (unsigned i = 0; i < 6; ++i) {
+        synthway_engine_set_frequency(engines[i], frequencies[i]);
+        synthway_engine_set_volume(engines[i], 0.2f);
+        synthway_engine_set_tone_enabled(engines[i], true);
+    }
+    check(synthway_engine_set_filter(open, 20.0f, 20000.0f, 0.0f) == SYNTHWAY_OK
+        && synthway_engine_set_filter(filtered, 20.0f, 1000.0f, 0.0f) == SYNTHWAY_OK
+        && synthway_engine_set_filter(corner, 20.0f, 20000.0f, 0.0f) == SYNTHWAY_OK
+        && synthway_engine_set_filter(resonant, 20.0f, 1000.0f, 0.5f) == SYNTHWAY_OK
+        && synthway_engine_set_filter(low_open, 20.0f, 20000.0f, 0.0f) == SYNTHWAY_OK
+        && synthway_engine_set_filter(high_passed, 1000.0f, 20000.0f, 0.0f) == SYNTHWAY_OK,
+        "filter parameters accepted", "open, cutoff, resonance");
+    float* open_samples = render(open, frames);
+    float* filtered_samples = render(filtered, frames);
+    float* corner_samples = render(corner, frames);
+    float* resonant_samples = render(resonant, frames);
+    float* low_open_samples = render(low_open, frames);
+    float* high_passed_samples = render(high_passed, frames);
+    const double open_high = measure_amplitude(open_samples + WARMUP_FRAMES, SAMPLE_RATE, 6000.0);
+    const double filtered_high = measure_amplitude(filtered_samples + WARMUP_FRAMES, SAMPLE_RATE, 6000.0);
+    const double unresonant_corner = measure_amplitude(corner_samples + WARMUP_FRAMES, SAMPLE_RATE, 1000.0);
+    const double resonant_corner = measure_amplitude(resonant_samples + WARMUP_FRAMES, SAMPLE_RATE, 1000.0);
+    const double open_low = measure_amplitude(low_open_samples + WARMUP_FRAMES, SAMPLE_RATE, 100.0);
+    const double filtered_low = measure_amplitude(high_passed_samples + WARMUP_FRAMES, SAMPLE_RATE, 100.0);
+    char detail[160];
+    snprintf(detail, sizeof(detail), "6 kHz %.4f to %.4f; 100 Hz %.4f to %.4f; resonance at 1 kHz %.4f to %.4f",
+        open_high, filtered_high, open_low, filtered_low, unresonant_corner, resonant_corner);
+    check(filtered_high < open_high * 0.2 && filtered_low < open_low * 0.2
+        && resonant_corner > unresonant_corner * 2.0,
+        "band-pass bounds attenuate outside frequencies and resonance boosts the cutoff", detail);
+    free(open_samples);
+    free(filtered_samples);
+    free(corner_samples);
+    free(resonant_samples);
+    free(low_open_samples);
+    free(high_passed_samples);
+}
+
 static void test_timbre_partials(void) {
     /* 200 Hz note: 0.5 s after the warm-up holds whole periods of every partial */
     const uint32_t n = SAMPLE_RATE / 2;
@@ -366,6 +414,51 @@ static void test_timbre_envelopes(void) {
           "timbre: each partial follows its own envelope", detail);
     free(x);
     synthway_engine_destroy(engine);
+}
+
+static void test_timbre_exponential_envelope(void) {
+    /* A 440 Hz partial with no attack and an exponential decay of 1 s to
+       silence falls 60 dB per second: 0.25 s and 0.5 s are 15 and 30 dB down.
+       Another, held, then released with an exponential release of 0.4 s:
+       0.1 s and 0.2 s after the note off, 15 and 30 dB down. Each level is
+       measured over 25 ms (11 periods), centred on the moment. */
+    const uint32_t span = SAMPLE_RATE / 40;
+    synthway_partial_t decaying = sine_partial(1.0f, 0.5f);
+    decaying.envelope.attack_s = 0.0f;
+    decaying.envelope.decay_s = 1.0f;
+    decaying.envelope.sustain_level = 0.0f;
+    decaying.envelope.curve = SYNTHWAY_ENVELOPE_EXPONENTIAL;
+    synthway_timbre_t timbre = timbre_of(1, &decaying);
+    synthway_engine_t* engine = timbre_engine(440.0f, &timbre);
+    float* x = render(engine, SAMPLE_RATE * 6 / 10);
+    const double at_quarter = measure_amplitude(x + SAMPLE_RATE / 4 - span / 2, span, 440.0);
+    const double at_half = measure_amplitude(x + SAMPLE_RATE / 2 - span / 2, span, 440.0);
+    free(x);
+    synthway_engine_destroy(engine);
+
+    synthway_partial_t held = sine_partial(1.0f, 0.5f);
+    held.envelope.release_s = 0.4f;
+    held.envelope.curve = SYNTHWAY_ENVELOPE_EXPONENTIAL;
+    timbre = timbre_of(1, &held);
+    engine = timbre_engine(440.0f, &timbre);
+    float* before = render(engine, SAMPLE_RATE / 5);
+    synthway_engine_set_tone_enabled(engine, false);
+    float* after = render(engine, SAMPLE_RATE / 2);
+    const double released_100 = measure_amplitude(after + SAMPLE_RATE / 10 - span / 2, span, 440.0);
+    const double released_200 = measure_amplitude(after + SAMPLE_RATE / 5 - span / 2, span, 440.0);
+    const double released_end = measure_amplitude(after + SAMPLE_RATE / 2 - span, span, 440.0); /* past the 0.4 s */
+    free(before);
+    free(after);
+    synthway_engine_destroy(engine);
+
+    const double db = 20.0 * log10(at_half / at_quarter);
+    const double release_db = 20.0 * log10(released_200 / released_100);
+    char detail[200];
+    snprintf(detail, sizeof(detail), "decay 0.25 s %.4f, 0.5 s %.4f (%.2f dB); release +0.1 s %.4f, +0.2 s %.4f (%.2f dB), end %.6f",
+             at_quarter, at_half, db, released_100, released_200, release_db, released_end);
+    check(fabs(at_quarter - 0.5 * pow(10.0, -0.75)) < 0.004 && fabs(db + 15.0) < 0.5
+              && fabs(released_100 - 0.5 * pow(10.0, -0.75)) < 0.004 && fabs(release_db + 15.0) < 0.5 && released_end < 0.001,
+          "timbre: exponential decay and release fall 60 dB in their time", detail);
 }
 
 static void test_timbre_single_partial_matches_oscillator(void) {
@@ -480,6 +573,9 @@ static void test_timbre_validation(void) {
     bad = timbre;
     bad.partials[0].envelope.sustain_level = 2.0f;
     refused &= synthway_engine_set_timbre(engine, &bad) == SYNTHWAY_INVALID_PARAM;
+    bad = timbre;
+    bad.partials[0].envelope.curve = (synthway_envelope_curve_t)5;
+    refused &= synthway_engine_set_timbre(engine, &bad) == SYNTHWAY_INVALID_PARAM;
 
     synthway_timbre_t kept;
     synthway_engine_get_timbre(engine, &kept);
@@ -571,8 +667,10 @@ int main(int argc, char* argv[]) {
     test_envelope_validation();
     test_stereo_channels_match();
     test_guards();
+    test_filter_cutoff_and_resonance();
     test_timbre_partials();
     test_timbre_envelopes();
+    test_timbre_exponential_envelope();
     test_timbre_single_partial_matches_oscillator();
     test_timbre_live_changes();
     test_timbre_partial_above_sample_rate();

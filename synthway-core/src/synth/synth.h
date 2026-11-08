@@ -15,6 +15,9 @@ typedef struct sw_synth_params {
     synthway_waveform_t waveform;
     bool gate;                       /* note held: opening it starts the attack, closing it the release */
     sw_envelope_settings envelope;
+    float filter_low_cutoff_hz;
+    float filter_high_cutoff_hz;
+    float filter_resonance;
     const synthway_timbre_t* timbre; /* NULL: the single oscillator plays (waveform, envelope); valid for the whole block */
 } sw_synth_params;
 
@@ -24,6 +27,10 @@ typedef struct sw_synth_partial {
     sw_envelope envelope;
 } sw_synth_partial;
 
+typedef struct sw_filter_state {
+    float x1, x2, y1, y2;
+} sw_filter_state;
+
 /* One voice, owned by the thread that renders it */
 typedef struct sw_synth {
     float current_frequency;         /* smoothed towards sw_synth_params.frequency_hz */
@@ -31,6 +38,8 @@ typedef struct sw_synth {
     bool gate;                       /* gate as seen by the previous block */
     sw_oscillator oscillator;        /* single oscillator */
     sw_envelope envelope;
+    sw_filter_state high_pass;
+    sw_filter_state low_pass;
     sw_synth_partial partials[SYNTHWAY_MAX_PARTIALS]; /* timbre, by partial index */
 } sw_synth;
 

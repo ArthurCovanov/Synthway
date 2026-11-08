@@ -33,12 +33,23 @@ export interface HealthResponse {
   core_version: string | null;
 }
 
+/** synthway_envelope_curve_t: how the decay and the release fall */
+export const ENVELOPE_CURVE = {
+  /** Straight ramps: decay and release are the times to reach the sustain level and silence */
+  Linear: 0,
+  /** A steady fall in dB, like a struck string: decay and release are the times to fall 60 dB */
+  Exponential: 1,
+} as const;
+export type EnvelopeCurve = (typeof ENVELOPE_CURVE)[keyof typeof ENVELOPE_CURVE];
+
 /** synthway_engine_set_envelope: times in seconds (0 to 10), sustain level in [0, 1] */
 export interface EnvelopeParams {
   attack: number;
   decay: number;
   sustain: number;
   release: number;
+  /** Partials only (the single oscillator's envelope is always linear); absent: linear */
+  curve?: EnvelopeCurve;
 }
 
 /** synthway_partial_t: ratio in (0, 1000] (1 is the note played), amplitude in [0, 1] */
@@ -89,6 +100,9 @@ export interface ToneParams {
   /** null goes back to the single oscillator (waveform, envelope) */
   timbre?: TimbreParams | null;
   enabled?: boolean;
+  low_cutoff?: number;
+  cutoff?: number;
+  resonance?: number;
 }
 
 /** synthway_analysis_partial_t: a peak of the spectrum */
@@ -150,6 +164,13 @@ export interface ClipWaveformPart {
   left_high: number[];
   right_low: number[];
   right_high: number[];
+}
+
+/** A note's partials and the envelope of each (synthway_analyzer_measure_envelopes): envelopes[i]
+    goes with analysis.partials[i], whose amplitude is its peak */
+export interface EnvelopeAnalysis {
+  analysis: Analysis;
+  envelopes: EnvelopeParams[];
 }
 
 /** A recording of the microphone, in seconds; lost: samples the core had no time to take, now silence */

@@ -1,4 +1,6 @@
 #include "synth/synth.h"
+#include <math.h>
+#include <string.h>
 
 /* Per-sample smoothing of frequency and volume (exponential moving average),
    which hides parameter jumps between blocks */
@@ -92,6 +94,17 @@ static void sw_synth_render_timbre(
     }
 }
 
+static float sw_filter_process(float input, sw_filter_state* state,
+    float b0, float b1, float b2, float a1, float a2) {
+    const float output = b0 * input + b1 * state->x1 + b2 * state->x2
+        - a1 * state->y1 - a2 * state->y2;
+    state->x2 = state->x1;
+    state->x1 = input;
+    state->y2 = state->y1;
+    state->y1 = output;
+    return output;
+}
+
 void sw_synth_render(
     sw_synth* synth,
     const sw_synth_params* params,
@@ -100,6 +113,7 @@ void sw_synth_render(
     float* out,
     uint32_t frame_count
 ) {
+    float* const block = out;
     const float rate = (float)sample_rate;
     const sw_envelope_steps steps = sw_envelope_steps_for(&params->envelope, rate);
     sw_envelope_steps partial_steps[SYNTHWAY_MAX_PARTIALS];
@@ -136,5 +150,53 @@ void sw_synth_render(
         sw_synth_render_timbre(synth, params, partial_steps, rate, channels, out, frame_count);
     } else {
         sw_synth_render_oscillator(synth, params, &steps, rate, channels, out, frame_count);
+    }
+
+    /* Bypass the fully open band exactly, preserving the engine's default sound. */
+    if (params->filter_low_cutoff_hz <= 20.0f && params->filter_high_cutoff_hz >= 20000.0f
+        && params->filter_resonance == 0.0f) {
+        memset(&synth->high_pass, 0, sizeof(synth->high_pass));
+        memset(&synth->low_pass, 0, sizeof(synth->low_pass));
+        return;
+    }
+
+    /* Resonant RBJ high-pass and low-pass sections form a band-pass. */
+    const float q = 0.70710678f + params->filter_resonance * 9.29289322f;
+    const bool high_pass_enabled = params->filter_low_cutoff_hz > 20.0f;
+    const bool low_pass_enabled = params->filter_high_cutoff_hz < 20000.0f;
+    float hp_b0 = 1.0f, hp_b1 = 0.0f, hp_b2 = 0.0f, hp_a1 = 0.0f, hp_a2 = 0.0f;
+    float lp_b0 = 1.0f, lp_b1 = 0.0f, lp_b2 = 0.0f, lp_a1 = 0.0f, lp_a2 = 0.0f;
+    if (high_pass_enabled) {
+        float cutoff = fminf(params->filter_low_cutoff_hz, rate * 0.49f);
+        const float omega = 6.28318530718f * cutoff / rate;
+        const float cosine = cosf(omega), alpha = sinf(omega) / (2.0f * q);
+        const float a0 = 1.0f + alpha;
+        hp_b0 = ((1.0f + cosine) * 0.5f) / a0;
+        hp_b1 = -(1.0f + cosine) / a0;
+        hp_b2 = hp_b0;
+        hp_a1 = (-2.0f * cosine) / a0;
+        hp_a2 = (1.0f - alpha) / a0;
+    } else {
+        memset(&synth->high_pass, 0, sizeof(synth->high_pass));
+    }
+    if (low_pass_enabled) {
+        float cutoff = fminf(params->filter_high_cutoff_hz, rate * 0.49f);
+        const float omega = 6.28318530718f * cutoff / rate;
+        const float cosine = cosf(omega), alpha = sinf(omega) / (2.0f * q);
+        const float a0 = 1.0f + alpha;
+        lp_b0 = ((1.0f - cosine) * 0.5f) / a0;
+        lp_b1 = (1.0f - cosine) / a0;
+        lp_b2 = lp_b0;
+        lp_a1 = (-2.0f * cosine) / a0;
+        lp_a2 = (1.0f - alpha) / a0;
+    } else {
+        memset(&synth->low_pass, 0, sizeof(synth->low_pass));
+    }
+    /* The synthesizer source is mono duplicated to all channels, so filter once per frame. */
+    for (uint32_t frame = 0; frame < frame_count; ++frame) {
+        float output = block[frame * channels];
+        if (high_pass_enabled) output = sw_filter_process(output, &synth->high_pass, hp_b0, hp_b1, hp_b2, hp_a1, hp_a2);
+        if (low_pass_enabled) output = sw_filter_process(output, &synth->low_pass, lp_b0, lp_b1, lp_b2, lp_a1, lp_a2);
+        for (uint32_t ch = 0; ch < channels; ++ch) block[frame * channels + ch] = output;
     }
 }

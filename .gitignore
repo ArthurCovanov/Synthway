@@ -47,6 +47,8 @@ downloads/
 eggs/
 .eggs/
 lib/
+# ...but not the UI's sources, which "lib/" would hide too
+!synthway-ui/src/lib/
 lib64/
 parts/
 sdist/

@@ -328,6 +328,77 @@
   cursor: not-allowed;
 }
 
+/* ---------- Range slider: two handles on one bar ---------- */
+
+.rangeValues {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--text-2);
+}
+
+.dualRange {
+  position: relative;
+  height: 18px;
+}
+
+/* The bar, filled between the centres of the handles (14 px wide) */
+.dualTrack {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 7px;
+  height: 4px;
+  border-radius: 4px;
+  background: var(--bg-5);
+}
+
+.dualTrack::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(7px + (100% - 14px) * var(--from));
+  right: calc(7px + (100% - 14px) * (1 - var(--to)));
+  border-radius: 4px;
+  background: var(--grad-neon);
+}
+
+/* Both inputs cover the bar; only their handles take the pointer */
+.dualRange .range {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.dualRange .rangeOnTop {
+  z-index: 1;
+}
+
+.dualRange .range::-webkit-slider-runnable-track {
+  background: transparent;
+}
+
+.dualRange .range::-webkit-slider-thumb {
+  pointer-events: auto;
+}
+
+.dualRange .range::-moz-range-track {
+  background: transparent;
+}
+
+.dualRange .range::-moz-range-progress {
+  background: transparent;
+}
+
+.dualRange .range::-moz-range-thumb {
+  pointer-events: auto;
+}
+
+.dualRange:has(.range:disabled) .dualTrack {
+  opacity: 0.5;
+}
+
 /* ---------- Segmented control ---------- */
 
 .segmented {

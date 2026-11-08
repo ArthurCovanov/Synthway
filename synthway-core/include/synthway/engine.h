@@ -92,12 +92,17 @@ SYNTHWAY_API synthway_result_t synthway_engine_get_envelope(
     float* out_release_s
 );
 
+/** Band-pass filter: lower and upper cutoff in Hz (20 to 20000), resonance in [0, 1]. */
+SYNTHWAY_API synthway_result_t synthway_engine_set_filter(synthway_engine_t* engine, float low_cutoff_hz, float high_cutoff_hz, float resonance);
+SYNTHWAY_API synthway_result_t synthway_engine_get_filter(const synthway_engine_t* engine, float* out_low_cutoff_hz, float* out_high_cutoff_hz, float* out_resonance);
+
 /* --------------------------------------------------------------------------
    Additive Synthesis (timbre)
    -------------------------------------------------------------------------- */
 /**
  * Plays every note as a sum of partials: each one is an oscillator at
- * ratio × the note's frequency, with its own amplitude, waveform and envelope.
+ * ratio × the note's frequency, with its own amplitude, waveform and envelope
+ * (linear or exponential, see synthway_envelope_curve_t).
  * The sum is then scaled by the volume. A timbre replaces the single
  * oscillator (set_waveform, set_envelope); NULL goes back to it, which is the
  * default. A timbre with no partial is silent.

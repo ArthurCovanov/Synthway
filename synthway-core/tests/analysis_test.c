@@ -792,6 +792,138 @@ static void test_reference_note(void) {
     free(x);
 }
 
+static void test_one_partial_per_harmonic(void) {
+    /* A sawtooth-like note at 220 Hz (harmonics 1 to 12 at 0.5 / n), and a weak
+       tone 25 cents under harmonic 8 (30 Hz away): within the tolerance of
+       « harmonics only », but no second harmonic 8. Measuring envelopes, it
+       would take the harmonic's level, and playing both makes them beat. */
+    const uint32_t frames = SAMPLE_RATE;
+    const double stray_hz = 8 * 220.0 * pow(2.0, -25.0 / 1200.0);
+    float* x = (float*)malloc(sizeof(float) * frames);
+    for (uint32_t i = 0; i < frames; ++i) {
+        const double t = (double)i / SAMPLE_RATE;
+        double v = 0.02 * sin(6.283185307 * stray_hz * t);
+        for (int n = 1; n <= 12; ++n) v += 0.5 / n * sin(6.283185307 * n * 220.0 * t);
+        x[i] = (float)(0.5 * v);
+    }
+    synthway_analyzer_t* clip = clip_of(x, frames);
+    synthway_analysis_t every, harmonics;
+    synthway_envelope_t envelopes[SYNTHWAY_ANALYSIS_MAX_PARTIALS];
+    synthway_analyzer_analyze_clip_range(clip, 0.34, 0.66, 0.32, 0.0f, 0.0f, &every);
+    synthway_analyzer_analyze_clip_range(clip, 0.34, 0.66, 0.32, 0.0f, 30.0f, &harmonics);
+    int stray_seen = 0, twice = 0, eighth = -1;
+    for (uint32_t i = 0; i < every.partial_count; ++i) {
+        stray_seen = stray_seen || fabs(every.partials[i].frequency_hz - stray_hz) < 3.0;
+    }
+    for (uint32_t i = 0; i < harmonics.partial_count; ++i) {
+        twice += i > 0 && lroundf(harmonics.partials[i].ratio) == lroundf(harmonics.partials[i - 1].ratio);
+        if (lroundf(harmonics.partials[i].ratio) == 8) eighth = (int)i;
+    }
+    char detail[192];
+    snprintf(detail, sizeof(detail), "every partial: %u, stray %s; harmonics only: %u, %d doubled, harmonic 8 at x%.3f",
+             every.partial_count, stray_seen ? "found" : "missed", harmonics.partial_count, twice,
+             eighth >= 0 ? harmonics.partials[eighth].ratio : 0.0f);
+    check(stray_seen && twice == 0 && harmonics.partial_count == 12 && eighth >= 0
+              && fabs(harmonics.partials[eighth].ratio - 8.0f) < 0.01f,
+          "harmonics only: the strongest partial of each harmonic", detail);
+
+    /* The envelopes are measured on those same partials */
+    synthway_analysis_t measured;
+    const synthway_result_t res = synthway_analyzer_measure_envelopes(clip, 0.1, 0.9, 0.32, 0.0f, 30.0f, &measured, envelopes);
+    twice = 0;
+    for (uint32_t i = 1; i < measured.partial_count; ++i) {
+        twice += lroundf(measured.partials[i].ratio) == lroundf(measured.partials[i - 1].ratio);
+    }
+    snprintf(detail, sizeof(detail), "%u partials, %d doubled", measured.partial_count, twice);
+    check(res == SYNTHWAY_OK && twice == 0 && measured.partial_count == 12, "harmonics only: one envelope per harmonic", detail);
+    synthway_analyzer_destroy(clip);
+    free(x);
+}
+
+/* The partial of an analysis nearest ratio, or -1 */
+static int partial_index(const synthway_analysis_t* a, double ratio) {
+    int best = -1;
+    for (uint32_t i = 0; i < a->partial_count; ++i) {
+        if (best < 0 || fabs(a->partials[i].ratio - ratio) < fabs(a->partials[best].ratio - ratio)) best = (int)i;
+    }
+    return best >= 0 && fabs(a->partials[best].ratio - ratio) < 0.05 ? best : -1;
+}
+
+static void test_envelopes(void) {
+    /* A plucked string: harmonic n at 0.4 / n, struck at 50 ms (3 ms attack),
+       each falling 60 dB in 3 / n seconds, the high ones first */
+    const uint32_t frames = SAMPLE_RATE * 7 / 10;
+    float* x = (float*)calloc(frames, sizeof(float));
+    for (uint32_t i = (uint32_t)(0.05 * SAMPLE_RATE); i < frames; ++i) {
+        const double age = (double)i / SAMPLE_RATE - 0.05;
+        const double attack = age < 0.003 ? age / 0.003 : 1.0;
+        double v = 0.0;
+        for (int n = 1; n <= 8; ++n) {
+            v += 0.4 / n * attack * pow(10.0, -3.0 * age / (3.0 / n)) * sin(6.283185307 * 220.0 * n * age);
+        }
+        x[i] = (float)v;
+    }
+    synthway_analyzer_t* clip = clip_of(x, frames);
+    synthway_analysis_t a;
+    synthway_envelope_t envelopes[SYNTHWAY_ANALYSIS_MAX_PARTIALS];
+    memset(&a, 0, sizeof(a));
+    const synthway_result_t res = synthway_analyzer_measure_envelopes(clip, 0.03, 0.7, 0.17, 0.0f, 30.0f, &a, envelopes);
+    char detail[320];
+    int length = snprintf(detail, sizeof(detail), "%.1f Hz;", a.frequency_hz);
+    int ok = res == SYNTHWAY_OK;
+    for (int n = 1; n <= 5; ++n) {
+        const int k = partial_index(&a, n);
+        if (k < 0) {
+            ok = 0;
+            length += snprintf(detail + length, sizeof(detail) - length, " h%d missing", n);
+            continue;
+        }
+        const synthway_envelope_t* e = &envelopes[k];
+        length += snprintf(detail + length, sizeof(detail) - length, " h%d %.2f: %.0f ms, %.2f s (%.2f), %.2f;",
+                           n, a.partials[k].amplitude, 1000.0 * e->attack_s, e->decay_s, 3.0 / n, e->sustain_level);
+        ok = ok && e->curve == SYNTHWAY_ENVELOPE_EXPONENTIAL && e->sustain_level == 0.0f
+             && fabs(e->decay_s - 3.0 / n) < 0.2 * 3.0 / n && fabs(e->release_s - fmin(e->decay_s, 0.3)) < 1e-6
+             && e->attack_s < 0.03f && fabs(a.partials[k].amplitude - 1.0 / n) < 0.15 / n;
+    }
+    check(ok, "envelopes: a plucked string, each harmonic fading at its own speed", detail);
+    synthway_analyzer_destroy(clip);
+    free(x);
+
+    /* A held sawtooth: every partial held */
+    float* held = render_note(220.0f, SYNTHWAY_WAVEFORM_SAWTOOTH, NULL, SAMPLE_RATE, SAMPLE_RATE / 2);
+    clip = clip_of(held, SAMPLE_RATE / 2);
+    synthway_analyzer_measure_envelopes(clip, 0.0, 0.5, 0.17, 0.0f, 30.0f, &a, envelopes);
+    int all_held = a.partial_count >= 8;
+    for (uint32_t k = 0; k < a.partial_count && k < 8; ++k) {
+        all_held = all_held && envelopes[k].sustain_level == 1.0f && envelopes[k].decay_s == 0.0f;
+    }
+    snprintf(detail, sizeof(detail), "%u partials, first sustains %.2f %.2f %.2f", a.partial_count,
+             envelopes[0].sustain_level, envelopes[1].sustain_level, envelopes[2].sustain_level);
+    check(all_held, "envelopes: a held note is held", detail);
+    synthway_analyzer_destroy(clip);
+    free(held);
+
+    /* A sine that falls from 1 to 0.3 in 0.25 s (60 dB of the part above 0.3), then holds */
+    float* settling = (float*)malloc(sizeof(float) * frames);
+    for (uint32_t i = 0; i < frames; ++i) {
+        const double t = (double)i / SAMPLE_RATE;
+        settling[i] = (float)(0.5 * (0.3 + 0.7 * pow(10.0, -3.0 * t / 0.25)) * sin(6.283185307 * 330.0 * t));
+    }
+    clip = clip_of(settling, frames);
+    memset(&a, 0, sizeof(a));
+    synthway_analyzer_measure_envelopes(clip, 0.0, 0.7, 0.17, 0.0f, 30.0f, &a, envelopes);
+    snprintf(detail, sizeof(detail), "%u partial(s), sustain %.2f, decay %.2f s", a.partial_count,
+             envelopes[0].sustain_level, envelopes[0].decay_s);
+    check(a.partial_count >= 1 && fabs(envelopes[0].sustain_level - 0.3f) < 0.08f && envelopes[0].decay_s > 0.05f
+              && envelopes[0].decay_s < 0.6f,
+          "envelopes: a fall that levels off settles at its level", detail);
+    check(synthway_analyzer_measure_envelopes(clip, 0.0, 0.7, 0.17, 0.0f, 30.0f, &a, NULL) == SYNTHWAY_INVALID_PARAM
+              && synthway_analyzer_measure_envelopes(clip, 0.7, 0.0, 0.17, 0.0f, 30.0f, &a, envelopes) == SYNTHWAY_INVALID_PARAM,
+          "envelopes: invalid calls refused", "no room for the envelopes, reversed zone");
+    synthway_analyzer_destroy(clip);
+    free(settling);
+}
+
 static void test_guards(void) {
     synthway_analysis_t a;
     float x[16] = { 0 };
@@ -845,6 +977,8 @@ int main(int argc, char* argv[]) {
     test_window_sizes();
     test_zone_with_vibrato();
     test_reference_note();
+    test_one_partial_per_harmonic();
+    test_envelopes();
     test_guards();
 
     synthway_analyzer_destroy(analyzer);

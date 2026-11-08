@@ -38,6 +38,10 @@ class FakeLib:
         self.calls.append(("envelope", attack, decay, sustain, release))
         return 0
 
+    def synthway_engine_set_filter(self, engine, low_cutoff, high_cutoff, resonance):
+        self.calls.append(("filter", low_cutoff, high_cutoff, resonance))
+        return 0
+
     def synthway_engine_set_timbre(self, engine, timbre):
         # timbre is ctypes.byref(SynthwayTimbreC), or None for the single oscillator
         self.calls.append(("timbre", None if timbre is None else [p.ratio for p in timbre._obj.partials[: timbre._obj.partial_count]]))
@@ -141,6 +145,17 @@ class FakeCore:
 
     def get_timbre(self):
         return self.timbre
+
+    # Like the real bridge, the filter is kept even without an engine, and a band it would refuse raises
+    filter = (20.0, 20000.0, 0.0)
+
+    def set_filter(self, low_cutoff, cutoff, resonance):
+        if not low_cutoff < cutoff:
+            raise ValueError("Invalid filter")
+        self.filter = (low_cutoff, cutoff, resonance)
+
+    def get_filter(self):
+        return self.filter
 
     def get_max_partials(self):
         return MAX_PARTIALS
@@ -264,6 +279,11 @@ class FakeAnalyzer:
         self.reference = (reference_hz, harmonic_cents)
         return fake_analysis(330.0)
 
+    def measure_envelopes(self, start_s, end_s, window_s=0.0, noise_gate_db=None, reference_hz=0.0, harmonic_cents=0.0):
+        self.measured = (round(start_s, 6), round(end_s, 6), window_s, reference_hz, harmonic_cents)
+        analysis = fake_analysis(330.0)
+        return analysis, [Envelope(attack=0.002, decay=1.5, sustain=0.0, release=0.3, curve=1) for _ in analysis.partials]
+
 
 @pytest.fixture
 def server(monkeypatch):
@@ -307,6 +327,23 @@ def test_timbre_is_kept_across_engine_restarts():
 
     bridge.set_timbre(None)  # engine running: back to the single oscillator at once
     assert lib.calls[-1] == ("timbre", None)
+
+
+def test_filter_is_kept_across_engine_restarts():
+    lib = FakeLib()
+    bridge = bridge_with(lib)
+    bridge.set_filter(200.0, 5000.0, 0.3)  # no engine yet
+    bridge.start_engine()
+    bridge.start_engine()
+    applied = [call for call in lib.calls if call[0] == "filter"]
+    assert applied == [("filter", 200.0, 5000.0, 0.3)] * 2
+    assert lib.calls.index(applied[0]) < lib.calls.index("start")
+
+    # A band the core would refuse is refused before being kept, engine or not
+    for band in [(5000.0, 200.0, 0.3), (10.0, 5000.0, 0.3), (200.0, 5000.0, 1.5)]:
+        with pytest.raises(ValueError):
+            bridge.set_filter(*band)
+    assert bridge.get_filter() == (200.0, 5000.0, 0.3)
 
 
 def test_failed_start_releases_the_engine():
@@ -383,7 +420,7 @@ def test_health_without_core(monkeypatch):
 
 def test_envelope_route_validates_and_applies(server):
     client, fake = server
-    envelope = {"attack": 0.2, "decay": 0.1, "sustain": 0.6, "release": 0.8}
+    envelope = {"attack": 0.2, "decay": 0.1, "sustain": 0.6, "release": 0.8, "curve": 0}
     assert client.post("/api/synth/envelope", json=envelope).json() == envelope
     assert fake.envelope == Envelope(**envelope)
     assert client.post("/api/synth/envelope", json={**envelope, "sustain": 1.5}).status_code == 422
@@ -397,6 +434,20 @@ def test_ws_set_param_envelope(server):
         ws.send_json({"type": "set_param", "envelope": envelope})
         ws.receive_json()
     assert fake.envelope == Envelope(**envelope)
+
+
+def test_filter_bounds_are_updated_separately(server):
+    client, fake = server
+    with client.websocket_connect("/ws/synth") as ws:
+        ws.send_json({"type": "set_param", "cutoff": 5000.0})  # the other settings are kept
+        ws.receive_json()
+        assert fake.filter == (20.0, 5000.0, 0.0)
+        ws.send_json({"type": "set_param", "low_cutoff": 6000.0})  # above the upper bound
+        assert "error" in ws.receive_json()
+    assert client.post("/api/synth/tone", json={"low_cutoff": 200.0, "resonance": 0.4}).status_code == 200
+    assert fake.filter == (200.0, 5000.0, 0.4)
+    assert client.post("/api/synth/tone", json={"cutoff": 100.0}).status_code == 422
+    assert fake.filter == (200.0, 5000.0, 0.4)
 
 
 def test_ws_invalid_message_keeps_the_connection(server):
@@ -414,8 +465,8 @@ def test_timbre_route_validates_and_applies(server):
     client, fake = server
     timbre = {
         "partials": [
-            {"ratio": 1.0, "amplitude": 0.8, "waveform": 0, "envelope": {"attack": 0.01, "decay": 0.2, "sustain": 0.5, "release": 0.3}},
-            {"ratio": 2.76, "amplitude": 0.3, "waveform": 3, "envelope": {"attack": 0.0, "decay": 0.1, "sustain": 0.0, "release": 0.1}},
+            {"ratio": 1.0, "amplitude": 0.8, "waveform": 0, "envelope": {"attack": 0.01, "decay": 0.2, "sustain": 0.5, "release": 0.3, "curve": 0}},
+            {"ratio": 2.76, "amplitude": 0.3, "waveform": 3, "envelope": {"attack": 0.0, "decay": 0.1, "sustain": 0.0, "release": 0.1, "curve": 1}},
         ]
     }
     assert client.post("/api/synth/timbre", json=timbre).json() == timbre
@@ -425,7 +476,7 @@ def test_timbre_route_validates_and_applies(server):
     assert status["max_partials"] == MAX_PARTIALS
     assert status["sample_rate"] is None  # no engine running
 
-    bad_partials = [{"ratio": 0}, {"ratio": 1001}, {"amplitude": 1.5}, {"waveform": 4}, {"envelope": {"sustain": 2}}]
+    bad_partials = [{"ratio": 0}, {"ratio": 1001}, {"amplitude": 1.5}, {"waveform": 4}, {"envelope": {"sustain": 2}}, {"envelope": {"curve": 2}}]
     for bad in bad_partials:
         assert client.post("/api/synth/timbre", json={"partials": [bad]}).status_code == 422, bad
     too_many = {"partials": [{"ratio": n + 1} for n in range(MAX_PARTIALS + 1)]}
@@ -747,3 +798,17 @@ def test_noise_gate_on_microphone(server):
         assert live.noise_gate == -55.0  # the refused value leaves the gate in place
         ws.send_json({"type": "stop"})
         receive_until(ws, "stopped")
+
+
+def test_note_envelopes(server):
+    client, fake = server
+    client.post("/api/analyzer/clip", content=b"RIFF")
+    clip_analyzer = fake.analyzers[-1]
+    url = "/api/analyzer/clip/envelopes"
+    body = client.get(f"{url}?start=0.2&end=0.6&window_ms=120&reference_hz=330&harmonic_cents=30").json()
+    assert body["analysis"]["frequency"] == 330.0
+    assert body["envelopes"] == [{"attack": 0.002, "decay": 1.5, "sustain": 0.0, "release": 0.3, "curve": 1}]
+    assert clip_analyzer.measured == (0.2, 0.6, 0.12, 330.0, 30.0)
+    for query in ("start=0.6&end=0.2", "end=0.5", "start=0.2&end=0.6&window_ms=5", "start=0.2&end=0.6&reference_hz=6000"):
+        assert client.get(f"{url}?{query}").status_code == 422, query
+    assert client.get("/api/analyzer/recording/envelopes?start=0&end=1").status_code == 404  # no recording

@@ -186,7 +186,8 @@ function median(values) {
 }
 
 /** Like the core: the ratios taken to a reference note (the note heard moved to its octave when
-    within 1.5 semitones of it, else the reference itself), then only the harmonics within cents */
+    within 1.5 semitones of it, else the reference itself), then only the harmonics within cents,
+    the strongest partial of each */
 function relate(analysis, referenceHz, harmonicCents) {
   if (referenceHz > 0) {
     let folded = referenceHz;
@@ -198,10 +199,13 @@ function relate(analysis, referenceHz, harmonicCents) {
     for (const p of analysis.partials) p.ratio = Math.round((p.frequency / folded) * 10000) / 10000;
   }
   if (harmonicCents > 0 && analysis.frequency > 0) {
-    analysis.partials = analysis.partials.filter((p) => {
+    const best = new Map();
+    for (const p of analysis.partials) {
       const n = Math.round(p.ratio);
-      return n >= 1 && Math.abs(1200 * Math.log2(p.ratio / n)) <= harmonicCents;
-    });
+      if (n < 1 || Math.abs(1200 * Math.log2(p.ratio / n)) > harmonicCents) continue;
+      if (!best.has(n) || p.amplitude > best.get(n).amplitude) best.set(n, p);
+    }
+    analysis.partials = [...best.values()].sort((a, b) => a.frequency - b.frequency);
     const strongest = Math.max(1e-9, ...analysis.partials.map((p) => p.amplitude));
     for (const p of analysis.partials) p.amplitude = Math.round((p.amplitude / strongest) * 10000) / 10000;
   }
@@ -211,27 +215,46 @@ function relate(analysis, referenceHz, harmonicCents) {
 /** Like the server: a moment (time, through a window of window_ms), or a zone (start and end), whose
     moments' medians stand for the core's (at most 100 moments, 10 ms apart at least) */
 function analysisResponse(res, url, moment) {
+  const analysis = analyzeQuery(url, moment);
+  return typeof analysis === 'string' ? error(res, 422, analysis) : json(res, analysis);
+}
+
+/** Like the server's /envelopes: the zone's partials, each with a plucked string's envelope
+    (exponential, the higher partials dying sooner), their amplitudes being their peaks */
+function envelopesResponse(res, url, moment) {
+  if (!url.searchParams.has('start') || !url.searchParams.has('end')) return error(res, 422, 'Il faut start et end');
+  const analysis = analyzeQuery(url, moment);
+  if (typeof analysis === 'string') return error(res, 422, analysis);
+  const envelopes = analysis.partials.map((p) => {
+    const decay = Math.round((3 / Math.max(1, p.ratio)) * 1000) / 1000;
+    return { attack: 0.008, decay, sustain: 0, release: Math.min(decay, 0.3), curve: 1 };
+  });
+  return json(res, { analysis, envelopes });
+}
+
+/** The analysis asked by the query, or what is wrong with it */
+function analyzeQuery(url, moment) {
   const param = (key) => (url.searchParams.has(key) ? Number(url.searchParams.get(key)) : null);
   const [time, start, end] = ['time', 'start', 'end'].map(param);
   const windowMs = param('window_ms') ?? 0;
   const gate = param('noise_gate_db') ?? -120;
   const referenceHz = param('reference_hz') ?? 0;
   const harmonicCents = param('harmonic_cents') ?? 0;
-  if (windowMs !== 0 && !(windowMs >= 10 && windowMs <= 500)) return error(res, 422, 'Fenêtre de 10 à 500 ms, ou 0 pour l’habituelle');
-  if (referenceHz !== 0 && !(referenceHz >= 16 && referenceHz <= 5000)) return error(res, 422, 'Note de référence de 16 à 5000 Hz, ou 0');
-  if (!(harmonicCents >= 0 && harmonicCents <= 100)) return error(res, 422, 'Tolérance des harmoniques de 0 à 100 cents');
+  if (windowMs !== 0 && !(windowMs >= 10 && windowMs <= 500)) return 'Fenêtre de 10 à 500 ms, ou 0 pour l’habituelle';
+  if (referenceHz !== 0 && !(referenceHz >= 16 && referenceHz <= 5000)) return 'Note de référence de 16 à 5000 Hz, ou 0';
+  if (!(harmonicCents >= 0 && harmonicCents <= 100)) return 'Tolérance des harmoniques de 0 à 100 cents';
   if (start !== null || end !== null) {
-    if (start === null || end === null || !(end > start)) return error(res, 422, 'Une zone demande start et end, end après start');
+    if (start === null || end === null || !(end > start)) return 'Une zone demande start et end, end après start';
     const count = Math.max(2, Math.min(100, Math.floor((end - start) / 0.01) + 1));
     const moments = Array.from({ length: count }, (_, i) => moment(start + ((end - start) * i) / (count - 1)));
     const notes = moments.filter((m) => m.frequency > 0);
     const frequency = notes.length * 2 >= count ? median(notes.map((m) => m.frequency)) : 0;
     const analysis = fakeAnalysis(frequency, median(moments.map((m) => m.level)), median(moments.map((m) => m.clarity)), gate);
-    return json(res, relate(analysis, referenceHz, harmonicCents));
+    return relate(analysis, referenceHz, harmonicCents);
   }
-  if (time === null) return error(res, 422, 'Il faut time, ou start et end');
+  if (time === null) return 'Il faut time, ou start et end';
   const m = moment(time);
-  return json(res, relate(fakeAnalysis(m.frequency, m.level, m.clarity, gate), referenceHz, harmonicCents));
+  return relate(fakeAnalysis(m.frequency, m.level, m.clarity, gate), referenceHz, harmonicCents);
 }
 
 function analyzerRoute(req, res, url, raw) {
@@ -258,6 +281,10 @@ function analyzerRoute(req, res, url, raw) {
     if (!clip) return error(res, 404, 'Aucun fichier chargé');
     return analysisResponse(res, url, clipMoment);
   }
+  if (req.method === 'GET' && url.pathname === '/api/analyzer/clip/envelopes') {
+    if (!clip) return error(res, 404, 'Aucun fichier chargé');
+    return envelopesResponse(res, url, clipMoment);
+  }
   if (req.method === 'GET' && url.pathname === '/api/analyzer/clip/waveform') {
     if (!clip) return error(res, 404, 'Aucun fichier chargé');
     return waveformResponse(res, url, clip.duration, clipMoment, NOTE_HZ);
@@ -269,6 +296,10 @@ function analyzerRoute(req, res, url, raw) {
   if (req.method === 'GET' && url.pathname === '/api/analyzer/recording/analysis') {
     if (!take) return error(res, 404, 'Aucun enregistrement');
     return analysisResponse(res, url, singerMoment);
+  }
+  if (req.method === 'GET' && url.pathname === '/api/analyzer/recording/envelopes') {
+    if (!take) return error(res, 404, 'Aucun enregistrement');
+    return envelopesResponse(res, url, singerMoment);
   }
   if (req.method === 'GET' && url.pathname === '/api/analyzer/recording/waveform') {
     if (!take) return error(res, 404, 'Aucun enregistrement');
@@ -401,7 +432,9 @@ const server = createServer(async (req, res) => {
 
 function describeTimbre(value) {
   if (!value) return 'single oscillator';
-  return `${value.partials.length} partials [${value.partials.map((p) => `x${p.ratio}:${p.amplitude}`).join(' ')}]`;
+  return `${value.partials.length} partials [${value.partials
+    .map((p) => `x${p.ratio}:${p.amplitude}${p.envelope?.curve === 1 ? `:exp${p.envelope.decay}s` : ''}`)
+    .join(' ')}]`;
 }
 
 // Minimal WebSocket server: unfragmented text frames are enough (under 64 KB)

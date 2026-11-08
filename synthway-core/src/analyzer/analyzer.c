@@ -39,6 +39,15 @@ struct synthway_analyzer {
 #define MAX_ZONE_MOMENTS 100
 #define MIN_ZONE_STEP_SECONDS 0.01
 
+/* Envelopes: each partial's level every ENVELOPE_STEP_SECONDS (further apart
+   when the zone would need more than MAX_ENVELOPE_STEPS), measured over
+   ENVELOPE_PERIODS periods of the note, to keep its neighbours out */
+#define ENVELOPE_STEP_SECONDS 0.005
+#define MAX_ENVELOPE_STEPS 400
+#define ENVELOPE_PERIODS 6.0
+#define MIN_ENVELOPE_WINDOW_SECONDS 0.02
+#define MAX_ENVELOPE_WINDOW_SECONDS 0.1
+
 /* Copies the window of n frames centred on frame centre of samples (count
    frames) into analyzer->window; what falls outside is silence */
 static void sw_analyzer_fill_window(
@@ -454,6 +463,88 @@ SYNTHWAY_API synthway_result_t synthway_analyzer_analyze_clip_range(
     free(references);
     free(marks);
     return result;
+}
+
+SYNTHWAY_API synthway_result_t synthway_analyzer_measure_envelopes(
+    synthway_analyzer_t* analyzer,
+    double start_s,
+    double end_s,
+    double window_s,
+    float reference_hz,
+    float harmonic_cents,
+    synthway_analysis_t* out_analysis,
+    synthway_envelope_t* out_envelopes
+) {
+    if (!out_envelopes) {
+        return SYNTHWAY_INVALID_PARAM;
+    }
+    const synthway_result_t found = synthway_analyzer_analyze_clip_range(
+        analyzer, start_s, end_s, window_s, reference_hz, harmonic_cents, out_analysis
+    );
+    const uint32_t count = found == SYNTHWAY_OK ? out_analysis->partial_count : 0;
+    if (count == 0) {
+        return found;
+    }
+
+    /* A window of a few periods of the note (else of the lowest partial), with
+       its Hann weights in the workspace's spare buffer */
+    const sw_audio_clip* clip = &analyzer->clip;
+    const double rate = clip->sample_rate;
+    const double base = out_analysis->frequency_hz > 0.0f ? out_analysis->frequency_hz : out_analysis->partials[0].frequency_hz;
+    double seconds = ENVELOPE_PERIODS / base;
+    if (seconds < MIN_ENVELOPE_WINDOW_SECONDS) seconds = MIN_ENVELOPE_WINDOW_SECONDS;
+    if (seconds > MAX_ENVELOPE_WINDOW_SECONDS) seconds = MAX_ENVELOPE_WINDOW_SECONDS;
+    const uint32_t n = sw_analysis_frames_for(seconds, clip->sample_rate);
+    float* weights = analyzer->workspace.re;
+    double weights_sum = 0.0;
+    for (uint32_t i = 0; i < n; ++i) {
+        weights[i] = (float)(0.5 - 0.5 * cos(6.283185307179586 * i / (n - 1)));
+        weights_sum += weights[i];
+    }
+
+    /* Only windows wholly inside the file: one that runs past its end would
+       read a fall that is not in the sound */
+    const double half = 0.5 * n / rate, duration = clip->frame_count / rate;
+    const double first = start_s > half ? start_s : half;
+    const double last = end_s < duration - half ? end_s : duration - half;
+    if (!(last > first)) {
+        /* Too short to follow anything: every partial held */
+        for (uint32_t k = 0; k < count; ++k) {
+            float peak;
+            sw_analysis_fit_envelope(NULL, 0, 0.0, 0.0, &out_envelopes[k], &peak);
+        }
+        return SYNTHWAY_OK;
+    }
+    double step = ENVELOPE_STEP_SECONDS;
+    if ((last - first) / step > MAX_ENVELOPE_STEPS - 1) step = (last - first) / (MAX_ENVELOPE_STEPS - 1);
+    const uint32_t steps = (uint32_t)((last - first) / step) + 1;
+    float* levels = (float*)malloc(sizeof(float) * count * steps);
+    if (!levels) {
+        return SYNTHWAY_ERROR;
+    }
+    for (uint32_t s = 0; s < steps; ++s) {
+        sw_analyzer_fill_clip_window(analyzer, clip, (int64_t)((first + s * step) * rate), n);
+        for (uint32_t k = 0; k < count; ++k) {
+            const float amplitude = sw_analysis_tone_amplitude(
+                analyzer->window, weights, n, weights_sum, out_analysis->partials[k].frequency_hz, rate
+            );
+            levels[k * steps + s] = amplitude > 1e-6f ? (float)(20.0 * log10(amplitude)) : -120.0f;
+        }
+    }
+
+    /* Each partial's envelope; its amplitude becomes its peak, relative to the strongest */
+    float strongest = -120.0f;
+    for (uint32_t k = 0; k < count; ++k) {
+        float peak;
+        sw_analysis_fit_envelope(levels + k * steps, steps, step, (double)n / rate, &out_envelopes[k], &peak);
+        out_analysis->partials[k].amplitude = peak; /* in dB until the strongest is known */
+        if (peak > strongest) strongest = peak;
+    }
+    for (uint32_t k = 0; k < count; ++k) {
+        out_analysis->partials[k].amplitude = powf(10.0f, (out_analysis->partials[k].amplitude - strongest) / 20.0f);
+    }
+    free(levels);
+    return SYNTHWAY_OK;
 }
 
 SYNTHWAY_API synthway_result_t synthway_analyzer_get_clip_overview(

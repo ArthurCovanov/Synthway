@@ -187,6 +187,9 @@ export function KeyboardDock({ instrument }: { instrument: Instrument }) {
               : void server.startAudio({
                   volume: instrument.volume,
                   timbre: toTimbre(instrument.partials, engine.maxPartials),
+                  low_cutoff: instrument.filter.lowCutoff,
+                  cutoff: instrument.filter.cutoff,
+                  resonance: instrument.filter.resonance,
                 })
           }
         >

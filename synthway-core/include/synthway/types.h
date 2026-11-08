@@ -64,11 +64,19 @@ typedef enum synthway_waveform {
 /* --------------------------------------------------------------------------
    ADSR Envelope
    -------------------------------------------------------------------------- */
+
+/* How the decay and the release fall (the attack is always a straight ramp) */
+typedef enum synthway_envelope_curve {
+    SYNTHWAY_ENVELOPE_LINEAR      = 0,  /* straight ramps: decay_s and release_s are the times to reach the sustain level and silence */
+    SYNTHWAY_ENVELOPE_EXPONENTIAL = 1   /* a steady fall in dB, like a struck string: decay_s and release_s are the times to fall by 60 dB */
+} synthway_envelope_curve_t;
+
 typedef struct synthway_envelope {
     float attack_s;                /* 0 to 10 s */
     float decay_s;                 /* 0 to 10 s */
     float sustain_level;           /* in [0, 1] */
     float release_s;               /* 0 to 10 s */
+    synthway_envelope_curve_t curve; /* SYNTHWAY_ENVELOPE_LINEAR (0) when zeroed */
 } synthway_envelope_t;
 
 /* --------------------------------------------------------------------------

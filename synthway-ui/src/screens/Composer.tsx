@@ -160,10 +160,11 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
         envelope: { attack: partial.envelope.attack, decay: partial.envelope.decay, sustain: partial.envelope.sustain, release: partial.envelope.release },
       })),
     ).slice(0, engine.maxPartials);
-    const signature = JSON.stringify([baseFrequency, partials]);
+    const filter = active[0].instrument.filter;
+    const signature = JSON.stringify([baseFrequency, partials, filter]);
     if (signature === lastAudioSignature.current) return;
     lastAudioSignature.current = signature;
-    setParams({ timbre: { partials } });
+    setParams({ timbre: { partials }, low_cutoff: filter.lowCutoff, cutoff: filter.cutoff, resonance: filter.resonance });
     noteOn(baseFrequency, 1);
   }, [playing, playStep, tracks, instruments, engine.maxPartials, noteOff, noteOn, setParams]);
 
@@ -258,7 +259,7 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
   const audition = (pitch: number) => {
     if (!canPlay) return;
     const instrument = instrumentOf(track);
-    if (instrument) setParams({ timbre: toTimbre(instrument.partials, engine.maxPartials) });
+    if (instrument) setParams({ timbre: toTimbre(instrument.partials, engine.maxPartials), low_cutoff: instrument.filter.lowCutoff, cutoff: instrument.filter.cutoff, resonance: instrument.filter.resonance });
     noteOn(midiToFrequency(pitch), instrument?.volume ?? 0.3);
     window.clearTimeout(auditionTimer.current);
     auditionTimer.current = window.setTimeout(noteOff, AUDITION_MS);
@@ -375,7 +376,7 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
     if (!performers.length || busy || connection !== 'online' || !coreLoaded || !socketOpen) return;
     if (!canPlay) {
       const instrument = instrumentOf(performers[0]);
-      const started = await startAudio(instrument ? { timbre: toTimbre(instrument.partials, engine.maxPartials) } : {});
+      const started = await startAudio(instrument ? { timbre: toTimbre(instrument.partials, engine.maxPartials), low_cutoff: instrument.filter.lowCutoff, cutoff: instrument.filter.cutoff, resonance: instrument.filter.resonance } : {});
       if (!started) return;
     }
     const startStep = playStep >= totalSteps ? 0 : playStep;

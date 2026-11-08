@@ -146,3 +146,24 @@ def test_noise_gate(core, analyzer):
     with pytest.raises(core_bridge.CoreError):
         analyzer.set_noise_gate(5.0)
     assert analyzer.get_noise_gate() == -21.0
+
+
+def test_envelopes_round_trip(core, analyzer, tmp_path):
+    # A card whose harmonics fade exponentially, each at its own speed, rendered by the
+    # engine then measured back: the analyzer finds each partial's decay
+    timbre = Timbre(partials=[
+        {"ratio": n, "amplitude": round(0.5 / n, 4),
+         "envelope": {"attack": 0.002, "decay": round(2.0 / n, 4), "sustain": 0.0, "release": 0.1, "curve": 1}}
+        for n in range(1, 6)
+    ])
+    path = tmp_path / "pluck.wav"
+    core.render_to_wav(str(path), 220.0, 0.6, volume=0.8, channels=1, timbre=timbre)
+    analyzer.load_clip_bytes(path.read_bytes())
+    analysis, envelopes = analyzer.measure_envelopes(0.0, 0.6, core_bridge.WINDOW_AUTO, None, 0.0, 30.0)
+    assert abs(cents(analysis.frequency, 220.0)) < 2
+    assert len(envelopes) == len(analysis.partials) >= 5
+    for n in range(1, 6):
+        partial, envelope = next((p, e) for p, e in zip(analysis.partials, envelopes) if round(p.ratio) == n)
+        assert envelope.curve == 1 and envelope.sustain == 0.0
+        assert envelope.decay == pytest.approx(2.0 / n, rel=0.2), n
+        assert partial.amplitude == pytest.approx(1.0 / n, rel=0.15), n

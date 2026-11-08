@@ -1,5 +1,6 @@
 import { useId } from 'react';
-import type { Envelope } from '../lib/instruments';
+import { envelopeLevel, envelopeTimes, type Envelope } from '../lib/instruments';
+import { ENVELOPE_CURVE } from '../types';
 
 const W = 320;
 const H = 92;
@@ -7,33 +8,28 @@ const PAD = 6;
 /** Width given to the sustain plateau, in seconds-equivalent */
 const HOLD = 0.4;
 
-/** ADSR curve of an instrument */
+/** ADSR curve of an instrument, linear or exponential (see synthway_envelope_curve_t) */
 export function EnvelopeGraph({ envelope }: { envelope: Envelope }) {
   const id = useId().replace(/:/g, '');
-  const total = envelope.attack + envelope.decay + HOLD + envelope.release;
+  const noteOff = envelope.attack + envelope.decay + HOLD;
+  const total = noteOff + envelope.release;
   const x = (t: number) => PAD + (t / total) * (W - 2 * PAD);
   const top = PAD + 2;
   const bottom = H - PAD;
   const y = (level: number) => bottom - level * (bottom - top);
 
   const a = envelope.attack;
-  const d = a + envelope.decay;
-  const s = d + HOLD;
-  const r = s + envelope.release;
-  const line = [
-    `M${x(0)} ${y(0)}`,
-    `L${x(a)} ${y(1)}`,
-    `L${x(d)} ${y(envelope.sustain)}`,
-    `L${x(s)} ${y(envelope.sustain)}`,
-    `L${x(r)} ${y(0)}`,
-  ].join(' ');
+  const line = envelopeTimes(envelope, noteOff, total)
+    .map((t, i) => `${i ? 'L' : 'M'}${x(t).toFixed(1)} ${y(envelopeLevel(envelope, t, noteOff)).toFixed(1)}`)
+    .join(' ');
+  const curve = envelope.curve === ENVELOPE_CURVE.Exponential ? ', exponentielle' : '';
 
   return (
     <svg
       viewBox={`0 0 ${W} ${H}`}
       preserveAspectRatio="none"
       role="img"
-      aria-label={`Enveloppe : attaque ${a} s, déclin ${envelope.decay} s, maintien ${Math.round(envelope.sustain * 100)} %, relâchement ${envelope.release} s`}
+      aria-label={`Enveloppe${curve} : attaque ${a} s, déclin ${envelope.decay} s, maintien ${Math.round(envelope.sustain * 100)} %, relâchement ${envelope.release} s`}
       style={{ display: 'block', width: '100%', height: '100%' }}
     >
       <defs>

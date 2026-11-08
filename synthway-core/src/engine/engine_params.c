@@ -62,6 +62,9 @@ void sw_engine_params_init(sw_engine_params* params) {
     atomic_init(&params->env_decay, 0.0f);
     atomic_init(&params->env_sustain, 1.0f);
     atomic_init(&params->env_release, 0.01f);
+    atomic_init(&params->filter_low_cutoff, 20.0f);
+    atomic_init(&params->filter_high_cutoff, 20000.0f);
+    atomic_init(&params->filter_resonance, 0.0f);
     sw_timbre_exchange_init(&params->timbre);
 }
 
@@ -75,6 +78,27 @@ void sw_engine_params_snapshot(sw_engine_params* params, sw_synth_params* out) {
     out->envelope.decay_s = atomic_load_explicit(&params->env_decay, memory_order_relaxed);
     out->envelope.sustain_level = atomic_load_explicit(&params->env_sustain, memory_order_relaxed);
     out->envelope.release_s = atomic_load_explicit(&params->env_release, memory_order_relaxed);
+    out->envelope.curve = SYNTHWAY_ENVELOPE_LINEAR; /* the single oscillator's envelope is always linear */
+    out->filter_low_cutoff_hz = atomic_load_explicit(&params->filter_low_cutoff, memory_order_relaxed);
+    out->filter_high_cutoff_hz = atomic_load_explicit(&params->filter_high_cutoff, memory_order_relaxed);
+    out->filter_resonance = atomic_load_explicit(&params->filter_resonance, memory_order_relaxed);
+}
+
+SYNTHWAY_API synthway_result_t synthway_engine_set_filter(synthway_engine_t* engine, float low_cutoff_hz, float high_cutoff_hz, float resonance) {
+    if (!engine || !(low_cutoff_hz >= 20.0f && low_cutoff_hz < high_cutoff_hz && high_cutoff_hz <= 20000.0f)
+        || !(resonance >= 0.0f && resonance <= 1.0f)) return SYNTHWAY_INVALID_PARAM;
+    atomic_store_explicit(&engine->params.filter_low_cutoff, low_cutoff_hz, memory_order_relaxed);
+    atomic_store_explicit(&engine->params.filter_high_cutoff, high_cutoff_hz, memory_order_relaxed);
+    atomic_store_explicit(&engine->params.filter_resonance, resonance, memory_order_relaxed);
+    return SYNTHWAY_OK;
+}
+
+SYNTHWAY_API synthway_result_t synthway_engine_get_filter(const synthway_engine_t* engine, float* out_low_cutoff_hz, float* out_high_cutoff_hz, float* out_resonance) {
+    if (!engine || !out_low_cutoff_hz || !out_high_cutoff_hz || !out_resonance) return SYNTHWAY_INVALID_PARAM;
+    *out_low_cutoff_hz = atomic_load_explicit((_Atomic float*)&engine->params.filter_low_cutoff, memory_order_relaxed);
+    *out_high_cutoff_hz = atomic_load_explicit((_Atomic float*)&engine->params.filter_high_cutoff, memory_order_relaxed);
+    *out_resonance = atomic_load_explicit((_Atomic float*)&engine->params.filter_resonance, memory_order_relaxed);
+    return SYNTHWAY_OK;
 }
 
 SYNTHWAY_API synthway_result_t synthway_engine_set_frequency(synthway_engine_t* engine, float frequency_hz) {
@@ -177,7 +201,8 @@ static bool sw_valid_partial(const synthway_partial_t* partial) {
     return partial->ratio > 0.0f && partial->ratio <= MAX_PARTIAL_RATIO /* also false for NaN */
         && partial->amplitude >= 0.0f && partial->amplitude <= 1.0f
         && (unsigned)partial->waveform <= SYNTHWAY_WAVEFORM_SAWTOOTH /* negative values wrap above */
-        && sw_valid_envelope(envelope->attack_s, envelope->decay_s, envelope->sustain_level, envelope->release_s);
+        && sw_valid_envelope(envelope->attack_s, envelope->decay_s, envelope->sustain_level, envelope->release_s)
+        && (unsigned)envelope->curve <= SYNTHWAY_ENVELOPE_EXPONENTIAL;
 }
 
 SYNTHWAY_API synthway_result_t synthway_engine_set_timbre(

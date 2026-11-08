@@ -85,6 +85,7 @@ class SynthwayEnvelopeC(ctypes.Structure):
         ("decay_s", ctypes.c_float),
         ("sustain_level", ctypes.c_float),
         ("release_s", ctypes.c_float),
+        ("curve", ctypes.c_int),  # synthway_envelope_curve_t: 0 linear, 1 exponential
     ]
 
 
@@ -114,7 +115,9 @@ def _timbre_to_c(timbre: Timbre) -> SynthwayTimbreC:
             ratio=partial.ratio,
             amplitude=partial.amplitude,
             waveform=int(partial.waveform),
-            envelope=SynthwayEnvelopeC(envelope.attack, envelope.decay, envelope.sustain, envelope.release),
+            envelope=SynthwayEnvelopeC(
+                envelope.attack, envelope.decay, envelope.sustain, envelope.release, int(getattr(envelope, "curve", 0)),
+            ),
         )
     return c_timbre
 
@@ -357,6 +360,43 @@ class Analyzer:
                 ctypes.c_float(reference_hz), ctypes.c_float(harmonic_cents),
             )
 
+    def measure_envelopes(
+        self,
+        start_s: float,
+        end_s: float,
+        window_s: float = WINDOW_AUTO,
+        noise_gate_db: Optional[float] = None,
+        reference_hz: float = REFERENCE_AUTO,
+        harmonic_cents: float = ALL_PARTIALS,
+    ) -> Tuple[Analysis, List[Envelope]]:
+        """The partials of a zone holding one note (as analyze_clip_range finds them) and the
+        exponential envelope of each, followed over the zone; amplitudes become the peaks."""
+        c_analysis = SynthwayAnalysisC()
+        c_envelopes = (SynthwayEnvelopeC * MAX_PARTIALS)()
+        with self._lock:
+            if noise_gate_db is not None:
+                _check_result(
+                    self._lib, self._lib.synthway_analyzer_set_noise_gate(self._handle, noise_gate_db),
+                    "Setting the noise gate",
+                )
+            _check_result(
+                self._lib,
+                self._lib.synthway_analyzer_measure_envelopes(
+                    self._handle, ctypes.c_double(start_s), ctypes.c_double(end_s), ctypes.c_double(window_s),
+                    ctypes.c_float(reference_hz), ctypes.c_float(harmonic_cents), ctypes.byref(c_analysis), c_envelopes,
+                ),
+                "Measuring the envelopes",
+            )
+        analysis = _analysis_from_c(c_analysis)
+        envelopes = [
+            Envelope(
+                attack=_number(e.attack_s, 4), decay=_number(e.decay_s, 4), sustain=_number(e.sustain_level, 4),
+                release=_number(e.release_s, 4), curve=int(e.curve),
+            )
+            for e in c_envelopes[: len(analysis.partials)]
+        ]
+        return analysis, envelopes
+
     def clip_overview(self, count: int) -> List[float]:
         """Peak of each of count equal parts of the file, for the waveform."""
         peaks = (ctypes.c_float * count)()
@@ -454,6 +494,7 @@ class SynthwayCore:
     # are kept here and applied to every new engine
     _envelope = Envelope()
     _timbre: Optional[Timbre] = None  # None: the single oscillator plays
+    _filter = (20.0, 20000.0, 0.0)
 
     def __init__(self, lib_path: Optional[str] = None):
         self.lib_path = lib_path or _find_library()
@@ -530,6 +571,8 @@ class SynthwayCore:
 
         self._lib.synthway_engine_get_envelope.argtypes = [ctypes.c_void_p] + [ctypes.POINTER(ctypes.c_float)] * 4
         self._lib.synthway_engine_get_envelope.restype = ctypes.c_int
+        self._lib.synthway_engine_set_filter.argtypes = [ctypes.c_void_p] + [ctypes.c_float] * 3
+        self._lib.synthway_engine_set_filter.restype = ctypes.c_int
 
         self._lib.synthway_engine_set_frequency.argtypes = [ctypes.c_void_p, ctypes.c_float]
         self._lib.synthway_engine_set_frequency.restype = ctypes.c_int
@@ -600,6 +643,11 @@ class SynthwayCore:
             "synthway_analyzer_analyze_clip": ([analyzer, ctypes.c_double, analysis], ctypes.c_int),
             "synthway_analyzer_analyze_clip_range": (
                 [analyzer, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_float, ctypes.c_float, analysis],
+                ctypes.c_int,
+            ),
+            "synthway_analyzer_measure_envelopes": (
+                [analyzer, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_float, ctypes.c_float, analysis,
+                 ctypes.POINTER(SynthwayEnvelopeC)],
                 ctypes.c_int,
             ),
             "synthway_analyzer_get_clip_overview": ([analyzer, floats, ctypes.c_uint32], ctypes.c_int),
@@ -705,6 +753,7 @@ class SynthwayCore:
         # then switched on explicitly (note_on, set_tone_enabled).
         self._lib.synthway_engine_set_tone_enabled(self._engine, False)
         self._apply_envelope(self._engine, self._envelope)
+        self._apply_filter(self._engine, *self._filter)
         if self._timbre is not None:
             self._apply_timbre(self._engine, self._timbre)
 
@@ -720,6 +769,25 @@ class SynthwayCore:
             self._lib.synthway_engine_stop(self._engine)
             self._lib.synthway_engine_destroy(self._engine)
             self._engine = None
+
+    # ---------- Filter ----------
+
+    def _apply_filter(self, engine, low_cutoff: float, cutoff: float, resonance: float):
+        self._check(self._lib.synthway_engine_set_filter(engine, low_cutoff, cutoff, resonance), "Setting the filter")
+
+    def set_filter(self, low_cutoff: float, cutoff: float, resonance: float):
+        # Checked here too: without an engine, a band the core refuses would only fail at the next start
+        if not (20.0 <= low_cutoff < cutoff <= 20000.0 and 0.0 <= resonance <= 1.0):
+            raise ValueError(
+                f"Invalid filter: band {low_cutoff:g} to {cutoff:g} Hz (20 to 20000, lower bound under the upper one), "
+                f"resonance {resonance:g} (0 to 1)"
+            )
+        if self._engine:
+            self._apply_filter(self._engine, low_cutoff, cutoff, resonance)
+        self._filter = (low_cutoff, cutoff, resonance)
+
+    def get_filter(self):
+        return self._filter
 
     # ---------- Envelope ----------
 

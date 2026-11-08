@@ -18,10 +18,10 @@ import {
   Button,
   LiveBadge,
   Panel,
+  RangeSlider,
   Section,
   Segmented,
   Slider,
-  SoonBadge,
   cx,
   inputClass,
   selectClass,
@@ -54,7 +54,7 @@ import {
 } from '../lib/partials';
 import { usePersistentState } from '../lib/storage';
 import { useSynthServer } from '../lib/SynthServer';
-import { WAVEFORM, type Waveform } from '../types';
+import { ENVELOPE_CURVE, WAVEFORM, type Waveform } from '../types';
 import styles from './InstrumentCreator.module.css';
 
 function formatSeconds(seconds: number): string {
@@ -116,9 +116,18 @@ function TimeSlider({
   );
 }
 
-/** Cutoff on a logarithmic scale, from 20 Hz to 20 kHz */
+/**
+ * Band-pass bounds on one logarithmic bar, from 20 Hz to 20 kHz. At its ends a
+ * bound filters nothing (the core skips that section): the lower one then
+ * reads 0 Hz, and both ends together mean no filter.
+ */
 const CUTOFF_MIN = 20;
-const CUTOFF_RANGE = 1000;
+const CUTOFF_MAX = 20000;
+/** The upper bound stays at least this ratio above the lower one */
+const BAND_MIN_RATIO = 1.05;
+const cutoffPosition = (hz: number) => Math.log(hz / CUTOFF_MIN) / Math.log(CUTOFF_MAX / CUTOFF_MIN);
+const cutoffAt = (position: number) => CUTOFF_MIN * Math.pow(CUTOFF_MAX / CUTOFF_MIN, position);
+const formatLowCutoff = (hz: number) => (hz <= CUTOFF_MIN ? '0 Hz' : formatHertz(hz));
 
 /** Ratio slider on a logarithmic scale, from ×0.25 to ×32 (typing goes further) */
 const RATIO_SLIDER_MIN = 0.25;
@@ -327,6 +336,8 @@ export function InstrumentCreator({
   const locked = !!selected.locked;
   const frozen = (item: TimbrePartial) => locked || !!item.locked;
   const partialFrozen = partial ? frozen(partial) : true;
+  // Exponential decay and release are times to fall 60 dB, which can last much longer
+  const exponential = partial?.envelope.curve === ENVELOPE_CURVE.Exponential;
   const maxPartials = engine.maxPartials;
   const sampleRate = engine.sampleRate ?? audioConfig.sampleRate;
 
@@ -334,9 +345,9 @@ export function InstrumentCreator({
   const timbre = useMemo(() => toTimbre(partials, maxPartials), [partials, maxPartials]);
   useEffect(() => {
     if (engine.running) {
-      setParams({ volume: selected.volume, timbre });
+      setParams({ volume: selected.volume, timbre, low_cutoff: selected.filter.lowCutoff, cutoff: selected.filter.cutoff, resonance: selected.filter.resonance });
     }
-  }, [engine.running, selected.volume, timbre, setParams]);
+  }, [engine.running, selected.volume, selected.filter.lowCutoff, selected.filter.cutoff, selected.filter.resonance, timbre, setParams]);
 
   // Warnings: active partials above half the sample rate on the keyboard's notes, possible clipping
   const aliasing = useMemo(() => {
@@ -358,7 +369,17 @@ export function InstrumentCreator({
     setInstruments((list) =>
       list.map((item) => (item.id === selected.id && !item.locked ? { ...item, ...patch } : item)),
     );
-  const updateFilter = (patch: Partial<FilterSettings>) => update({ filter: { ...selected.filter, ...patch } });
+  // The bound that moves stops at the other one, and both stay between 20 Hz and 20 kHz
+  const updateFilter = (patch: Partial<FilterSettings>) => {
+    const filter = { ...selected.filter, ...patch };
+    if ('lowCutoff' in patch) {
+      filter.lowCutoff = Math.min(Math.max(filter.lowCutoff, CUTOFF_MIN), filter.cutoff / BAND_MIN_RATIO);
+    }
+    if ('cutoff' in patch) {
+      filter.cutoff = Math.max(Math.min(filter.cutoff, CUTOFF_MAX), filter.lowCutoff * BAND_MIN_RATIO);
+    }
+    update({ filter });
+  };
   const setInstrumentLocked = (value: boolean) =>
     setInstruments((list) => list.map((item) => (item.id === selected.id ? { ...item, locked: value } : item)));
 
@@ -678,40 +699,56 @@ export function InstrumentCreator({
               />
             </Section>
 
-            <Section title="Filtre" badge={<SoonBadge />}>
-              <div className={styles.row2}>
-                <Slider
-                  label="Coupure"
-                  value={Math.log(selected.filter.cutoff / CUTOFF_MIN) / Math.log(CUTOFF_RANGE)}
-                  min={0}
-                  max={1}
-                  step={0.001}
-                  format={(position) => formatHertz(CUTOFF_MIN * Math.pow(CUTOFF_RANGE, position))}
-                  disabled={locked}
-                  onChange={(position) =>
-                    updateFilter({ cutoff: Math.round(CUTOFF_MIN * Math.pow(CUTOFF_RANGE, position)) })
-                  }
-                  edit={{
+            <Section title="Filtre" badge={<LiveBadge />}>
+              <RangeSlider
+                label={
+                  selected.filter.lowCutoff <= CUTOFF_MIN && selected.filter.cutoff >= CUTOFF_MAX
+                    ? 'Bande passante (aucun filtre)'
+                    : 'Bande passante'
+                }
+                step={0.001}
+                disabled={locked}
+                low={{
+                  label: 'Borne basse',
+                  position: cutoffPosition(selected.filter.lowCutoff),
+                  display: formatLowCutoff(selected.filter.lowCutoff),
+                  onChange: (position) => updateFilter({ lowCutoff: Math.floor(cutoffAt(position)) }),
+                  // Typing under 20 Hz filters nothing, like 0 Hz
+                  edit: {
+                    value: selected.filter.lowCutoff <= CUTOFF_MIN ? 0 : selected.filter.lowCutoff,
+                    min: 0,
+                    max: Math.floor(selected.filter.cutoff / BAND_MIN_RATIO),
+                    unit: 'Hz',
+                    decimals: 0,
+                    onCommit: (lowCutoff) => updateFilter({ lowCutoff: Math.floor(lowCutoff) }),
+                  },
+                }}
+                high={{
+                  label: 'Borne haute',
+                  position: cutoffPosition(selected.filter.cutoff),
+                  display: formatHertz(selected.filter.cutoff),
+                  onChange: (position) => updateFilter({ cutoff: Math.round(cutoffAt(position)) }),
+                  edit: {
                     value: selected.filter.cutoff,
-                    min: CUTOFF_MIN,
-                    max: CUTOFF_MIN * CUTOFF_RANGE,
+                    min: Math.ceil(selected.filter.lowCutoff * BAND_MIN_RATIO),
+                    max: CUTOFF_MAX,
                     unit: 'Hz',
                     decimals: 0,
                     onCommit: (cutoff) => updateFilter({ cutoff: Math.round(cutoff) }),
-                  }}
-                />
-                <Slider
-                  label="Résonance"
-                  value={selected.filter.resonance}
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  format={percent}
-                  disabled={locked}
-                  onChange={(resonance) => updateFilter({ resonance })}
-                  edit={percentEdit(selected.filter.resonance, (resonance) => updateFilter({ resonance }))}
-                />
-              </div>
+                  },
+                }}
+              />
+              <Slider
+                label="Résonance"
+                value={selected.filter.resonance}
+                min={0}
+                max={1}
+                step={0.01}
+                format={percent}
+                disabled={locked}
+                onChange={(resonance) => updateFilter({ resonance })}
+                edit={percentEdit(selected.filter.resonance, (resonance) => updateFilter({ resonance }))}
+              />
             </Section>
 
             <Section title="Couleur de l'instrument">
@@ -957,6 +994,25 @@ export function InstrumentCreator({
                 <div className={styles.envelopeGraph}>
                   <EnvelopeGraph envelope={partial.envelope} />
                 </div>
+                <Segmented
+                  label="Courbe"
+                  options={[
+                    {
+                      value: ENVELOPE_CURVE.Linear,
+                      label: 'Linéaire',
+                      title: 'Rampes droites : déclin et relâchement sont les temps pour atteindre le maintien et le silence',
+                    },
+                    {
+                      value: ENVELOPE_CURVE.Exponential,
+                      label: 'Exponentielle',
+                      title:
+                        'Le niveau perd autant de dB chaque seconde, comme une corde pincée : déclin et relâchement sont les temps pour perdre 60 dB',
+                    },
+                  ]}
+                  value={partial.envelope.curve ?? ENVELOPE_CURVE.Linear}
+                  disabled={partialFrozen}
+                  onChange={(curve) => updatePartialEnvelope(partial.id, { curve })}
+                />
                 <div className={styles.row2}>
                   <TimeSlider
                     label="Attaque"
@@ -966,9 +1022,9 @@ export function InstrumentCreator({
                     onChange={(attack) => updatePartialEnvelope(partial.id, { attack })}
                   />
                   <TimeSlider
-                    label="Déclin"
+                    label={exponential ? 'Déclin (−60 dB)' : 'Déclin'}
                     value={partial.envelope.decay}
-                    max={4}
+                    max={exponential ? ENVELOPE_MAX_SECONDS : 4}
                     disabled={partialFrozen}
                     onChange={(decay) => updatePartialEnvelope(partial.id, { decay })}
                   />
@@ -984,7 +1040,7 @@ export function InstrumentCreator({
                     edit={percentEdit(partial.envelope.sustain, (sustain) => updatePartialEnvelope(partial.id, { sustain }))}
                   />
                   <TimeSlider
-                    label="Relâchement"
+                    label={exponential ? 'Relâchement (−60 dB)' : 'Relâchement'}
                     value={partial.envelope.release}
                     max={4}
                     disabled={partialFrozen}

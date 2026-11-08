@@ -47,6 +47,7 @@ try:  # run from src/ (uvicorn main:app, python main.py)
         DeviceListResponse,
         EngineConfigRequest,
         EngineStatusResponse,
+        EnvelopeAnalysis,
         Envelope,
         Timbre,
         ToneControlRequest,
@@ -65,6 +66,7 @@ except ImportError:  # installed package (synthway-server command)
         DeviceListResponse,
         EngineConfigRequest,
         EngineStatusResponse,
+        EnvelopeAnalysis,
         Envelope,
         Timbre,
         ToneControlRequest,
@@ -297,6 +299,14 @@ if HAS_FASTAPI:
             core.set_waveform(tone.waveform)
         if tone.enabled is not None:
             core.set_tone_enabled(tone.enabled)
+        if tone.low_cutoff is not None or tone.cutoff is not None or tone.resonance is not None:
+            low_cutoff, cutoff, resonance = core.get_filter()
+            try:
+                core.set_filter(tone.low_cutoff if tone.low_cutoff is not None else low_cutoff,
+                                tone.cutoff if tone.cutoff is not None else cutoff,
+                                tone.resonance if tone.resonance is not None else resonance)
+            except (ValueError, RuntimeError) as ex:
+                raise HTTPException(status_code=422, detail=str(ex)) from ex
         return {
             "frequency": core.get_frequency(),
             "volume": core.get_volume(),
@@ -384,6 +394,10 @@ if HAS_FASTAPI:
                             core.set_timbre(None if timbre is None else Timbre(**timbre))
                         if "enabled" in msg:
                             core.set_tone_enabled(bool(msg["enabled"]))
+                        if "low_cutoff" in msg or "cutoff" in msg or "resonance" in msg:
+                            low_cutoff, cutoff, resonance = core.get_filter()
+                            core.set_filter(float(msg.get("low_cutoff", low_cutoff)), float(msg.get("cutoff", cutoff)),
+                                            float(msg.get("resonance", resonance)))
                 except (ValueError, TypeError, AttributeError, RuntimeError) as ex:
                     # Includes invalid JSON, pydantic validation errors and values refused by the core
                     await websocket.send_json({"error": f"Invalid message: {ex}"})
@@ -455,6 +469,21 @@ if HAS_FASTAPI:
         headers["Content-Disposition"] = disposition
         return Response(content=body, status_code=status_code, media_type="audio/wav", headers=headers)
 
+    def check_analysis_options(window_ms: float, reference_hz: float, harmonic_cents: float):
+        """422 for a window, reference note or harmonic tolerance the core would refuse."""
+        if window_ms != 0 and not MIN_WINDOW_S * 1000 <= window_ms <= MAX_WINDOW_S * 1000:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Fenêtre de {MIN_WINDOW_S * 1000:g} à {MAX_WINDOW_S * 1000:g} ms, ou 0 pour l’habituelle",
+            )
+        if reference_hz != 0 and not MIN_REFERENCE_HZ <= reference_hz <= MAX_REFERENCE_HZ:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Note de référence de {MIN_REFERENCE_HZ:g} à {MAX_REFERENCE_HZ:g} Hz, ou 0 pour celle entendue",
+            )
+        if harmonic_cents > MAX_HARMONIC_CENTS:
+            raise HTTPException(status_code=422, detail=f"Tolérance des harmoniques de 0 à {MAX_HARMONIC_CENTS:g} cents")
+
     async def analyze_moment_or_zone(
         analyzer: Analyzer,
         time: Optional[float],
@@ -468,18 +497,7 @@ if HAS_FASTAPI:
         """A moment (time) through a window of window_ms (0: the usual one, about 170 ms),
         or a zone (start and end): the median of its moments, through windows of window_ms.
         Ratios to reference_hz (0: the note heard), only harmonics with harmonic_cents > 0."""
-        if window_ms != 0 and not MIN_WINDOW_S * 1000 <= window_ms <= MAX_WINDOW_S * 1000:
-            raise HTTPException(
-                status_code=422,
-                detail=f"Fenêtre de {MIN_WINDOW_S * 1000:g} à {MAX_WINDOW_S * 1000:g} ms, ou 0 pour l’habituelle",
-            )
-        if reference_hz != 0 and not MIN_REFERENCE_HZ <= reference_hz <= MAX_REFERENCE_HZ:
-            raise HTTPException(
-                status_code=422,
-                detail=f"Note de référence de {MIN_REFERENCE_HZ:g} à {MAX_REFERENCE_HZ:g} Hz, ou 0 pour celle entendue",
-            )
-        if harmonic_cents > MAX_HARMONIC_CENTS:
-            raise HTTPException(status_code=422, detail=f"Tolérance des harmoniques de 0 à {MAX_HARMONIC_CENTS:g} cents")
+        check_analysis_options(window_ms, reference_hz, harmonic_cents)
         window_s = window_ms / 1000
         options = (window_s, noise_gate_db, reference_hz, harmonic_cents)
         if start is not None or end is not None:
@@ -492,6 +510,24 @@ if HAS_FASTAPI:
             return await asyncio.to_thread(analyzer.analyze_clip, time, noise_gate_db)
         half = (window_s or ANALYSIS_USUAL_WINDOW_S) / 2
         return await asyncio.to_thread(analyzer.analyze_clip_range, time - half, time + half, *options)
+
+    async def measure_note_envelopes(
+        analyzer: Analyzer,
+        start: float,
+        end: float,
+        window_ms: float,
+        noise_gate_db: float,
+        reference_hz: float,
+        harmonic_cents: float,
+    ) -> EnvelopeAnalysis:
+        """The partials of a zone holding one note, and the envelope of each over it."""
+        check_analysis_options(window_ms, reference_hz, harmonic_cents)
+        if not end > start:
+            raise HTTPException(status_code=422, detail="La zone finit après son début")
+        analysis, envelopes = await asyncio.to_thread(
+            analyzer.measure_envelopes, start, end, window_ms / 1000, noise_gate_db, reference_hz, harmonic_cents,
+        )
+        return EnvelopeAnalysis(analysis=analysis, envelopes=envelopes)
 
     @app.get("/api/analyzer/clip/analysis", response_model=Analysis)
     async def analyze_clip(
@@ -536,6 +572,25 @@ if HAS_FASTAPI:
         if analyzers.clip_name is None:
             raise HTTPException(status_code=404, detail="Aucun fichier chargé")
         return await waveform_response(analyzers.clip(), first, frames, count)
+
+    @app.get("/api/analyzer/clip/envelopes", response_model=EnvelopeAnalysis)
+    async def clip_envelopes(
+        start: float = Query(ge=0.0, description="Start of the note's zone, in seconds"),
+        end: float = Query(gt=0.0, description="End of the zone: before the next note"),
+        window_ms: float = Query(default=0.0, ge=0.0, description="Analysis window that finds the partials: 10 to 500 ms; 0, the usual one"),
+        noise_gate_db: float = Query(default=NOISE_GATE_OFF, ge=NOISE_GATE_OFF, le=0.0, description="As for the analysis"),
+        reference_hz: float = Query(default=0.0, ge=0.0, description="As for the analysis"),
+        harmonic_cents: float = Query(default=0.0, ge=0.0, description="As for the analysis"),
+    ):
+        """The partials of a zone holding one note, and the exponential envelope of each over it
+        (synthway_analyzer_measure_envelopes): to make an instrument of them."""
+        if not core:
+            raise HTTPException(status_code=503, detail="Synthway core library not loaded")
+        if analyzers.clip_name is None:
+            raise HTTPException(status_code=404, detail="Aucun fichier chargé")
+        return await measure_note_envelopes(
+            analyzers.clip(), start, end, window_ms, noise_gate_db, reference_hz, harmonic_cents,
+        )
 
     async def finished_recording() -> Analyzer:
         if not core:
@@ -583,6 +638,19 @@ if HAS_FASTAPI:
         """The waveform of a part of the last recording, like /api/analyzer/clip/waveform."""
         recording = await finished_recording()
         return await waveform_response(recording, first, frames, count)
+
+    @app.get("/api/analyzer/recording/envelopes", response_model=EnvelopeAnalysis)
+    async def recording_envelopes(
+        start: float = Query(ge=0.0, description="Start of the note's zone, in seconds"),
+        end: float = Query(gt=0.0, description="End of the zone: before the next note"),
+        window_ms: float = Query(default=0.0, ge=0.0, description="As for the analysis"),
+        noise_gate_db: float = Query(default=NOISE_GATE_OFF, ge=NOISE_GATE_OFF, le=0.0, description="As for the analysis"),
+        reference_hz: float = Query(default=0.0, ge=0.0, description="As for the analysis"),
+        harmonic_cents: float = Query(default=0.0, ge=0.0, description="As for the analysis"),
+    ):
+        """The envelopes of a note of the last recording, like /api/analyzer/clip/envelopes."""
+        recording = await finished_recording()
+        return await measure_note_envelopes(recording, start, end, window_ms, noise_gate_db, reference_hz, harmonic_cents)
 
     @app.get("/api/analyzer/recording.wav")
     async def recording_wav(request: Request):

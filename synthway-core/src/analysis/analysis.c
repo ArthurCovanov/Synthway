@@ -230,21 +230,32 @@ static float sw_analysis_fold(float frequency, float reference) {
     return (float)(frequency * pow(2.0, whole));
 }
 
-/* Keeps the partials within harmonic_cents of a whole ratio (1, 2, 3…), with
-   amplitudes relative to the strongest kept; harmonic_cents 0 keeps them all */
+/* Keeps the partials within harmonic_cents of a whole ratio (1, 2, 3…), the
+   strongest one of each harmonic only, with amplitudes relative to the
+   strongest kept; harmonic_cents 0 keeps them all. A weak peak a few tens of
+   Hz from a high harmonic (a side of it, or another instrument) is no second
+   partial: playing both makes them beat. */
 static void sw_analysis_keep_harmonics(synthway_analysis_t* out, float harmonic_cents) {
     if (harmonic_cents <= 0.0f || out->frequency_hz <= 0.0f) {
         return;
     }
     uint32_t kept = 0;
-    float strongest = 0.0f;
     for (uint32_t i = 0; i < out->partial_count; ++i) {
         const float ratio = out->partials[i].ratio;
         const long n = lroundf(ratio);
-        if (n >= 1 && fabs(1200.0 * log2((double)ratio / n)) <= harmonic_cents) {
-            out->partials[kept++] = out->partials[i];
-            if (out->partials[kept - 1].amplitude > strongest) strongest = out->partials[kept - 1].amplitude;
+        if (n < 1 || fabs(1200.0 * log2((double)ratio / n)) > harmonic_cents) {
+            continue;
         }
+        /* Sorted by frequency: another partial of this harmonic is the last one kept */
+        if (kept > 0 && lroundf(out->partials[kept - 1].ratio) == n) {
+            if (out->partials[i].amplitude > out->partials[kept - 1].amplitude) out->partials[kept - 1] = out->partials[i];
+        } else {
+            out->partials[kept++] = out->partials[i];
+        }
+    }
+    float strongest = 0.0f;
+    for (uint32_t i = 0; i < kept; ++i) {
+        if (out->partials[i].amplitude > strongest) strongest = out->partials[i].amplitude;
     }
     for (uint32_t i = 0; i < kept && strongest > 0.0f; ++i) {
         out->partials[i].amplitude /= strongest;
@@ -402,4 +413,139 @@ void sw_analysis_combine(
     }
     out->partial_count = kept;
     sw_analysis_keep_harmonics(out, harmonic_cents);
+}
+
+/* --------------------------------------------------------------------------
+   The envelope of a partial over a note
+   -------------------------------------------------------------------------- */
+/* The attack starts where the level comes within this of the peak */
+#define ENVELOPE_ONSET_DB 20.0f
+/* This far below its peak, a partial has faded out */
+#define ENVELOPE_FLOOR_DB 60.0f
+/* A rise of this over the lowest level since the peak: the next note */
+#define ENVELOPE_NEW_NOTE_DB 6.0f
+/* Falling slower than this, a partial is held */
+#define ENVELOPE_HELD_DB_PER_S 3.0f
+/* Release of a note let go, which a note cut by the next one gives no hint of:
+   this at most, as a damper stops a string (a partial fading faster keeps its speed) */
+#define ENVELOPE_RELEASE_S 0.3f
+#define ENVELOPE_MAX_S 10.0f
+#define ENVELOPE_MIN_ATTACK_S 0.002f
+
+float sw_analysis_tone_amplitude(
+    const float* x,
+    const float* weights,
+    uint32_t n,
+    double weights_sum,
+    double frequency,
+    double sample_rate
+) {
+    const double coefficient = 2.0 * cos(6.283185307179586 * frequency / sample_rate);
+    double s1 = 0.0, s2 = 0.0;
+    for (uint32_t i = 0; i < n; ++i) {
+        const double s0 = x[i] * weights[i] + coefficient * s1 - s2;
+        s2 = s1;
+        s1 = s0;
+    }
+    const double power = s1 * s1 + s2 * s2 - coefficient * s1 * s2;
+    return power > 0.0 ? (float)(2.0 * sqrt(power) / weights_sum) : 0.0f;
+}
+
+/* Least-squares slope of levels[first..end), in dB per second */
+static double sw_slope(const float* levels, uint32_t first, uint32_t end, double step_s) {
+    const double n = end - first;
+    double sum_t = 0.0, sum_y = 0.0, sum_tt = 0.0, sum_ty = 0.0;
+    for (uint32_t i = first; i < end; ++i) {
+        const double t = (i - first) * step_s, y = levels[i];
+        sum_t += t;
+        sum_y += y;
+        sum_tt += t * t;
+        sum_ty += t * y;
+    }
+    const double spread = n * sum_tt - sum_t * sum_t;
+    return spread > 0.0 ? (n * sum_ty - sum_t * sum_y) / spread : 0.0;
+}
+
+static float sw_clamp_seconds(double seconds, float lowest) {
+    return (float)(seconds < lowest ? lowest : (seconds > ENVELOPE_MAX_S ? ENVELOPE_MAX_S : seconds));
+}
+
+void sw_analysis_fit_envelope(
+    const float* levels_db,
+    uint32_t count,
+    double step_s,
+    double window_s,
+    synthway_envelope_t* out,
+    float* out_peak_db
+) {
+    out->attack_s = ENVELOPE_MIN_ATTACK_S;
+    out->decay_s = 0.0f;
+    out->sustain_level = 1.0f;
+    out->release_s = ENVELOPE_RELEASE_S;
+    out->curve = SYNTHWAY_ENVELOPE_EXPONENTIAL;
+    *out_peak_db = SW_SPECTRUM_FLOOR_DB;
+    if (count == 0) {
+        return;
+    }
+
+    uint32_t peak = 0;
+    for (uint32_t i = 1; i < count; ++i) {
+        if (levels_db[i] > levels_db[peak]) peak = i;
+    }
+    const float top = levels_db[peak];
+    *out_peak_db = top;
+
+    /* The attack: from where the level comes within ENVELOPE_ONSET_DB of the
+       peak, less half the window, which smears an instant rise */
+    uint32_t onset = peak;
+    while (onset > 0 && levels_db[onset - 1] >= top - ENVELOPE_ONSET_DB) onset--;
+    out->attack_s = sw_clamp_seconds((peak - onset) * step_s - 0.5 * window_s, ENVELOPE_MIN_ATTACK_S);
+
+    /* After the peak: until the partial fades out or the next note rises */
+    uint32_t end = peak + 1;
+    float lowest = top;
+    while (end < count) {
+        const float level = levels_db[end];
+        if (level < top - ENVELOPE_FLOOR_DB || (end > peak + 2 && level > lowest + ENVELOPE_NEW_NOTE_DB)) break;
+        if (level < lowest) lowest = level;
+        end++;
+    }
+    const uint32_t length = end - peak;
+    if (length < 4) {
+        return; /* too short to tell: held */
+    }
+    const double slope = sw_slope(levels_db, peak, end, step_s);
+    if (slope > -ENVELOPE_HELD_DB_PER_S) {
+        return; /* held */
+    }
+
+    const uint32_t third = length / 3;
+    const double early = sw_slope(levels_db, peak, peak + length / 2, step_s);
+    const double late = third >= 3 ? sw_slope(levels_db, end - third, end, step_s) : slope;
+    if (third >= 3 && late > -ENVELOPE_HELD_DB_PER_S && early < -2.0 * ENVELOPE_HELD_DB_PER_S) {
+        /* It levels off: a decay to the level of its last third */
+        enum { TAIL_MAX = 256 }; /* a third of the longest track, 400 levels */
+        float tail[TAIL_MAX];
+        uint32_t taken = 0;
+        for (uint32_t i = end - third; i < end && taken < TAIL_MAX; ++i) tail[taken++] = levels_db[i];
+        const float held = sw_median(tail, taken);
+        const float sustain = powf(10.0f, (held - top) / 20.0f);
+        out->sustain_level = sustain;
+        /* The decay is the fall of the part above that level (as the engine
+           plays it), followed while it stands out: above 3 % of its start */
+        enum { EXCESS_MAX = 512 };
+        float excess[EXCESS_MAX];
+        uint32_t points = 0;
+        for (uint32_t i = peak; i < end && points < EXCESS_MAX && sustain < 0.99f; ++i) {
+            const float above = (powf(10.0f, (levels_db[i] - top) / 20.0f) - sustain) / (1.0f - sustain);
+            if (above <= 0.03f) break;
+            excess[points++] = (float)(20.0 * log10(above));
+        }
+        const double fall = points >= 3 ? sw_slope(excess, 0, points, step_s) : early;
+        out->decay_s = sw_clamp_seconds(fall < 0.0 ? 60.0 / -fall : ENVELOPE_MAX_S, 0.01f);
+    } else {
+        out->sustain_level = 0.0f;
+        out->decay_s = sw_clamp_seconds(60.0 / -slope, 0.01f);
+        out->release_s = out->decay_s < ENVELOPE_RELEASE_S ? out->decay_s : ENVELOPE_RELEASE_S;
+    }
 }

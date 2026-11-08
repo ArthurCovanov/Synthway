@@ -46,6 +46,9 @@ typedef struct sw_engine_params {
     _Atomic float env_decay;    /* seconds */
     _Atomic float env_sustain;  /* level in [0, 1] */
     _Atomic float env_release;  /* seconds */
+    _Atomic float filter_low_cutoff;
+    _Atomic float filter_high_cutoff;
+    _Atomic float filter_resonance;
     sw_timbre_exchange timbre;
 } sw_engine_params;
 

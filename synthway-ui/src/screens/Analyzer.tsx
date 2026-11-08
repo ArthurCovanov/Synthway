@@ -23,7 +23,7 @@ import { instrumentFromPartials, type Instrument } from '../lib/instruments';
 import { formatCents, frequencyToNote, harmonicGap, NOTE_NAMES } from '../lib/music';
 import { usePersistentState } from '../lib/storage';
 import { useSynthServer } from '../lib/SynthServer';
-import type { Analysis, AnalyzerMessage, ClipInfo, RecordingTimes } from '../types';
+import type { Analysis, AnalyzerMessage, ClipInfo, EnvelopeParams, RecordingTimes } from '../types';
 import styles from './Analyzer.module.css';
 
 /*
@@ -284,6 +284,9 @@ export function Analyzer({ onCreateInstrument }: { onCreateInstrument: (instrume
   const [harmonicsOnly, setHarmonicsOnly] = usePersistentState<boolean>('synthway.analyzer.harmonics-only.v1', () => true);
   const optionsRef = useRef<AnalysisOptions>({ noiseGateDb: noiseGate, windowMs, referenceHz, harmonicCents: 0 });
   optionsRef.current = { noiseGateDb: noiseGate, windowMs, referenceHz, harmonicCents: harmonicsOnly ? HARMONIC_CENTS : 0 };
+  /** « Créer un instrument » on a zone: its envelopes are being measured */
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   /* ---------- Microphone ---------- */
 
@@ -531,16 +534,52 @@ export function Analyzer({ onCreateInstrument }: { onCreateInstrument: (instrume
   const setReference = (midi: number) =>
     setReferenceMidi(Math.max(REFERENCE_MIDI_MIN, Math.min(REFERENCE_MIDI_MAX, Math.round(midi))));
 
-  /** A card of the Instrument Creator from the partials shown, which opens it */
-  const createInstrument = () => {
-    if (!analysis || !canCreate) return;
-    const note = frequencyToNote(analysis.frequency, a4);
+  /**
+   * A card of the Instrument Creator from the partials shown, which opens it.
+   * A zone also gives each partial its envelope, measured on the note
+   * (synthway_analyzer_measure_envelopes); a moment gives one envelope for all.
+   */
+  const createInstrument = async () => {
+    if (!analysis || !canCreate || creating) return;
+    const target = analyzedTarget;
+    const described = describeAnalyzed(target, windowMs);
     const origin = source === 'micro' ? (onRecording ? 'l’enregistrement du micro' : 'le micro, en direct') : clip?.name ?? 'un fichier';
+    const prefix = source === 'micro' ? (onRecording ? 'Enregistrement' : 'Micro') : clip?.name ?? 'Son';
+    const harmonics = harmonicsOnly && target ? ', harmoniques seulement' : '';
+    let found = analysis;
+    let partialsMade: { ratio: number; amplitude: number; envelope?: EnvelopeParams }[] = measured;
+    setCreateError(null);
+    if (target && 'start' in target) {
+      setCreating(true);
+      try {
+        const measure = source === 'micro' ? api.recordingEnvelopes : api.clipEnvelopes;
+        const result = await measure(target, optionsRef.current);
+        found = result.analysis;
+        partialsMade = result.analysis.partials
+          .map((partial, i) => ({ ratio: partial.ratio, amplitude: partial.amplitude, envelope: result.envelopes[i] }))
+          .filter((partial) => partial.ratio > 0 && partial.envelope);
+      } catch (error) {
+        setCreateError(`Mesure des enveloppes impossible : ${describe(error)}`);
+        return;
+      } finally {
+        setCreating(false);
+      }
+      if (found.frequency <= 0 || partialsMade.length === 0) {
+        setCreateError('La mesure des enveloppes n’a trouvé ni note ni partiel dans cette zone.');
+        return;
+      }
+    }
+    const note = frequencyToNote(found.frequency, a4);
+    const noteName = note ? `${note.name}${note.octave}` : '';
+    const count = partialsMade.length;
+    const envelopes = target && 'start' in target
+      ? 'une enveloppe mesurée par partiel (exponentielle)'
+      : 'une seule enveloppe (une zone d’une seule note donne celle de chaque partiel)';
     onCreateInstrument(
       instrumentFromPartials(
-        `${source === 'micro' ? (onRecording ? 'Enregistrement' : 'Micro') : clip?.name ?? 'Son'}${note ? ` · ${note.name}${note.octave}` : ''}`,
-        `Créé dans l’Analyzer depuis ${origin} : ${describeAnalyzed(analyzedTarget, windowMs)}, rapports à ${note ? `${note.name}${note.octave}` : 'la note'}${harmonicsOnly && analyzedTarget ? ', harmoniques seulement' : ''}. ${measured.length} partiel${measured.length > 1 ? 's' : ''} mesuré${measured.length > 1 ? 's' : ''}, sinusoïdes, une seule enveloppe pour l’instant.`,
-        measured,
+        `${prefix}${noteName ? ` · ${noteName}` : ''}`,
+        `Créé dans l’Analyzer depuis ${origin} : ${described}, rapports à ${noteName || 'la note'}${harmonics}. ${count} partiel${count > 1 ? 's' : ''} mesuré${count > 1 ? 's' : ''}, sinusoïdes, ${envelopes}.`,
+        partialsMade,
       ),
     );
   };
@@ -978,16 +1017,18 @@ export function Analyzer({ onCreateInstrument }: { onCreateInstrument: (instrume
               <Button
                 size="small"
                 variant="primary"
-                disabled={!canCreate}
-                onClick={createInstrument}
+                disabled={!canCreate || creating}
+                onClick={() => void createInstrument()}
                 title={
-                  canCreate
-                    ? 'Crée une carte de l’Instrument Creator avec ces partiels (rapports et amplitudes), et l’ouvre'
-                    : 'Il faut une note et ses partiels : place le curseur ou choisis une zone sur un son'
+                  !canCreate
+                    ? 'Il faut une note et ses partiels : place le curseur ou choisis une zone sur un son'
+                    : zoneMode
+                      ? 'Crée une carte de l’Instrument Creator avec ces partiels et l’enveloppe de chacun, mesurée sur la zone, et l’ouvre'
+                      : 'Crée une carte de l’Instrument Creator avec ces partiels (rapports et amplitudes), et l’ouvre'
                 }
               >
                 <Sparkles size={13} />
-                Créer un instrument
+                {creating ? 'Mesure des enveloppes…' : 'Créer un instrument'}
               </Button>
             }
           >
@@ -1012,6 +1053,14 @@ export function Analyzer({ onCreateInstrument }: { onCreateInstrument: (instrume
                 écartées, mais une zone sur une seule note, de son attaque à la suivante, donne le résultat le plus net.
               </p>
             )}
+            {canCreate && (
+              <p className={styles.note}>
+                {zoneMode
+                  ? 'Créer un instrument mesure aussi l’enveloppe de chaque partiel sur la zone : qu’elle aille de l’attaque de la note à la suivante.'
+                  : 'Avec une zone d’une seule note, de son attaque à la suivante, l’instrument créé reçoit aussi l’enveloppe de chaque partiel.'}
+              </p>
+            )}
+            {createError && <p className={styles.warning}>{createError}</p>}
             {partials.length === 0 ? (
               <p className={styles.note}>
                 {analysis ? 'Aucun pic ne se détache du bruit.' : 'Les partiels du son analysé s’affichent ici, du plus grave au plus aigu.'}
