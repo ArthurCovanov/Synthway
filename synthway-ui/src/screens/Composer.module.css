@@ -347,9 +347,19 @@
 }
 
 .noteInspectorTitle {
+  /* One width for every note and for none: the bar keeps its height, the roll below does not move */
+  flex: none;
+  width: 150px;
   display: flex;
   align-items: center;
   gap: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+/* No note selected: the bar stays in place, its controls disabled */
+.noteInspectorEmpty .noteInspectorTitle {
+  opacity: 0.6;
 }
 
 .noteInspectorDot {
@@ -457,6 +467,35 @@
   display: flex;
   background: var(--bg-2);
   border-bottom: 1px solid var(--line);
+  /* Like the Analyzer's waveform: a click places the playhead, a drag selects the loop */
+  cursor: text;
+  user-select: none;
+  touch-action: none;
+}
+
+.rulerSelecting {
+  cursor: ew-resize;
+}
+
+/* The zone played in a loop, on the ruler and across the notes */
+.loopRuler {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(255, 26, 168, 0.22); /* --neon-pink */
+  border-left: 1px solid var(--neon-pink-soft);
+  border-right: 1px solid var(--neon-pink-soft);
+  pointer-events: none;
+}
+
+.loopLane {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(255, 26, 168, 0.06); /* --neon-pink */
+  border-left: 1px solid rgba(255, 26, 168, 0.35);
+  border-right: 1px solid rgba(255, 26, 168, 0.35);
+  pointer-events: none;
 }
 
 .rulerBar {
@@ -548,11 +587,22 @@
   box-shadow:
     0 0 10px color-mix(in srgb, var(--hue) 70%, transparent),
     inset 0 0 0 1px rgba(255, 255, 255, 0.25);
-  cursor: pointer;
+  cursor: grab;
+  touch-action: none;
 }
 
 .note:hover {
   filter: brightness(1.2);
+}
+
+/* Held and dragged to another time or pitch */
+.noteMoving {
+  cursor: grabbing;
+}
+
+/* On a locked track a note can be selected, not moved */
+.noteLocked {
+  cursor: pointer;
 }
 
 .noteSelected {
@@ -570,7 +620,8 @@
   position: absolute;
   top: 0;
   bottom: 0;
-  width: 6px;
+  /* A short note keeps a middle to grab and move it */
+  width: min(6px, 25%);
   z-index: 2;
   cursor: ew-resize;
   opacity: 0;
@@ -585,6 +636,11 @@
 
 .resizeHandle:hover {
   background: rgba(255, 255, 255, 0.45);
+}
+
+/* A locked track's notes cannot be resized */
+.noteLocked .resizeHandle {
+  display: none;
 }
 
 .resizeHandleLeft {
@@ -628,6 +684,80 @@
   opacity: 0.32;
   box-shadow: none;
   filter: saturate(0.85);
+}
+
+/* A note with a pitch curve: a ribbon through the rows. Its box lets clicks
+   through to the grid; the line, its points and its edges take them. */
+.bentNote {
+  position: absolute;
+  pointer-events: none;
+}
+
+.bentNoteSelected {
+  z-index: 3;
+}
+
+.ribbon {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--hue) 70%, transparent));
+}
+
+.bentNoteSelected .ribbon {
+  filter: drop-shadow(0 0 8px #ffffff) brightness(1.3);
+}
+
+.ribbonLine {
+  fill: none;
+  stroke: color-mix(in srgb, var(--hue) 80%, #ffffff);
+  stroke-linejoin: round;
+  stroke-linecap: butt;
+  pointer-events: stroke;
+  cursor: grab;
+  touch-action: none;
+}
+
+.noteMoving .ribbonLine {
+  cursor: grabbing;
+}
+
+.noteLocked .ribbonLine {
+  cursor: pointer;
+}
+
+.ghost .ribbonLine {
+  pointer-events: none;
+}
+
+.ribbonOutline {
+  fill: none;
+  stroke: #ffffff;
+  stroke-linejoin: round;
+  stroke-linecap: butt;
+  pointer-events: none;
+}
+
+.bentNote .resizeHandle {
+  pointer-events: auto;
+}
+
+.bentNote:hover .resizeHandle,
+.bentNoteSelected .resizeHandle {
+  opacity: 1;
+}
+
+.bendPoint {
+  fill: #ffffff;
+  stroke: var(--hue);
+  stroke-width: 2;
+  cursor: move;
+  pointer-events: all;
+  touch-action: none;
+}
+
+.bendPoint:hover {
+  r: 6px;
 }
 
 /* ---------- Transport dock ---------- */

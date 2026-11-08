@@ -8,7 +8,15 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { DEFAULT_MAX_PARTIALS, type DeviceListResponse, type EngineStatus, type ToneParams, type Waveform } from '../types';
+import {
+  DEFAULT_MAX_PARTIALS,
+  type DeviceListResponse,
+  type EngineStatus,
+  type InstrumentParams,
+  type NoteGlide,
+  type ToneParams,
+  type Waveform,
+} from '../types';
 import { api, SERVER_PORT, SynthSocket } from './api';
 import { usePersistentState } from './storage';
 
@@ -53,9 +61,16 @@ interface SynthServerValue {
   refresh: () => void;
   startAudio: (initial?: ToneParams) => Promise<boolean>;
   stopAudio: () => Promise<void>;
+  /** The single note, on instrument 0 (set by setParams) */
   noteOn: (frequency: number, volume: number) => void;
   noteOff: () => void;
   setParams: (params: ToneParams) => void;
+  /** Polyphony: a note alongside the others, named by id, on an instrument slot (0 to MAX_INSTRUMENTS - 1),
+      with the glides it plays from its start */
+  startNote: (id: number, instrument: number, frequency: number, volume: number, glides?: NoteGlide[]) => void;
+  releaseNote: (id: number) => void;
+  releaseAllNotes: () => void;
+  setInstrument: (slot: number, params: InstrumentParams) => void;
 }
 
 const POLL_MS = 4000;
@@ -224,6 +239,22 @@ export function SynthServerProvider({ children }: { children: ReactNode }) {
     socketRef.current?.setParams(params);
   }, []);
 
+  const startNote = useCallback((id: number, instrument: number, frequency: number, volume: number, glides?: NoteGlide[]) => {
+    socketRef.current?.startNote(id, instrument, frequency, volume, glides);
+  }, []);
+
+  const releaseNote = useCallback((id: number) => {
+    socketRef.current?.releaseNote(id);
+  }, []);
+
+  const releaseAllNotes = useCallback(() => {
+    socketRef.current?.releaseAllNotes();
+  }, []);
+
+  const setInstrument = useCallback((slot: number, params: InstrumentParams) => {
+    socketRef.current?.setInstrument(slot, params);
+  }, []);
+
   const canPlay = connection === 'online' && coreLoaded && socketOpen && engine.running;
 
   const value = useMemo<SynthServerValue>(
@@ -245,6 +276,10 @@ export function SynthServerProvider({ children }: { children: ReactNode }) {
       noteOn,
       noteOff,
       setParams,
+      startNote,
+      releaseNote,
+      releaseAllNotes,
+      setInstrument,
     }),
     [
       connection,
@@ -264,6 +299,10 @@ export function SynthServerProvider({ children }: { children: ReactNode }) {
       noteOn,
       noteOff,
       setParams,
+      startNote,
+      releaseNote,
+      releaseAllNotes,
+      setInstrument,
     ],
   );
 

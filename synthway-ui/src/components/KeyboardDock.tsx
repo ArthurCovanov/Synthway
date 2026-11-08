@@ -81,7 +81,7 @@ export function KeyboardDock({
   markedTitle?: string;
 }) {
   const server = useSynthServer();
-  const { canPlay, noteOn, noteOff, engine, busy } = server;
+  const { canPlay, startNote, releaseNote, engine, busy } = server;
   const blocker = playBlocker(server);
   const keyLabel = useKeyLabel();
 
@@ -113,26 +113,24 @@ export function KeyboardDock({
     setHeld(next);
   }, []);
 
+  // Each key is a note of its own, named by its MIDI number, on instrument 0 (the one useInstrumentSound sets):
+  // a chord sounds whole, and a key pressed while others are held gets its own attack
   const press = useCallback(
     (midi: number) => {
       if (!canPlay || heldRef.current.includes(midi)) return;
       setHeldNotes([...heldRef.current, midi]);
-      noteOn(midiToFrequency(midi), volumeRef.current);
+      startNote(midi, 0, midiToFrequency(midi), volumeRef.current);
     },
-    [canPlay, noteOn, setHeldNotes],
+    [canPlay, startNote, setHeldNotes],
   );
 
   const release = useCallback(
     (midi: number) => {
       if (!heldRef.current.includes(midi)) return;
-      const next = heldRef.current.filter((note) => note !== midi);
-      setHeldNotes(next);
-      // Monophonic engine: fall back to the last key still held
-      const last = next[next.length - 1];
-      if (last === undefined) noteOff();
-      else noteOn(midiToFrequency(last), volumeRef.current);
+      setHeldNotes(heldRef.current.filter((note) => note !== midi));
+      releaseNote(midi);
     },
-    [noteOn, noteOff, setHeldNotes],
+    [releaseNote, setHeldNotes],
   );
 
   // Losing the audio releases every key
@@ -143,12 +141,12 @@ export function KeyboardDock({
     }
   }, [canPlay, setHeldNotes]);
 
-  // The dock closing (another screen, a trial instrument dropped) releases a note still held
-  const noteOffRef = useRef(noteOff);
-  noteOffRef.current = noteOff;
+  // The dock closing (another screen, a trial instrument dropped) releases the notes still held
+  const releaseNoteRef = useRef(releaseNote);
+  releaseNoteRef.current = releaseNote;
   useEffect(
     () => () => {
-      if (heldRef.current.length > 0) noteOffRef.current();
+      for (const midi of heldRef.current) releaseNoteRef.current(midi);
     },
     [],
   );

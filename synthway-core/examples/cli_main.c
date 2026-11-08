@@ -38,6 +38,9 @@ static void print_usage(const char* prog) {
     printf("  %s --render <file.wav> [freq] [sec] [wave 0-3] [--partials <ratio:amp[:wave]>,...]\n", prog);
     printf("      Render a tone to a WAV file, offline: no audio device, no sound.\n");
     printf("      --partials plays a timbre instead, e.g. 1:0.5,2:0.25,2.76:0.2:3\n");
+    printf("  %s --glide <file.wav> <start_freq> <freq:sec>,... [--partials ...]\n", prog);
+    printf("      Render a note that glides from <start_freq> to each freq in sec seconds, in turn,\n");
+    printf("      then holds 0.5 s, offline. e.g. --glide out.wav 220 440:1,440:0.5,330:0.25\n");
     printf("  %s --analyze <file> [sec] : Note and partials of a WAV, FLAC or MP3 file at [sec]\n", prog);
     printf("      seconds (default: the clearest moment). Nothing is played.\n");
     printf("  %s --listen [sec] [input] : Note heard by the microphone, live, for [sec] seconds\n", prog);
@@ -323,6 +326,88 @@ static int render_to_file(int argc, char* argv[]) {
     return 0;
 }
 
+/* Offline rendering of a note that glides (synthway_engine_note_glide): it
+   starts at start_freq, follows each freq:sec in turn, then holds 0.5 s */
+static int render_glide_to_file(int argc, char* argv[]) {
+    const char* usage = "[!] Usage: %s --glide <file.wav> <start_freq> <freq:sec>,... [--partials <ratio:amp[:wave]>,...]\n";
+    const char* partials = NULL;
+    for (int i = 3; i < argc; ++i) {
+        if (strcmp(argv[i], "--partials") == 0) {
+            partials = i + 1 < argc ? argv[i + 1] : "";
+            argc = i;
+            break;
+        }
+    }
+    if (argc != 5) {
+        fprintf(stderr, usage, argv[0]);
+        return 1;
+    }
+    const char* path = argv[2];
+    const float start = (float)atof(argv[3]);
+    synthway_timbre_t timbre;
+    if (partials && parse_partials(partials, &timbre) != 0) {
+        fprintf(stderr, "[!] Error: invalid --partials, expected ratio:amplitude[:waveform],... (at most %u)\n",
+                synthway_get_max_partials());
+        return 1;
+    }
+
+    synthway_engine_t* engine = synthway_engine_create();
+    if (!engine) {
+        fprintf(stderr, "[!] Error: Failed to allocate synthesizer engine.\n");
+        return 1;
+    }
+    synthway_engine_config_t config;
+    memset(&config, 0, sizeof(config));
+    config.sample_rate = 48000;
+    config.channels = 2;
+    synthway_engine_init_offline(engine, &config);
+    synthway_engine_set_tone_enabled(engine, false); /* only the gliding note */
+    if (partials && synthway_engine_set_timbre(engine, &timbre) != SYNTHWAY_OK) {
+        fprintf(stderr, "[!] Error: partial out of range (ratio in (0, 1000], amplitude in [0, 1], waveform 0-3)\n");
+        synthway_engine_destroy(engine);
+        return 1;
+    }
+    if (synthway_engine_note_on(engine, 1, 0, start, 0.20f) != SYNTHWAY_OK) {
+        fprintf(stderr, "[!] Error: invalid start frequency.\n");
+        synthway_engine_destroy(engine);
+        return 1;
+    }
+
+    /* The glides, as freq:sec,freq:sec,... */
+    float seconds = 0.5f;
+    unsigned count = 0;
+    const char* cursor = argv[4];
+    while (*cursor) {
+        char* end = NULL;
+        const float freq = strtof(cursor, &end);
+        float glide = -1.0f;
+        if (end != cursor && *end == ':') {
+            cursor = end + 1;
+            glide = strtof(cursor, &end);
+        }
+        if (end == cursor || (*end != ',' && *end != '\0') || count == SYNTHWAY_MAX_GLIDES
+            || synthway_engine_note_glide(engine, 1, freq, glide) != SYNTHWAY_OK) {
+            fprintf(stderr, "[!] Error: invalid glide near \"%s\": freq:sec, frequency in (0, 24000], 0 to %.0f s, %u at most\n",
+                    cursor, SYNTHWAY_MAX_GLIDE_SECONDS, SYNTHWAY_MAX_GLIDES);
+            synthway_engine_destroy(engine);
+            return 1;
+        }
+        seconds += glide;
+        ++count;
+        cursor = *end == ',' ? end + 1 : end;
+    }
+
+    const uint32_t frames = (uint32_t)(seconds * (float)synthway_engine_get_sample_rate(engine));
+    synthway_result_t res = synthway_engine_render_to_wav(engine, path, frames);
+    synthway_engine_destroy(engine);
+    if (res != SYNTHWAY_OK) {
+        fprintf(stderr, "[!] Error: Rendering failed: %s (%d)\n", synthway_result_to_string(res), res);
+        return 1;
+    }
+    printf("[+] Rendered %.2f Hz and %u glide(s), %.2f s to %s (offline, nothing was played)\n", start, count, seconds, path);
+    return 0;
+}
+
 static void print_midi_ports(void) {
     static const struct {
         synthway_midi_port_type_t type;
@@ -376,6 +461,9 @@ int main(int argc, char* argv[]) {
     /* Mode: offline rendering to a WAV file */
     if (argc > 1 && strcmp(argv[1], "--render") == 0) {
         return render_to_file(argc, argv);
+    }
+    if (argc > 1 && strcmp(argv[1], "--glide") == 0) {
+        return render_glide_to_file(argc, argv);
     }
 
     /* Mode: analysis of an audio file, nothing played */

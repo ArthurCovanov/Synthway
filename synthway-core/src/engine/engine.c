@@ -12,9 +12,13 @@
    parameter changes fast enough to be perceptually instant.  The per-sample
    smoothing in the synth hides any inter-field timing mismatch. */
 void sw_engine_render(synthway_engine_t* engine, float* out, uint32_t frame_count) {
+    /* Notes first: their acquire makes everything set before them visible to
+       the snapshot, such as the instrument a note_on plays */
+    sw_engine_params_take_notes(&engine->params, &engine->synth);
     sw_synth_params params;
     sw_engine_params_snapshot(&engine->params, &params);
     sw_synth_render(&engine->synth, &params, engine->sample_rate, engine->channels, out, frame_count);
+    atomic_store_explicit(&engine->params.sounding_notes, sw_synth_sounding_notes(&engine->synth), memory_order_relaxed);
 }
 
 /* Render function given to the sound card, called by its real-time audio thread */

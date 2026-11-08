@@ -16,31 +16,44 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { useEffect, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent } from 'react';
 import layout from '../components/layout.module.css';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { Badge, Button, Panel, Segmented, cx, inputClass, selectClass } from '../components/ui';
 import {
+  bendAt,
+  bendLine,
   createTrack,
   DEFAULT_BASE_PITCH,
   defaultComposition,
+  MAX_BEND_POINTS,
   STEPS_PER_BEAT,
+  type BendPoint,
   type Composition,
   type Note,
   type Track,
 } from '../lib/composition';
-import { unisonOf, type Instrument } from '../lib/instruments';
+import { type Instrument } from '../lib/instruments';
+import { instrumentParams, instrumentSound } from '../lib/instrumentSound';
 import { isTyping, useSpaceBar } from '../lib/keyboard';
 import { isBlackKey, midiToFrequency, midiToName } from '../lib/music';
-import { toTimbre } from '../lib/partials';
 import { HUE_VAR, HUES } from '../lib/neon';
 import { newId, usePersistentState } from '../lib/storage';
 import { useSynthServer } from '../lib/SynthServer';
+import { MAX_INSTRUMENTS } from '../types';
 import styles from './Composer.module.css';
 
 const CELL = 22; // px per step (sixteenth note)
 const ROW = 16; // px per semitone
 const AUDITION_MS = 180;
+/** Engine note ids: the keyboard dock uses MIDI numbers (0 to 127), the audition one id, playback the ids from here up */
+const AUDITION_NOTE_ID = 0x8000;
+const FIRST_PLAYBACK_NOTE_ID = 0x10000;
+
+/** Instrument slot of the track at index: slot 0 stays the keyboard's and the Instrument Creator's */
+function slotOf(trackIndex: number): number {
+  return 1 + (trackIndex % (MAX_INSTRUMENTS - 1));
+}
 const INITIAL_PITCH_ROWS = 240;
 const PITCH_WINDOW_CENTER = Math.floor(INITIAL_PITCH_ROWS / 2);
 const PITCH_EXTEND_ROWS = 48;
@@ -79,7 +92,19 @@ function audibleTracks(tracks: Track[]): Track[] {
 }
 
 export function Composer({ instruments }: { instruments: Instrument[] }) {
-  const { canPlay, noteOn, noteOff, setParams, engine, startAudio, busy, connection, coreLoaded, socketOpen } = useSynthServer();
+  const {
+    canPlay,
+    startNote,
+    releaseNote,
+    releaseAllNotes,
+    setInstrument,
+    engine,
+    startAudio,
+    busy,
+    connection,
+    coreLoaded,
+    socketOpen,
+  } = useSynthServer();
   const [composition, setComposition] = usePersistentState<Composition>('synthway.composition.v1', defaultComposition);
   const [selectedTrackId, setSelectedTrackId] = useState(() => composition.tracks[0]?.id ?? '');
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
@@ -97,10 +122,22 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
   const [noteLength, setNoteLength] = useState(2);
   const [draftNote, setDraftNote] = useState<Note | null>(null);
   const [playing, setPlaying] = useState(false);
+  /** `playing`, but changed at once by play, pause and the end of the score, without waiting for a render:
+      an effect of a render from before a pause, run after it, must not start notes */
+  const playingRef = useRef(false);
   const [playStep, setPlayStep] = useState(0);
+  /** The zone played in a loop, in steps (end excluded), chosen by dragging on the ruler */
+  const [loop, setLoop] = useState<{ start: number; end: number } | null>(null);
+  /** The ruler's press: a click places the playhead, a drag selects the loop */
+  const rulerPressRef = useRef<{ pointerId: number; x: number; step: number; selecting: boolean } | null>(null);
+  const [rulerSelecting, setRulerSelecting] = useState(false);
   const playClock = useRef<{ startedAt: number; startStep: number } | null>(null);
   const lastAudioStep = useRef(-1);
-  const lastAudioSignature = useRef<string | null>(null);
+  /** Score notes sounding in the engine (key: track, note, pitch and start), with their engine note ids */
+  const soundingNotes = useRef(new Map<string, number>());
+  const nextNoteId = useRef(FIRST_PLAYBACK_NOTE_ID);
+  /** The sound last sent to each instrument slot, so that only changes are sent */
+  const sentInstruments = useRef(new Map<number, string>());
   const auditionTimer = useRef<number | undefined>(undefined);
   const panRef = useRef<{ pointerId: number; x: number; y: number; left: number; top: number } | null>(null);
   const trackDragRef = useRef<{ id: string; pointerId: number; x: number; y: number; moved: boolean } | null>(null);
@@ -127,11 +164,33 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
     maxEnd: number;
     startX: number;
     moved: boolean;
+    /** The curve at the press: moving the start keeps its points where they are in time */
+    originalBend: BendPoint[] | undefined;
   } | null>(null);
+  /** A note held and dragged to another time or pitch */
+  const noteMoveRef = useRef<{
+    pointerId: number;
+    noteId: string;
+    trackId: string;
+    /** Where the note was grabbed: steps and semitones from its start */
+    grabStep: number;
+    grabPitch: number;
+    x: number;
+    y: number;
+    /** Where the roll was on the page at the press: if the layout above it changes, the roll moves */
+    rollLeft: number;
+    rollTop: number;
+    lastPitch: number;
+    moved: boolean;
+  } | null>(null);
+  const [movingNoteId, setMovingNoteId] = useState<string | null>(null);
+  /** A point of a note's pitch curve, dragged */
+  const bendDragRef = useRef<{ pointerId: number; noteId: string; index: number; x: number; y: number; moved: boolean; heard: number } | null>(null);
 
   const { tracks, bpm, beatsPerBar, bars } = composition;
   const track = tracks.find((item) => item.id === selectedTrackId) ?? tracks[0];
   const selectedNote = track?.notes.find((item) => item.id === selectedNoteId) ?? null;
+  const noteEditable = selectedNote !== null && !lockedTracks[track.id];
   const stepsPerBar = beatsPerBar * STEPS_PER_BEAT;
   const totalSteps = bars * stepsPerBar;
   const pitches = Array.from(
@@ -141,12 +200,67 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
   const selectedBasePitch = track?.basePitch ?? DEFAULT_BASE_PITCH;
   const cell = CELL * horizontalZoom;
   const row = ROW;
+  // The loop, cut to the score (fewer bars can leave part of it, or all of it, beyond the end)
+  const activeLoop = loop && loop.start < totalSteps ? { start: loop.start, end: Math.min(loop.end, totalSteps) } : null;
+  // Read by the playback clock, which is not restarted when the loop changes
+  const loopRef = useRef(activeLoop);
+  loopRef.current = activeLoop;
+  /** A step as bar.beat.step, counted from 1 */
+  const stepLabel = (step: number) =>
+    `M${Math.floor(step / stepsPerBar) + 1}.${Math.floor((step % stepsPerBar) / STEPS_PER_BEAT) + 1}.${(step % STEPS_PER_BEAT) + 1}`;
 
   const instrumentOf = (item: Track) => instruments.find((instrument) => instrument.id === item.instrumentId);
   const hueOf = (item: Track) => instrumentOf(item)?.hue ?? item.hue;
 
+  /** Lowest and highest pitch a note goes through */
+  const pitchSpan = (note: Note): [number, number] => {
+    if (!note.bend?.length) return [note.pitch, note.pitch];
+    const reached = bendLine(note).map((point) => note.pitch + point.semitones);
+    return [Math.min(...reached), Math.max(...reached)];
+  };
+  /** A note drawn in the rows shown */
+  const inView = (note: Note) => {
+    const [lowest, highest] = pitchSpan(note);
+    return note.start < totalSteps && highest >= lowestVisiblePitch && lowest <= highestVisiblePitch;
+  };
+  /** A note with a curve, drawn as a ribbon: its box in the lane, and its line in the box, through the middle of the rows */
+  const ribbonOf = (note: Note) => {
+    const [lowest, highest] = pitchSpan(note);
+    const width = note.length * cell - 2;
+    const yOf = (semitones: number) => (highest - note.pitch - semitones) * row + row / 2 - 0.5;
+    const points = bendLine(note).map((point) => ({ x: Math.min(width, point.at * cell), y: yOf(point.semitones) }));
+    return {
+      box: { left: note.start * cell + 1, top: (highestVisiblePitch - highest) * row, width, height: (highest - lowest + 1) * row },
+      d: points.map((point, i) => `${i ? 'L' : 'M'}${point.x.toFixed(1)} ${point.y.toFixed(1)}`).join(' '),
+      points,
+      yOf,
+    };
+  };
+  /** Semitones of a point of a curve, as shown in its tooltip */
+  const formatSemitones = (semitones: number) =>
+    `${semitones > 0 ? '+' : semitones < 0 ? '−' : ''}${Math.abs(semitones).toLocaleString('fr-FR', { maximumFractionDigits: 2 })} demi-ton${Math.abs(semitones) >= 2 ? 's' : ''}`;
+
+  /** Releases the score notes sounding: playback paused, ended or moved, or the loop starting again */
+  const releasePlaying = useCallback(() => {
+    for (const id of soundingNotes.current.values()) releaseNote(id);
+    soundingNotes.current.clear();
+    lastAudioStep.current = -1;
+  }, [releaseNote]);
+
+  /** Sends an instrument's sound to its slot, when it changed since it was last sent there */
+  const syncInstrument = (slot: number, instrument: Instrument) => {
+    const sound = instrumentSound(instrument, engine.maxPartials);
+    const key = JSON.stringify(sound);
+    if (sentInstruments.current.get(slot) === key) return;
+    sentInstruments.current.set(slot, key);
+    setInstrument(slot, sound);
+  };
+
+  // Another engine or another connection: the slots are sent again
+  useEffect(() => sentInstruments.current.clear(), [engine.running, socketOpen]);
+
   useEffect(() => () => window.clearTimeout(auditionTimer.current), []);
-  useEffect(() => () => noteOff(), [noteOff]);
+  useEffect(() => () => releaseAllNotes(), [releaseAllNotes]);
 
   useEffect(() => {
     setBaseNoteDraft(midiToName(selectedBasePitch));
@@ -166,49 +280,83 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
       const clock = playClock.current;
       if (!clock) return;
       const stepSeconds = 60 / bpm / STEPS_PER_BEAT;
-      const nextStep = Math.min(totalSteps, clock.startStep + (performance.now() - clock.startedAt) / 1000 / stepSeconds);
+      let nextStep = clock.startStep + (performance.now() - clock.startedAt) / 1000 / stepSeconds;
+      const zone = loopRef.current;
+      if (zone && clock.startStep < zone.end && nextStep >= zone.end) {
+        // Back to the start of the loop, keeping the time run past its end so the tempo holds
+        nextStep = zone.start + ((nextStep - zone.start) % (zone.end - zone.start));
+        playClock.current = { startedAt: performance.now(), startStep: nextStep };
+        // The notes at the start of the loop are struck again, even those still sounding at its end
+        releasePlaying();
+      }
+      nextStep = Math.min(totalSteps, nextStep);
       setPlayStep(nextStep);
       if (nextStep >= totalSteps) {
+        playingRef.current = false;
         setPlaying(false);
-        noteOff();
+        releasePlaying();
       }
     }, 16);
     return () => window.clearInterval(timer);
-  }, [playing, bpm, totalSteps, noteOff]);
+  }, [playing, bpm, totalSteps, releasePlaying]);
 
+  // Once playback stops, nothing of the score sounds, whatever ran between the pause and this render
   useEffect(() => {
-    if (!playing) return;
+    if (!playing) return undefined;
+    return () => releasePlaying();
+  }, [playing, releasePlaying]);
+
+  // Each score note is a note of the engine, with its own attack: it starts at its first step
+  // and is released after its last one, whatever the other notes do
+  useEffect(() => {
+    // The ref too: React can run this effect of a render made while playing after a pause that
+    // has already released everything; it would start the notes again, and nothing would release them
+    if (!playing || !playingRef.current) return;
     const step = Math.floor(playStep);
     if (step === lastAudioStep.current) return;
     lastAudioStep.current = step;
-    const active = audibleTracks(tracks).flatMap((item) => {
+    const wanted = new Map<string, { note: Note; slot: number; volume: number }>();
+    tracks.forEach((item, index) => {
       const instrument = instrumentOf(item);
-      if (!instrument) return [];
-      return item.notes.filter((note) => note.start <= step && step < note.start + note.length).map((note) => ({ note, item, instrument }));
+      if (item.muted || !instrument) return;
+      const slot = slotOf(index);
+      syncInstrument(slot, instrument);
+      for (const note of item.notes) {
+        if (note.start <= step && step < note.start + note.length) {
+          // Moved to another pitch or start while playing: another note
+          wanted.set(`${item.id}:${note.id}:${note.pitch}:${note.start}`, { note, slot, volume: instrument.volume });
+        }
+      }
     });
-    if (!active.length) {
-      if (lastAudioSignature.current !== null) noteOff();
-      lastAudioSignature.current = null;
-      return;
+    const sounding = soundingNotes.current;
+    // Ended, moved, or on a track muted since: released
+    for (const [key, id] of sounding) {
+      if (!wanted.has(key)) {
+        releaseNote(id);
+        sounding.delete(key);
+      }
     }
-    const baseFrequency = midiToFrequency(Math.max(...active.map(({ note }) => note.pitch)));
-    const partials = active.flatMap(({ note, instrument }) =>
-      instrument.partials.filter((partial) => !partial.muted).map((partial) => ({
-        ratio: (midiToFrequency(note.pitch) / baseFrequency) * partial.ratio,
-        amplitude: (partial.amplitude * instrument.volume) / active.length,
-        waveform: partial.waveform,
-        envelope: { ...partial.envelope },
-      })),
-    ).slice(0, engine.maxPartials);
-    const filter = active[0].instrument.filter;
-    const reverb = active[0].instrument.reverb ?? 0;
-    const unison = unisonOf(active[0].instrument);
-    const signature = JSON.stringify([baseFrequency, partials, filter, reverb, unison]);
-    if (signature === lastAudioSignature.current) return;
-    lastAudioSignature.current = signature;
-    setParams({ timbre: { partials }, low_cutoff: filter.lowCutoff, cutoff: filter.cutoff, resonance: filter.resonance, reverb, unison });
-    noteOn(baseFrequency, 1);
-  }, [playing, playStep, tracks, instruments, engine.maxPartials, noteOff, noteOn, setParams]);
+    const stepSeconds = 60 / bpm / STEPS_PER_BEAT;
+    for (const [key, { note, slot, volume }] of wanted) {
+      if (sounding.has(key)) continue;
+      const id = nextNoteId.current++;
+      sounding.set(key, id);
+      // The rest of its curve leaves with it, and the engine follows it to the sample: from the
+      // note's start, like the note itself, or from the playhead when it starts in the middle (a seek, a loop)
+      const from = step === note.start ? 0 : Math.max(0, playStep - note.start);
+      let at = from;
+      const glides = note.bend?.length
+        ? bendLine(note)
+            .filter((point) => point.at > from)
+            .map((point) => {
+              const glide = { frequency: midiToFrequency(note.pitch + point.semitones), seconds: (point.at - at) * stepSeconds };
+              at = point.at;
+              return glide;
+            })
+        : [];
+      startNote(id, slot, midiToFrequency(note.pitch + bendAt(note, from)), volume, glides);
+    }
+  }, [playing, playStep, tracks, instruments, engine.maxPartials, bpm, releaseNote, startNote, setInstrument]);
 
   useEffect(() => {
     if (!playing || !rollScrollRef.current) return;
@@ -305,14 +453,16 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
     if (id === track.id) selectTrack(next[0]);
   };
 
-  /** Short preview of a note, only when the audio is already on */
+  /** Short preview of a note on its track's instrument, alongside playback, only when the audio is already on */
   const audition = (pitch: number) => {
     if (!canPlay) return;
     const instrument = instrumentOf(track);
-    if (instrument) setParams({ timbre: toTimbre(instrument.partials, engine.maxPartials), low_cutoff: instrument.filter.lowCutoff, cutoff: instrument.filter.cutoff, resonance: instrument.filter.resonance, reverb: instrument.reverb ?? 0, unison: unisonOf(instrument) });
-    noteOn(midiToFrequency(pitch), instrument?.volume ?? 0.3);
+    const slot = slotOf(tracks.indexOf(track));
+    if (instrument) syncInstrument(slot, instrument);
+    // Always the same id: a new preview strikes the previous one again instead of piling up
+    startNote(AUDITION_NOTE_ID, slot, midiToFrequency(pitch), instrument?.volume ?? 0.3);
     window.clearTimeout(auditionTimer.current);
-    auditionTimer.current = window.setTimeout(noteOff, AUDITION_MS);
+    auditionTimer.current = window.setTimeout(() => releaseNote(AUDITION_NOTE_ID), AUDITION_MS);
   };
 
   const deleteSelectedNote = () => {
@@ -378,9 +528,13 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
           deleteSelectedNote();
         }
       } else if (event.key === 'Escape') {
+        // First the selected note, then the loop
         if (selectedNoteId) {
           event.preventDefault();
           setSelectedNoteId(null);
+        } else if (loop) {
+          event.preventDefault();
+          setLoop(null);
         }
       } else if (selectedNote && track && !lockedTracks[track.id]) {
         if (event.key === 'ArrowUp') {
@@ -400,7 +554,7 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [selectedNoteId, selectedNote, track, lockedTracks, deleteSelectedNote, updateSelectedNote]);
+  }, [selectedNoteId, selectedNote, track, lockedTracks, deleteSelectedNote, updateSelectedNote, loop]);
 
   const onLanePointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 || !track || lockedTracks[track.id]) return;
@@ -462,11 +616,160 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
     audition(draw.pitch);
   };
 
-  const onNotePointerDown = (event: PointerEvent<HTMLDivElement>, note: Note) => {
+  /** Step and pitch under the pointer; `shiftX` / `shiftY`, how far the whole roll moved on the page, are cancelled */
+  const laneCellAt = (lane: HTMLDivElement, clientX: number, clientY: number, shiftX = 0, shiftY = 0) => {
+    const rect = lane.getBoundingClientRect();
+    return {
+      step: Math.floor((clientX + shiftX - rect.left) / cell),
+      pitch: highestVisiblePitch - Math.floor((clientY + shiftY - rect.top) / row),
+    };
+  };
+
+  const onNotePointerDown = (event: PointerEvent<Element>, note: Note) => {
     if (event.button !== 0) return;
     event.stopPropagation();
     setSelectedNoteId(note.id);
     audition(note.pitch);
+    if (!track || lockedTracks[track.id] || !laneRef.current || !rollScrollRef.current) return;
+    // Held and dragged, the note follows the pointer
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const grabbed = laneCellAt(laneRef.current, event.clientX, event.clientY);
+    const roll = rollScrollRef.current.getBoundingClientRect();
+    noteMoveRef.current = {
+      pointerId: event.pointerId,
+      noteId: note.id,
+      trackId: track.id,
+      grabStep: grabbed.step - note.start,
+      grabPitch: grabbed.pitch - note.pitch,
+      x: event.clientX,
+      y: event.clientY,
+      rollLeft: roll.left,
+      rollTop: roll.top,
+      lastPitch: note.pitch,
+      moved: false,
+    };
+  };
+
+  const onNotePointerMove = (event: PointerEvent<Element>) => {
+    const move = noteMoveRef.current;
+    if (!move || move.pointerId !== event.pointerId || !laneRef.current || !rollScrollRef.current) return;
+    if (!move.moved && Math.hypot(event.clientX - move.x, event.clientY - move.y) < 4) return;
+    if (!move.moved) {
+      move.moved = true;
+      setMovingNoteId(move.noteId);
+    }
+    const note = track?.id === move.trackId ? track.notes.find((item) => item.id === move.noteId) : undefined;
+    if (!note) return;
+    // A move of the whole roll on the page is not a move of the pointer
+    const roll = rollScrollRef.current.getBoundingClientRect();
+    const target = laneCellAt(laneRef.current, event.clientX, event.clientY, roll.left - move.rollLeft, roll.top - move.rollTop);
+    const start = Math.max(0, Math.min(totalSteps - note.length, target.step - move.grabStep));
+    const pitch = Math.max(0, lowestVisiblePitch, Math.min(127, highestVisiblePitch, target.pitch - move.grabPitch));
+    if (start === note.start && pitch === note.pitch) return;
+    // Never over another note of the same pitch: the note waits at its last free place
+    const overlaps = track.notes.some(
+      (other) => other.id !== note.id && other.pitch === pitch && other.start < start + note.length && start < other.start + other.length,
+    );
+    if (overlaps) return;
+    updateTrack(track.id, { notes: track.notes.map((item) => (item.id === note.id ? { ...item, start, pitch } : item)) });
+    if (pitch !== move.lastPitch) {
+      move.lastPitch = pitch;
+      audition(pitch);
+    }
+  };
+
+  const endNoteMove = (event: PointerEvent<Element>) => {
+    const move = noteMoveRef.current;
+    if (!move || move.pointerId !== event.pointerId) return;
+    noteMoveRef.current = null;
+    setMovingNoteId(null);
+  };
+
+  /** Replaces the curve of a note of the selected track */
+  const setBend = (noteId: string, bend: BendPoint[]) => {
+    updateTrack(track.id, { notes: track.notes.map((item) => (item.id === noteId ? { ...item, bend } : item)) });
+  };
+
+  /** Steps and pitch (fractions included, the middle of a row being its whole pitch) under the pointer */
+  const lanePositionAt = (clientX: number, clientY: number) => {
+    const rect = laneRef.current!.getBoundingClientRect();
+    return { step: (clientX - rect.left) / cell, pitch: highestVisiblePitch + 0.5 - (clientY - rect.top) / row };
+  };
+
+  // A double click on a note adds a point to its curve there, on the line, ready to be dragged
+  const onNoteDoubleClick = (event: MouseEvent<Element>, note: Note) => {
+    if (!track || lockedTracks[track.id] || !laneRef.current) return;
+    const points = note.bend ?? [];
+    if (points.length >= MAX_BEND_POINTS) return;
+    const raw = lanePositionAt(event.clientX, event.clientY).step - note.start;
+    const at = event.shiftKey ? Math.round(raw * 100) / 100 : Math.round(raw * 4) / 4;
+    if (at <= 0 || at > note.length || points.some((point) => Math.abs(point.at - at) < 0.01)) return;
+    const semitones = Math.round(bendAt(note, at) * 100) / 100;
+    setBend(note.id, [...points, { at, semitones }].sort((a, b) => a.at - b.at));
+    setSelectedNoteId(note.id);
+  };
+
+  const onBendPointerDown = (event: PointerEvent<Element>, note: Note, index: number) => {
+    if (event.button !== 0 || !track || lockedTracks[track.id]) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const point = note.bend![index];
+    bendDragRef.current = {
+      pointerId: event.pointerId,
+      noteId: note.id,
+      index,
+      x: event.clientX,
+      y: event.clientY,
+      moved: false,
+      heard: point.semitones,
+    };
+  };
+
+  // A point follows the pointer: by quarter steps and semitones, freely with Shift (like a theremin),
+  // never past its neighbours
+  const onBendPointerMove = (event: PointerEvent<Element>) => {
+    const drag = bendDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId || !laneRef.current) return;
+    if (!drag.moved && Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < 3) return;
+    drag.moved = true;
+    const note = track.notes.find((item) => item.id === drag.noteId);
+    const points = note?.bend;
+    if (!note || !points?.[drag.index]) return;
+    const free = event.shiftKey;
+    const position = lanePositionAt(event.clientX, event.clientY);
+    const gap = free ? 0.01 : 0.25;
+    const after = drag.index > 0 ? points[drag.index - 1].at + gap : gap;
+    const before = drag.index < points.length - 1 ? points[drag.index + 1].at - gap : note.length;
+    const rawAt = position.step - note.start;
+    const at = Math.max(after, Math.min(before, free ? Math.round(rawAt * 100) / 100 : Math.round(rawAt * 4) / 4));
+    const rawSemitones = position.pitch - note.pitch;
+    const semitones = Math.max(
+      -note.pitch,
+      Math.min(127 - note.pitch, free ? Math.round(rawSemitones * 100) / 100 : Math.round(rawSemitones)),
+    );
+    const point = points[drag.index];
+    if (at === point.at && semitones === point.semitones) return;
+    setBend(note.id, points.map((item, i) => (i === drag.index ? { at, semitones } : item)));
+    // Heard at every semitone, or every quarter of one when free
+    const heard = free ? Math.round(semitones * 4) / 4 : semitones;
+    if (heard !== drag.heard) {
+      drag.heard = heard;
+      audition(note.pitch + semitones);
+    }
+  };
+
+  const endBendDrag = (event: PointerEvent<Element>) => {
+    const drag = bendDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    bendDragRef.current = null;
+  };
+
+  // A double click on a point removes it
+  const onBendDoubleClick = (event: MouseEvent<Element>, note: Note, index: number) => {
+    event.stopPropagation();
+    if (!track || lockedTracks[track.id] || !note.bend) return;
+    setBend(note.id, note.bend.filter((_, i) => i !== index));
   };
 
   const onResizePointerDown = (event: PointerEvent<HTMLDivElement>, note: Note, edge: 'start' | 'end') => {
@@ -499,31 +802,35 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
       maxEnd,
       startX: event.clientX,
       moved: false,
+      originalBend: note.bend,
     };
   };
 
   const onResizePointerMove = (event: PointerEvent<HTMLDivElement>) => {
     const resize = noteResizeRef.current;
-    if (!resize || resize.pointerId !== event.pointerId || !laneRef.current) return;
+    if (!resize || resize.pointerId !== event.pointerId) return;
     if (!resize.moved && Math.abs(event.clientX - resize.startX) < 4) return;
     resize.moved = true;
-    const rect = laneRef.current.getBoundingClientRect();
-    const currentStep = Math.floor((event.clientX - rect.left) / cell);
-
+    const note = track.notes.find((n) => n.id === resize.noteId);
+    if (!note) return;
+    // The edge goes to the grid line nearest to where it is dragged, whatever point of the handle was grabbed
+    const steps = Math.round((event.clientX - resize.startX) / cell);
+    const originalEnd = resize.originalStart + resize.originalLength;
+    let start = resize.originalStart;
+    let length = resize.originalLength;
     if (resize.edge === 'end') {
-      const newEnd = Math.max(resize.originalStart, Math.min(resize.maxEnd - 1, currentStep));
-      const newLength = Math.max(1, Math.min(resize.maxEnd - resize.originalStart, newEnd - resize.originalStart + 1));
-      updateTrack(track.id, {
-        notes: track.notes.map((n) => (n.id === resize.noteId ? { ...n, length: newLength } : n)),
-      });
+      length = Math.max(1, Math.min(resize.maxEnd, originalEnd + steps) - resize.originalStart);
     } else {
-      const fixedEnd = resize.originalStart + resize.originalLength;
-      const newStart = Math.max(resize.minStart, Math.min(fixedEnd - 1, currentStep));
-      const newLength = fixedEnd - newStart;
-      updateTrack(track.id, {
-        notes: track.notes.map((n) => (n.id === resize.noteId ? { ...n, start: newStart, length: newLength } : n)),
-      });
+      start = Math.max(resize.minStart, Math.min(originalEnd - 1, resize.originalStart + steps));
+      length = originalEnd - start;
     }
+    if (start === note.start && length === note.length) return;
+    // The points keep their time: those the new start passes are dropped
+    const shift = start - resize.originalStart;
+    const bend = resize.originalBend?.map((point) => ({ ...point, at: point.at - shift })).filter((point) => point.at > 0);
+    updateTrack(track.id, {
+      notes: track.notes.map((n) => (n.id === resize.noteId ? { ...n, start, length, ...(bend ? { bend } : {}) } : n)),
+    });
   };
 
   const onResizePointerUp = (event: PointerEvent<HTMLDivElement>) => {
@@ -591,13 +898,48 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
     event.currentTarget.scrollTop = pan.top - (event.clientY - pan.y);
   };
 
-  const seekFromRuler = (event: PointerEvent<HTMLDivElement>) => {
-    const rect = event.currentTarget.getBoundingClientRect();
-    const nextStep = Math.max(0, Math.min(totalSteps, Math.floor((event.clientX - rect.left) / cell)));
-    setPlayStep(nextStep);
-    playClock.current = { startedAt: performance.now(), startStep: nextStep };
-    lastAudioStep.current = -1;
-    lastAudioSignature.current = null;
+  /** Moves the playhead; while playing, playback goes on from there */
+  const seekTo = (step: number) => {
+    setPlayStep(step);
+    playClock.current = { startedAt: performance.now(), startStep: step };
+    releasePlaying();
+  };
+
+  const rulerStepAt = (ruler: HTMLDivElement, clientX: number) =>
+    Math.max(0, Math.min(totalSteps - 1, Math.floor((clientX - ruler.getBoundingClientRect().left) / cell)));
+
+  // On the ruler, like on the Analyzer's waveform: a click places the playhead and removes the loop, a drag selects the loop
+  const onRulerPointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const step = rulerStepAt(event.currentTarget, event.clientX);
+    rulerPressRef.current = { pointerId: event.pointerId, x: event.clientX, step, selecting: false };
+    seekTo(step);
+  };
+
+  const onRulerPointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    const press = rulerPressRef.current;
+    if (!press || press.pointerId !== event.pointerId) return;
+    if (!press.selecting && Math.abs(event.clientX - press.x) < 4) return;
+    if (!press.selecting) {
+      press.selecting = true;
+      setRulerSelecting(true);
+    }
+    // Whole steps, from the one pressed to the one under the pointer
+    const step = rulerStepAt(event.currentTarget, event.clientX);
+    const zone = { start: Math.min(press.step, step), end: Math.max(press.step, step) + 1 };
+    if (zone.start !== loop?.start || zone.end !== loop?.end) setLoop(zone);
+    // The playhead goes to the start of the loop
+    if (zone.start !== loop?.start) seekTo(zone.start);
+  };
+
+  const onRulerPointerUp = (event: PointerEvent<HTMLDivElement>) => {
+    const press = rulerPressRef.current;
+    if (!press || press.pointerId !== event.pointerId) return;
+    // A click, not a drag: it removes the loop
+    if (event.type === 'pointerup' && !press.selecting) setLoop(null);
+    rulerPressRef.current = null;
+    setRulerSelecting(false);
   };
 
   const startPlayback = async () => {
@@ -605,21 +947,23 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
     if (!performers.length || busy || connection !== 'online' || !coreLoaded || !socketOpen) return;
     if (!canPlay) {
       const instrument = instrumentOf(performers[0]);
-      const started = await startAudio(instrument ? { timbre: toTimbre(instrument.partials, engine.maxPartials), low_cutoff: instrument.filter.lowCutoff, cutoff: instrument.filter.cutoff, resonance: instrument.filter.resonance, reverb: instrument.reverb ?? 0, unison: unisonOf(instrument) } : {});
+      const started = await startAudio(instrument ? instrumentParams(instrument, engine.maxPartials) : {});
       if (!started) return;
     }
-    const startStep = playStep >= totalSteps ? 0 : playStep;
+    let startStep = playStep >= totalSteps ? 0 : playStep;
+    // From outside the loop, playback starts at its start
+    if (activeLoop && (startStep < activeLoop.start || startStep >= activeLoop.end)) startStep = activeLoop.start;
     setPlayStep(startStep);
-    lastAudioStep.current = -1;
-    lastAudioSignature.current = null;
+    releasePlaying();
     playClock.current = { startedAt: performance.now(), startStep };
+    playingRef.current = true;
     setPlaying(true);
   };
 
   const pausePlayback = () => {
+    playingRef.current = false;
     setPlaying(false);
-    noteOff();
-    lastAudioSignature.current = null;
+    releasePlaying();
   };
 
   // The space bar is the play / pause button: playback goes on from the playhead
@@ -650,7 +994,7 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
   return (
     <div className={layout.screen}>
       <ScreenHeader
-        index="02"
+        index="04"
         eyebrow="Arrangement"
         title="Composer"
         subtitle="Écris tes motifs piste par piste, chacune jouée par un de tes instruments."
@@ -902,119 +1246,151 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
               Piano roll <span className={styles.count}>{track?.name}</span>
             </h2>
             <span className={styles.rollHint}>
-              Molette : défiler · Ctrl + molette : zoom horizontal · clic milieu : déplacer · clic : ajouter une note · bords : redimensionner · clic sur une note : sélectionner (Suppr pour effacer)
+              Règle : clic = curseur, glisser = zone en boucle · Molette : défiler · Ctrl + molette : zoom horizontal · clic milieu : déplacer · clic : ajouter une note · glisser une note : la déplacer · bords : redimensionner · double-clic sur une note : point de glissé, à glisser (Maj : librement) · clic sur une note : sélectionner (Suppr pour effacer)
               {lockedTracks[track?.id ?? ''] ? ' · piste verrouillée' : ''}
               {canPlay ? ' · aperçu sonore actif' : ''}
             </span>
           </div>
 
-          {selectedNote && (
-            <div className={styles.noteInspector}>
-              <div className={styles.noteInspectorTitle}>
-                <span className={styles.noteInspectorDot} style={{ background: HUE_VAR[hueOf(track)] }} />
-                <span className={styles.noteInspectorPitch}>{midiToName(selectedNote.pitch)}</span>
-                <span className={styles.noteInspectorFreq}>({Math.round(midiToFrequency(selectedNote.pitch) * 10) / 10} Hz)</span>
-              </div>
-
-              <div className={styles.noteInspectorGroup}>
-                <span className={styles.noteInspectorLabel}>Hauteur</span>
-                <Button
-                  size="small"
-                  disabled={!!lockedTracks[track.id] || selectedNote.pitch <= 11}
-                  onClick={() => updateSelectedNote({ pitch: selectedNote.pitch - 12 })}
-                  title="Descendre d'une octave (Maj + Bas)"
-                >
-                  -12
-                </Button>
-                <Button
-                  size="small"
-                  disabled={!!lockedTracks[track.id] || selectedNote.pitch <= 0}
-                  onClick={() => updateSelectedNote({ pitch: selectedNote.pitch - 1 })}
-                  title="Descendre d'un demi-ton (Bas)"
-                >
-                  -1
-                </Button>
-                <Button
-                  size="small"
-                  disabled={!!lockedTracks[track.id] || selectedNote.pitch >= 127}
-                  onClick={() => updateSelectedNote({ pitch: selectedNote.pitch + 1 })}
-                  title="Monter d'un demi-ton (Haut)"
-                >
-                  +1
-                </Button>
-                <Button
-                  size="small"
-                  disabled={!!lockedTracks[track.id] || selectedNote.pitch >= 116}
-                  onClick={() => updateSelectedNote({ pitch: selectedNote.pitch + 12 })}
-                  title="Monter d'une octave (Maj + Haut)"
-                >
-                  +12
-                </Button>
-              </div>
-
-              <div className={styles.noteInspectorGroup}>
-                <span className={styles.noteInspectorLabel}>Durée</span>
-                {NOTE_LENGTHS.map((opt) => (
-                  <Button
-                    key={opt.value}
-                    size="small"
-                    disabled={!!lockedTracks[track.id]}
-                    variant={selectedNote.length === opt.value ? 'primary' : undefined}
-                    onClick={() => updateSelectedNote({ length: opt.value })}
-                    title={`${opt.title} (${opt.value} pas)`}
-                  >
-                    {opt.label}
-                  </Button>
-                ))}
-              </div>
-
-              <div className={styles.noteInspectorGroup}>
-                <span className={styles.noteInspectorLabel}>Position</span>
-                <Button
-                  size="small"
-                  iconOnly
-                  disabled={!!lockedTracks[track.id] || selectedNote.start <= 0}
-                  onClick={() => updateSelectedNote({ start: selectedNote.start - 1 })}
-                  title="Reculer d'un pas (Gauche)"
-                >
-                  <ArrowLeft size={13} />
-                </Button>
-                <span className={styles.noteInspectorPosText}>
-                  {`M${Math.floor(selectedNote.start / stepsPerBar) + 1}.${Math.floor((selectedNote.start % stepsPerBar) / STEPS_PER_BEAT) + 1}.${(selectedNote.start % STEPS_PER_BEAT) + 1}`}
-                </span>
-                <Button
-                  size="small"
-                  iconOnly
-                  disabled={!!lockedTracks[track.id] || selectedNote.start + selectedNote.length >= totalSteps}
-                  onClick={() => updateSelectedNote({ start: selectedNote.start + 1 })}
-                  title="Avancer d'un pas (Droite)"
-                >
-                  <ArrowRight size={13} />
-                </Button>
-              </div>
-
-              <div className={styles.noteInspectorActions}>
-                <Button
-                  size="small"
-                  disabled={!!lockedTracks[track.id]}
-                  className={styles.deleteNoteBtn}
-                  onClick={deleteSelectedNote}
-                  title="Supprimer la note sélectionnée (Touche Suppr ou Retour arrière)"
-                >
-                  <Trash2 size={13} />
-                  Supprimer
-                </Button>
-                <Button
-                  size="small"
-                  iconOnly
-                  onClick={() => setSelectedNoteId(null)}
-                  title="Désélectionner (Échap)"
-                >
-                  <X size={14} />
-                </Button>
-              </div>
+          {/* Always in place, empty without a selected note: selecting one does not move the roll under the pointer */}
+          <div className={cx(styles.noteInspector, !selectedNote && styles.noteInspectorEmpty)}>
+            <div className={styles.noteInspectorTitle}>
+              <span className={styles.noteInspectorDot} style={{ background: HUE_VAR[hueOf(track)] }} />
+              {selectedNote ? (
+                <>
+                  <span className={styles.noteInspectorPitch}>{midiToName(selectedNote.pitch)}</span>
+                  <span className={styles.noteInspectorFreq}>({Math.round(midiToFrequency(selectedNote.pitch) * 10) / 10} Hz)</span>
+                </>
+              ) : (
+                <span className={styles.noteInspectorFreq}>Aucune note</span>
+              )}
             </div>
-          )}
+
+            <div className={styles.noteInspectorGroup}>
+              <span className={styles.noteInspectorLabel}>Hauteur</span>
+              <Button
+                size="small"
+                disabled={!noteEditable || selectedNote.pitch <= 11}
+                onClick={() => selectedNote && updateSelectedNote({ pitch: selectedNote.pitch - 12 })}
+                title="Descendre d'une octave (Maj + Bas)"
+              >
+                -12
+              </Button>
+              <Button
+                size="small"
+                disabled={!noteEditable || selectedNote.pitch <= 0}
+                onClick={() => selectedNote && updateSelectedNote({ pitch: selectedNote.pitch - 1 })}
+                title="Descendre d'un demi-ton (Bas)"
+              >
+                -1
+              </Button>
+              <Button
+                size="small"
+                disabled={!noteEditable || selectedNote.pitch >= 127}
+                onClick={() => selectedNote && updateSelectedNote({ pitch: selectedNote.pitch + 1 })}
+                title="Monter d'un demi-ton (Haut)"
+              >
+                +1
+              </Button>
+              <Button
+                size="small"
+                disabled={!noteEditable || selectedNote.pitch >= 116}
+                onClick={() => selectedNote && updateSelectedNote({ pitch: selectedNote.pitch + 12 })}
+                title="Monter d'une octave (Maj + Haut)"
+              >
+                +12
+              </Button>
+            </div>
+
+            <div className={styles.noteInspectorGroup}>
+              <span className={styles.noteInspectorLabel}>Durée</span>
+              {NOTE_LENGTHS.map((opt) => (
+                <Button
+                  key={opt.value}
+                  size="small"
+                  disabled={!noteEditable}
+                  variant={selectedNote?.length === opt.value ? 'primary' : undefined}
+                  onClick={() => updateSelectedNote({ length: opt.value })}
+                  title={`${opt.title} (${opt.value} pas)`}
+                >
+                  {opt.label}
+                </Button>
+              ))}
+              <span
+                className={styles.noteInspectorPosText}
+                title={selectedNote ? `${selectedNote.length} double${selectedNote.length > 1 ? 's' : ''} croche${selectedNote.length > 1 ? 's' : ''} (pas)` : undefined}
+              >
+                {selectedNote ? `${selectedNote.length}/16` : '–'}
+              </span>
+            </div>
+
+            <div className={styles.noteInspectorGroup}>
+              <span className={styles.noteInspectorLabel}>Position</span>
+              <Button
+                size="small"
+                iconOnly
+                disabled={!noteEditable || selectedNote.start <= 0}
+                onClick={() => selectedNote && updateSelectedNote({ start: selectedNote.start - 1 })}
+                title="Reculer d'un pas (Gauche)"
+              >
+                <ArrowLeft size={13} />
+              </Button>
+              <span className={styles.noteInspectorPosText}>
+                {selectedNote
+                  ? `M${Math.floor(selectedNote.start / stepsPerBar) + 1}.${Math.floor((selectedNote.start % stepsPerBar) / STEPS_PER_BEAT) + 1}.${(selectedNote.start % STEPS_PER_BEAT) + 1}`
+                  : '–'}
+              </span>
+              <Button
+                size="small"
+                iconOnly
+                disabled={!noteEditable || selectedNote.start + selectedNote.length >= totalSteps}
+                onClick={() => selectedNote && updateSelectedNote({ start: selectedNote.start + 1 })}
+                title="Avancer d'un pas (Droite)"
+              >
+                <ArrowRight size={13} />
+              </Button>
+            </div>
+
+            <div className={styles.noteInspectorGroup}>
+              <span className={styles.noteInspectorLabel}>Glissé</span>
+              <span
+                className={styles.noteInspectorPosText}
+                title="Points de la courbe de hauteur : double-clic sur la note pour en ajouter un, puis le glisser"
+              >
+                {selectedNote?.bend?.length ? `${selectedNote.bend.length} pt${selectedNote.bend.length > 1 ? 's' : ''}` : '–'}
+              </span>
+              <Button
+                size="small"
+                disabled={!noteEditable || !selectedNote.bend?.length}
+                onClick={() => selectedNote && setBend(selectedNote.id, [])}
+                title="Retirer la courbe : la note reste à sa hauteur de départ"
+              >
+                Aplatir
+              </Button>
+            </div>
+
+            <div className={styles.noteInspectorActions}>
+              <Button
+                size="small"
+                disabled={!noteEditable}
+                className={styles.deleteNoteBtn}
+                onClick={deleteSelectedNote}
+                title="Supprimer la note sélectionnée (Touche Suppr ou Retour arrière)"
+              >
+                <Trash2 size={13} />
+                Supprimer
+              </Button>
+              <Button
+                size="small"
+                iconOnly
+                disabled={!selectedNote}
+                onClick={() => setSelectedNoteId(null)}
+                title="Désélectionner (Échap)"
+              >
+                <X size={14} />
+              </Button>
+            </div>
+          </div>
 
           <div
             className={styles.rollScroll}
@@ -1027,12 +1403,26 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
           >
             <div className={styles.rollGrid} style={gridStyle}>
               <div className={styles.corner} />
-              <div className={styles.ruler} onPointerDown={seekFromRuler} title="Cliquer pour choisir le point de départ">
+              <div
+                className={cx(styles.ruler, rulerSelecting && styles.rulerSelecting)}
+                onPointerDown={onRulerPointerDown}
+                onPointerMove={onRulerPointerMove}
+                onPointerUp={onRulerPointerUp}
+                onPointerCancel={onRulerPointerUp}
+                title="Cliquer pour placer le curseur de lecture · glisser pour choisir une zone lue en boucle (un clic ou Échap la retire)"
+              >
                 {Array.from({ length: bars }, (_, bar) => (
                   <div key={bar} className={styles.rulerBar} style={{ width: cell * stepsPerBar }}>
                     {bar + 1}
                   </div>
                 ))}
+                {activeLoop && (
+                  <div
+                    className={styles.loopRuler}
+                    style={{ left: activeLoop.start * cell, width: (activeLoop.end - activeLoop.start) * cell }}
+                    aria-hidden="true"
+                  />
+                )}
               </div>
               <div className={styles.keys}>
                 {pitches.map((pitch) => (
@@ -1071,14 +1461,35 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
                     )}
                   />
                 ))}
+                {activeLoop && (
+                  <div
+                    className={styles.loopLane}
+                    style={{ left: activeLoop.start * cell, width: (activeLoop.end - activeLoop.start) * cell }}
+                    aria-hidden="true"
+                  />
+                )}
                 {/* Ghost notes des autres pistes visibles */}
                 {tracks
                   .filter((other) => other.id !== track.id && !other.hidden)
                   .map((other) => {
                     const otherHue = hueOf(other);
-                    return other.notes
-                      .filter((note) => note.start < totalSteps && note.pitch >= lowestVisiblePitch && note.pitch <= highestVisiblePitch)
-                      .map((note) => (
+                    return other.notes.filter(inView).map((note) => {
+                      if (note.bend?.length) {
+                        const ribbon = ribbonOf(note);
+                        return (
+                          <div
+                            key={`ghost-${other.id}-${note.id}`}
+                            className={cx(styles.bentNote, styles.ghost)}
+                            style={{ '--hue': HUE_VAR[otherHue], ...ribbon.box } as CSSProperties}
+                            aria-hidden="true"
+                          >
+                            <svg className={styles.ribbon} width={ribbon.box.width} height={ribbon.box.height}>
+                              <path d={ribbon.d} className={styles.ribbonLine} style={{ strokeWidth: row - 3 }} />
+                            </svg>
+                          </div>
+                        );
+                      }
+                      return (
                         <div
                           key={`ghost-${other.id}-${note.id}`}
                           className={cx(styles.note, styles.ghost)}
@@ -1093,18 +1504,98 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
                           }
                           aria-hidden="true"
                         />
-                      ));
+                      );
+                    });
                   })}
                 {/* Notes de la piste sélectionnée actuellement (sur laquelle on travaille) */}
-                {track.notes
-                  .filter((note) => note.start < totalSteps && note.pitch >= lowestVisiblePitch && note.pitch <= highestVisiblePitch)
-                  .map((note) => {
+                {track.notes.filter(inView).map((note) => {
                     const isSelected = note.id === selectedNoteId;
+                    const locked = Boolean(lockedTracks[track.id]);
+                    if (note.bend?.length) {
+                      // A note with a curve: a ribbon through the rows, its points to drag when it is selected
+                      const ribbon = ribbonOf(note);
+                      const first = ribbon.points[0];
+                      const last = ribbon.points[ribbon.points.length - 1];
+                      const handleHeight = row - 3;
+                      return (
+                        <div
+                          key={note.id}
+                          className={cx(
+                            styles.bentNote,
+                            isSelected && styles.bentNoteSelected,
+                            note.id === movingNoteId && styles.noteMoving,
+                            locked && styles.noteLocked,
+                          )}
+                          style={{ '--hue': HUE_VAR[hueOf(track)], ...ribbon.box } as CSSProperties}
+                        >
+                          <svg className={styles.ribbon} width={ribbon.box.width} height={ribbon.box.height}>
+                            {isSelected && <path d={ribbon.d} className={styles.ribbonOutline} style={{ strokeWidth: row + 1 }} />}
+                            <path
+                              d={ribbon.d}
+                              className={styles.ribbonLine}
+                              style={{ strokeWidth: row - 3 }}
+                              onPointerDown={(event) => onNotePointerDown(event, note)}
+                              onPointerMove={onNotePointerMove}
+                              onPointerUp={endNoteMove}
+                              onPointerCancel={endNoteMove}
+                              onDoubleClick={(event) => onNoteDoubleClick(event, note)}
+                            >
+                              <title>
+                                {`${midiToName(note.pitch)} qui glisse (${note.length} pas, ${note.bend.length} point${note.bend.length > 1 ? 's' : ''}) · glisser pour déplacer · double-clic : ajouter un point · Suppr pour effacer`}
+                              </title>
+                            </path>
+                            {isSelected &&
+                              !locked &&
+                              note.bend.map((point, index) =>
+                                point.at > note.length ? null : (
+                                  <circle
+                                    key={index}
+                                    className={styles.bendPoint}
+                                    cx={Math.min(ribbon.box.width, point.at * cell)}
+                                    cy={ribbon.yOf(point.semitones)}
+                                    r={4.5}
+                                    onPointerDown={(event) => onBendPointerDown(event, note, index)}
+                                    onPointerMove={onBendPointerMove}
+                                    onPointerUp={endBendDrag}
+                                    onPointerCancel={endBendDrag}
+                                    onDoubleClick={(event) => onBendDoubleClick(event, note, index)}
+                                  >
+                                    <title>{`${formatSemitones(point.semitones)} · glisser pour déplacer (Maj : librement) · double-clic : retirer`}</title>
+                                  </circle>
+                                ),
+                              )}
+                          </svg>
+                          <div
+                            className={cx(styles.resizeHandle, styles.resizeHandleLeft)}
+                            style={{ top: first.y - handleHeight / 2, height: handleHeight, bottom: 'auto' }}
+                            title="Glisser pour ajuster le début"
+                            onPointerDown={(event) => onResizePointerDown(event, note, 'start')}
+                            onPointerMove={onResizePointerMove}
+                            onPointerUp={onResizePointerUp}
+                            onPointerCancel={onResizePointerCancel}
+                          />
+                          <div
+                            className={cx(styles.resizeHandle, styles.resizeHandleRight)}
+                            style={{ top: last.y - handleHeight / 2, height: handleHeight, bottom: 'auto' }}
+                            title="Glisser pour ajuster la durée"
+                            onPointerDown={(event) => onResizePointerDown(event, note, 'end')}
+                            onPointerMove={onResizePointerMove}
+                            onPointerUp={onResizePointerUp}
+                            onPointerCancel={onResizePointerCancel}
+                          />
+                        </div>
+                      );
+                    }
                     return (
                       <div
                         key={note.id}
-                        className={cx(styles.note, isSelected && styles.noteSelected)}
-                        title={`${midiToName(note.pitch)} (${note.length} pas) · glisser les bords pour redimensionner · Suppr pour effacer`}
+                        className={cx(
+                          styles.note,
+                          isSelected && styles.noteSelected,
+                          note.id === movingNoteId && styles.noteMoving,
+                          lockedTracks[track.id] && styles.noteLocked,
+                        )}
+                        title={`${midiToName(note.pitch)} (${note.length} pas) · glisser pour déplacer · glisser les bords pour redimensionner · double-clic : ajouter un point pour la faire glisser · Suppr pour effacer`}
                         style={
                           {
                             '--hue': HUE_VAR[hueOf(track)],
@@ -1114,6 +1605,10 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
                           } as CSSProperties
                         }
                         onPointerDown={(event) => onNotePointerDown(event, note)}
+                        onPointerMove={onNotePointerMove}
+                        onPointerUp={endNoteMove}
+                        onPointerCancel={endNoteMove}
+                        onDoubleClick={(event) => onNoteDoubleClick(event, note)}
                       >
                         <div
                           className={cx(styles.resizeHandle, styles.resizeHandleLeft)}
@@ -1168,7 +1663,19 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
           <Button iconOnly disabled={!playing && playStep === 0} aria-label="Stop" title="Revenir au début" onClick={() => { pausePlayback(); setPlayStep(0); }}>
             <Square size={14} />
           </Button>
-          <Button iconOnly disabled aria-label="Boucle" title="Boucle">
+          <Button
+            iconOnly
+            variant={activeLoop ? 'primary' : undefined}
+            disabled={!activeLoop}
+            aria-label="Boucle"
+            aria-pressed={!!activeLoop}
+            title={
+              activeLoop
+                ? `Lecture en boucle de ${stepLabel(activeLoop.start)} à ${stepLabel(activeLoop.end)} · cliquer pour retirer la boucle (Échap)`
+                : 'Glisse sur la règle du piano roll pour choisir une zone lue en boucle'
+            }
+            onClick={() => setLoop(null)}
+          >
             <Repeat size={15} />
           </Button>
         </div>

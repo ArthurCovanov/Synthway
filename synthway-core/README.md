@@ -92,7 +92,7 @@ synthway-core/
 ```
 
 - **`engine/`, le chef d'orchestre** : il possède le cycle de vie, la frontière entre threads et relie le synthé à une sortie (la carte son, ou le rendu hors ligne). C'est la seule couche qui connaît les deux autres.
-- **`synth/`, le calcul du son** : à partir de valeurs simples (fréquence, volume, forme d'onde, gate, enveloppe), il remplit un tampon d'échantillons. Il n'envoie rien à personne et ignore jusqu'à l'existence de la carte son. C'est ce qui permet le rendu hors ligne : le même code remplit le tampon de la carte son, un tableau en mémoire ou un fichier WAV.
+- **`synth/`, le calcul du son** : à partir de valeurs simples (fréquence, volume, forme d'onde, gate, enveloppe), il remplit un tampon d'échantillons. Il tient les voix (la voix 0 joue la note de l'API à une note, les autres sont attribuées par `sw_synth_note_on`) et, par instrument, le filtre et la réverbération de la somme de ses voix. Il n'envoie rien à personne et ignore jusqu'à l'existence de la carte son. C'est ce qui permet le rendu hors ligne : le même code remplit le tampon de la carte son, un tableau en mémoire ou un fichier WAV.
 - **`io/`, la couche du bord** : la carte son, le micro, la liste des périphériques, les ports MIDI et les fichiers. C'est la carte son qui réclame les échantillons : son thread audio appelle la fonction de rendu que l'engine lui a donnée à l'ouverture.
 - **`analyzer/`, le chef d'orchestre de l'analyse** : il relie un micro (`io/audio_input`) ou un fichier décodé (`io/audio_file`) au calcul de `analysis/`, et possède la mémoire de ce calcul (environ 600 Ko par analyseur). Il ne partage rien avec le moteur : on peut analyser moteur arrêté, ou pendant qu'il joue.
 - **`analysis/`, le calcul de l'analyse** : à partir d'une fenêtre d'échantillons (environ 170 ms), il trouve le niveau, la note jouée, les partiels et le spectre d'affichage. Comme `synth/`, il ignore d'où vient le son, ce qui permet de le tester sur des sons rendus par le moteur.
@@ -100,7 +100,8 @@ synthway-core/
 Deux chemins traversent le moteur :
 
 - **Commandes** (thread de l'appelant, le serveur par exemple) : `synthway_engine_set_*` → `engine_params.c` écrit un paramètre atomique, puis rend la main.
-- **Son** (thread audio) : `io/audio_output.c` reçoit la demande de la carte son → `sw_engine_render` (`engine.c`) lit une fois les paramètres atomiques (`sw_engine_params_snapshot`) → `sw_synth_render` (`synth.c`) remplit le bloc. Le rendu hors ligne (`engine_offline.c`) appelle la même `sw_engine_render`, d'où des échantillons identiques.
+- **Notes** (thread de l'appelant) : `synthway_engine_note_on`, `note_off` et `all_notes_off` ajoutent un événement à une file circulaire de 1024 places (`sw_note_queue`, `engine_params.h`), sous un verrou que le thread audio ne prend jamais.
+- **Son** (thread audio) : `io/audio_output.c` reçoit la demande de la carte son → `sw_engine_render` (`engine.c`) passe au synthé les notes en attente (`sw_engine_params_take_notes`), puis lit une fois les paramètres atomiques (`sw_engine_params_snapshot`) → `sw_synth_render` (`synth.c`) remplit le bloc. Le rendu hors ligne (`engine_offline.c`) appelle la même `sw_engine_render`, d'où des échantillons identiques.
 
 L'analyseur a les siens :
 
@@ -158,6 +159,7 @@ Suite possible : sous Linux, `libsynthway.so` exporte encore les symboles de min
     - Un timbre peut changer pendant une note : un partiel ajouté démarre son attaque aussitôt.
     - Un partiel qui part du silence repart à la phase 0 : un même timbre commence toujours par la même onde.
     - Rien ne protège des partiels au-delà de la moitié de la fréquence d'échantillonnage (ils se replient en d'autres fréquences) ni d'une somme qui dépasse 1 (elle est écrêtée) : c'est à l'appelant de prévenir. L'UI affiche ces deux avertissements.
+  - **Polyphonie** : en plus de la note de l'API à une note, jusqu'à 32 notes sonnent à la fois (`SYNTHWAY_MAX_NOTES`), chacune avec ses propres enveloppes : une note qui démarre pendant qu'une autre est tenue a sa vraie attaque. Chaque note joue l'un des 16 instruments du moteur (`SYNTHWAY_MAX_INSTRUMENTS`) : forme d'onde ou timbre, enveloppe, filtre, réverbération et unisson. Un instrument filtre et réverbère la somme de ses notes, ce qui revient exactement au même que pour chacune (les deux sont linéaires) ; chaque instrument a sa propre réverbération, qui ne tourne que tant qu'elle sonne. L'instrument 0 est celui que règlent `set_waveform`, `set_envelope`, `set_timbre`, etc., et que joue la note de l'API à une note. Les notes s'additionnent : plusieurs notes fortes peuvent dépasser 1 et être écrêtées par la carte son.
   - Séparation stricte du callback audio temps réel et des threads de contrôle : les paramètres partagés sont atomiques (C11). Le timbre, trop gros pour un atomique, passe par un triple tampon : le thread audio lit toujours un timbre complet, sans jamais attendre.
 - **Rendu hors ligne** : le moteur peut produire ses échantillons sans carte son, en mémoire ou dans un fichier WAV 16 bits. Les échantillons sont exactement ceux que recevrait la carte son, car le callback temps réel et le rendu hors ligne passent par la même fonction. C'est ce qui permet de tester le son sans haut-parleur (voir plus bas).
 - **Énumération des ports MIDI** (RtMidi) :
@@ -259,6 +261,11 @@ Une fois compilé, vous pouvez tester directement les capacités audio :
 #    --partials rapport:amplitude[:forme],...  (enveloppe par défaut pour chacun)
 ./build/bin/synthway_cli --render cloche.wav 220 2 --partials 1:0.6,2.76:0.3,5.4:0.15
 
+# 6 bis. Une note qui glisse (synthway_engine_note_glide), dans un fichier WAV, sans rien jouer :
+#    --glide <fichier.wav> <fréquence de départ> <fréquence:secondes>,...  [--partials ...]
+#    Ici : de 220 à 440 Hz en 1 s, tenue 0,5 s, puis descente à 330 Hz en 0,25 s (et 0,5 s de tenue à la fin)
+./build/bin/synthway_cli --glide glisse.wav 220 440:1,440:0.5,330:0.25 --partials 1:0.6,2:0.3,3:0.15
+
 # 7. Note et partiels d'un fichier WAV, FLAC ou MP3, sans rien jouer :
 #    --analyze <fichier> [secondes]  (par défaut : le moment où la note est la plus nette)
 ./build/bin/synthway_cli --analyze cloche.wav
@@ -348,6 +355,19 @@ Les quatre valeurs sont atomiques : on peut les changer pendant qu'une note joue
 
 `SYNTHWAY_MAX_PARTIALS` est fixé à la compilation, car le thread audio n'alloue jamais de mémoire. Le changer modifie la taille de `synthway_timbre_t` : il faut alors mettre à jour `MAX_PARTIALS` dans `synthway-server/src/models.py` (le pont refuse de charger une bibliothèque qui ne correspond pas).
 
+### Polyphonie : plusieurs notes, chacune sur un instrument
+
+| Fonction | Rôle |
+|---|---|
+| `synthway_engine_set_instrument(engine, slot, &instrument)` / `synthway_engine_get_instrument(engine, slot, &instrument)` | Règle ou lit l'instrument `slot` (0 à `SYNTHWAY_MAX_INSTRUMENTS` − 1, soit 15). `synthway_instrument_t` réunit ce que règlent les fonctions ci-dessus : `waveform` et `envelope` de l'oscillateur unique (courbes ignorées, toujours linéaires), bornes et résonance du filtre, `reverb_mix`, unisson, et `has_timbre` avec `timbre`. Mêmes bornes que les fonctions ci-dessus ; une valeur hors bornes renvoie `SYNTHWAY_INVALID_PARAM` et l'instrument en place est gardé. S'applique au bloc suivant, aussi aux notes qui jouent. L'instrument 0 est celui de `set_waveform`, `set_timbre`, etc. |
+| `synthway_engine_note_on(engine, note_id, slot, frequency_hz, volume)` | Démarre une note (fréquence dans ]0, 24000], volume de 0 à 1) sur l'instrument `slot`, en plus des autres. `note_id` est le nom que lui donne l'appelant, pour `note_off`. Si `note_id` sonne encore (tenue ou en relâchement), cette note repart de son niveau courant, à la nouvelle fréquence. Quand les 32 notes sont prises, la plus ancienne en relâchement laisse sa place, sinon la plus ancienne tenue. Une note qui part du silence prend aussitôt sa fréquence et son volume, sans glisser depuis la note d'avant de sa voix. |
+| `synthway_engine_note_glide(engine, note_id, frequency_hz, seconds)` | Fait glisser la note `note_id` jusqu'à `frequency_hz` (]0, 24000]) en `seconds` (0 à `SYNTHWAY_MAX_GLIDE_SECONDS`, 600 ; 0 : un saut), en ligne droite en demi-tons : la fréquence est multipliée par le même facteur à chaque échantillon, et chaque demi-ton prend le même temps. Les glissés d'une note s'enchaînent : chacun part d'où et quand le précédent finit, le premier au bloc suivant. Un glissé vers la fréquence où est déjà la note la tient pendant ce temps. La note continue de glisser pendant son relâchement. Une note garde jusqu'à `SYNTHWAY_MAX_GLIDES` (64) glissés en attente ; les suivants sont ignorés, comme ceux d'une note qui ne sonne pas. Un `note_on` (même du même `note_id`) efface les glissés à venir. Le glissé est calculé dans le thread audio, à l'échantillon près : envoyés juste après leur `note_on`, ses glissés suivent la note sans dépendre du minuteur de l'appelant. |
+| `synthway_engine_note_off(engine, note_id)` | Lance le relâchement de la note `note_id` ; rien si elle n'est pas tenue. |
+| `synthway_engine_all_notes_off(engine)` | Lance le relâchement de toutes les notes de `note_on` (pas celle de l'API à une note). |
+| `synthway_engine_get_sounding_notes(engine)` | Nombre de notes de `note_on` qui sonnent encore (tenues ou en relâchement), au dernier bloc audio. |
+
+Les notes passent au thread audio par une file de 1024 événements, lue au début de chaque bloc (hors ligne : à chaque appel de `synthway_engine_render`). `note_on`, `note_glide`, `note_off` et `all_notes_off` renvoient `SYNTHWAY_ERROR` quand elle est pleine, ce qui n'arrive que si le thread audio ne tourne pas. Un instrument réglé juste avant un `note_on` est toujours vu par cette note. Mémoire : la réverbération de chaque instrument occupe environ 540 Ko, soit 8,6 Mo par moteur, alloués à sa création ; seules les réverbérations qui sonnent sont calculées.
+
 ### Rendu hors ligne
 
 | Fonction | Rôle |
@@ -357,7 +377,7 @@ Les quatre valeurs sont atomiques : on peut les changer pendant qu'une note joue
 | `synthway_engine_render_to_wav(engine, path, frame_count)` | Écrit `frame_count` trames dans un fichier WAV 16 bits. Le chemin est passé à `fopen()` : page de code ANSI sous Windows, UTF-8 ailleurs. |
 | `synthway_engine_get_sample_rate(engine)`, `synthway_engine_get_channels(engine)` | Format réellement utilisé par le moteur. |
 
-Les réglages (`set_frequency`, `set_volume`, `set_waveform`, `set_tone_enabled`) s'appliquent aussi aux moteurs hors ligne. Un fichier impossible à écrire renvoie `SYNTHWAY_IO_ERROR`.
+Les réglages (`set_frequency`, `set_volume`, `set_waveform`, `set_tone_enabled`) et les notes (`note_on`, `note_off`) s'appliquent aussi aux moteurs hors ligne. Un fichier impossible à écrire renvoie `SYNTHWAY_IO_ERROR`.
 
 ### Analyseur
 

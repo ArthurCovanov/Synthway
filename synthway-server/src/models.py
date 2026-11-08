@@ -61,6 +61,11 @@ MAX_PARTIALS = 64
 MAX_UNISON_VOICES = 8
 MAX_UNISON_DETUNE_CENTS = 100.0
 
+# SYNTHWAY_MAX_INSTRUMENTS and SYNTHWAY_MAX_NOTES of synthway-core: instrument
+# slots, and notes that sound at once besides the single-note API's
+MAX_INSTRUMENTS = 16
+MAX_NOTES = 32
+
 # SYNTHWAY_ANALYSIS_SPECTRUM_POINTS of synthway-core. The bridge checks the size
 # of the whole analysis structure (synthway_analysis_get_size) when it loads the library.
 ANALYSIS_SPECTRUM_POINTS = 256
@@ -150,6 +155,23 @@ if HAS_PYDANTIC:
     class Timbre(BaseModel):
         """Set of partials that plays every note instead of the single oscillator (synthway_engine_set_timbre)."""
         partials: List[Partial] = Field(default_factory=list, max_length=MAX_PARTIALS)
+
+    class Instrument(BaseModel):
+        """Everything that makes an instrument slot's sound (synthway_instrument_t); the names are set_param's."""
+        waveform: WaveformEnum = Field(default=WaveformEnum.SINE, description="Single oscillator, when there is no timbre")
+        envelope: Envelope = Field(default_factory=Envelope, description="Single oscillator's envelope (always linear)")
+        timbre: Optional[Timbre] = Field(default=None, description="Partials; absent or null: the single oscillator")
+        low_cutoff: float = Field(default=20.0, ge=20.0, le=20000.0, description="Band-pass lower bound in Hz")
+        cutoff: float = Field(default=20000.0, ge=20.0, le=20000.0, description="Band-pass upper bound in Hz")
+        resonance: float = Field(default=0.0, ge=0.0, le=1.0)
+        reverb: float = Field(default=0.0, ge=0.0, le=1.0, description="Share of reverberated sound")
+        unison: Unison = Field(default_factory=Unison)
+
+        @model_validator(mode="after")
+        def _band_in_order(self):
+            if not self.low_cutoff < self.cutoff:
+                raise ValueError(f"The band's lower bound ({self.low_cutoff:g} Hz) must be under its upper one ({self.cutoff:g} Hz)")
+            return self
 
     class EngineStatusResponse(BaseModel):
         is_running: bool
@@ -317,6 +339,17 @@ else:
     @dataclass
     class Timbre:
         partials: List[Partial] = field(default_factory=list)
+
+    @dataclass
+    class Instrument:
+        waveform: WaveformEnum = WaveformEnum.SINE
+        envelope: Envelope = field(default_factory=Envelope)
+        timbre: Optional[Timbre] = None
+        low_cutoff: float = 20.0
+        cutoff: float = 20000.0
+        resonance: float = 0.0
+        reverb: float = 0.0
+        unison: Unison = field(default_factory=Unison)
 
     @dataclass
     class EngineStatusResponse:

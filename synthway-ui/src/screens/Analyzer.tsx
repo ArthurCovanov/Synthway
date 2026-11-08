@@ -917,7 +917,7 @@ export function Analyzer({ onSaveInstrument }: { onSaveInstrument: (instrument: 
   return (
     <div className={layout.screen}>
       <ScreenHeader
-        index="03"
+        index="02"
         eyebrow="Analyse sonore"
         title="Analyzer"
         subtitle="La note jouée et les partiels d’un son, au micro ou depuis un fichier."

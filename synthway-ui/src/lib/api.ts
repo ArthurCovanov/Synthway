@@ -8,6 +8,8 @@ import type {
   EnvelopeAnalysis,
   EnvelopeParams,
   HealthResponse,
+  InstrumentParams,
+  NoteGlide,
   NoteSpan,
   SeparationModel,
   SeparationStatus,
@@ -392,6 +394,25 @@ export class SynthSocket {
 
   setParams(params: ToneParams): void {
     this.send({ type: 'set_param', ...params });
+  }
+
+  /** One more note alongside the others, with its own attack; the same id strikes that note again.
+      Its glides, chained, leave with it. */
+  startNote(id: number, instrument: number, frequency: number, volume: number, glides: NoteGlide[] = []): void {
+    this.send({ type: 'note_on', id, instrument, frequency, volume, ...(glides.length ? { glides } : {}) });
+  }
+
+  releaseNote(id: number): void {
+    this.send({ type: 'note_off', id });
+  }
+
+  /** Releases every note started by startNote */
+  releaseAllNotes(): void {
+    this.send({ type: 'all_notes_off' });
+  }
+
+  setInstrument(slot: number, params: InstrumentParams): void {
+    this.send({ type: 'set_instrument', slot, ...params });
   }
 
   private send(payload: object): void {

@@ -1,12 +1,58 @@
 import type { NeonHue } from './neon';
 import { newId } from './storage';
 
+/** A point of a note's pitch curve: `at` steps after the note's start, `semitones` from its pitch (fractions allowed) */
+export interface BendPoint {
+  at: number;
+  semitones: number;
+}
+
 /** Positions and lengths are in steps (sixteenth notes) */
 export interface Note {
   id: string;
-  pitch: number; // MIDI note number
+  pitch: number; // MIDI note number, where the note starts
   start: number;
   length: number;
+  /**
+   * Pitch curve, sorted by `at`: from the note's pitch at its start, straight lines in semitones
+   * through the points, then held to its end. Points beyond its end only bend the line up to it.
+   * Absent or empty: the note stays at its pitch.
+   */
+  bend?: BendPoint[];
+}
+
+/** Most points a note's curve holds (the engine queues 64 glides per note) */
+export const MAX_BEND_POINTS = 32;
+
+/**
+ * The note's curve as a line, from its start to its end: (0, 0), the points within the note,
+ * and its end, held at the last point or cut on the way to the next one.
+ */
+export function bendLine(note: Note): BendPoint[] {
+  const line: BendPoint[] = [{ at: 0, semitones: 0 }];
+  for (const point of note.bend ?? []) {
+    const last = line[line.length - 1];
+    if (point.at <= 0) continue;
+    if (point.at >= note.length) {
+      // Cut at the end, on the way to this point
+      const share = (note.length - last.at) / (point.at - last.at);
+      line.push({ at: note.length, semitones: last.semitones + (point.semitones - last.semitones) * share });
+      return line;
+    }
+    line.push(point);
+  }
+  line.push({ at: note.length, semitones: line[line.length - 1].semitones });
+  return line;
+}
+
+/** Semitones from the note's pitch, `at` steps after its start */
+export function bendAt(note: Note, at: number): number {
+  const line = bendLine(note);
+  for (let i = 1; i < line.length; i += 1) {
+    const [a, b] = [line[i - 1], line[i]];
+    if (at <= b.at) return b.at > a.at ? a.semitones + ((at - a.at) / (b.at - a.at)) * (b.semitones - a.semitones) : b.semitones;
+  }
+  return line[line.length - 1].semitones;
 }
 
 export interface Track {

@@ -85,3 +85,63 @@ def test_render_plays_the_timbre(core):
     assert abs(amplitude_at(steady, 48000, 200.0) - 0.5) < 0.005
     assert abs(amplitude_at(steady, 48000, 552.0) - 0.25) < 0.005
     assert amplitude_at(steady, 48000, 400.0) < 0.001
+
+
+def test_instrument_structure_matches_the_core(core):
+    """SynthwayInstrumentC must lay out its fields as synthway_instrument_t: a round trip through the core."""
+    import ctypes
+    from models import Instrument
+
+    lib = core._lib
+    lib.synthway_engine_get_instrument.argtypes = [
+        ctypes.c_void_p, ctypes.c_uint32, ctypes.POINTER(core_bridge.SynthwayInstrumentC)]
+    lib.synthway_engine_get_instrument.restype = ctypes.c_int
+    lib.synthway_engine_init_offline.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    instrument = Instrument(
+        waveform=WaveformEnum.TRIANGLE, envelope=Envelope(attack=0.1, decay=0.2, sustain=0.5, release=0.3),
+        low_cutoff=100.0, cutoff=5000.0, resonance=0.25, reverb=0.5, unison={"voices": 5, "detune": 12.0, "spread": 0.75},
+        timbre=Timbre(partials=[{"ratio": 1.0, "amplitude": 0.5}, {"ratio": 2.5, "amplitude": 0.25, "waveform": 3}]),
+    )
+    engine = lib.synthway_engine_create()
+    try:
+        assert lib.synthway_engine_init_offline(engine, None) == 0
+        assert lib.synthway_engine_set_instrument(engine, 5, ctypes.byref(core_bridge._instrument_to_c(instrument))) == 0
+        out = core_bridge.SynthwayInstrumentC()
+        assert lib.synthway_engine_get_instrument(engine, 5, ctypes.byref(out)) == 0
+    finally:
+        lib.synthway_engine_destroy(engine)
+    assert (out.waveform, out.envelope.attack_s, out.envelope.sustain_level, out.envelope.release_s) == pytest.approx((2, 0.1, 0.5, 0.3))
+    assert (out.filter_low_cutoff_hz, out.filter_high_cutoff_hz, out.filter_resonance, out.reverb_mix) == pytest.approx((100.0, 5000.0, 0.25, 0.5))
+    assert (out.unison_voices, out.unison_detune_cents, out.unison_spread) == pytest.approx((5, 12.0, 0.75))
+    assert out.has_timbre and out.timbre.partial_count == 2
+    assert (out.timbre.partials[1].ratio, out.timbre.partials[1].amplitude, out.timbre.partials[1].waveform) == pytest.approx((2.5, 0.25, 3))
+
+
+def test_note_glides_through_the_bridge(core):
+    """A note started and glided by the bridge's calls, rendered offline by the real core."""
+    import array
+    import ctypes
+
+    lib = core._lib
+    lib.synthway_engine_init_offline.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    lib.synthway_engine_render.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_float), ctypes.c_uint32]
+    lib.synthway_engine_render.restype = ctypes.c_int
+    engine = lib.synthway_engine_create()
+    rate = 48000
+    try:
+        config = core_bridge.SynthwayEngineConfigC(sample_rate=rate, channels=1, playback_device_index=-1)
+        assert lib.synthway_engine_init_offline(engine, ctypes.byref(config)) == 0
+        lib.synthway_engine_set_tone_enabled(engine, False)
+        core._engine = engine  # the bridge's note calls act on this engine
+        core.note_on(1, 0, 220.0, 0.5)
+        core.note_glide(1, 440.0, 1.0)
+        samples = (ctypes.c_float * (2 * rate))()
+        assert lib.synthway_engine_render(engine, samples, 2 * rate) == 0
+    finally:
+        core._engine = None
+        lib.synthway_engine_destroy(engine)
+    values = array.array("f", samples)
+    halfway = values[rate // 2 - 960 : rate // 2 + 960]
+    after = values[rate + 24000 - 960 : rate + 24000 + 960]
+    assert abs(measure_frequency(halfway, rate) - 220.0 * 2 ** 0.5) < 1.0
+    assert abs(measure_frequency(after, rate) - 440.0) < 0.5

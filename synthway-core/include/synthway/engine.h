@@ -170,6 +170,93 @@ SYNTHWAY_API bool synthway_engine_has_timbre(const synthway_engine_t* engine);
 SYNTHWAY_API uint32_t synthway_get_max_partials(void);
 
 /* --------------------------------------------------------------------------
+   Polyphony: several notes at once, each on one of the instruments
+   --------------------------------------------------------------------------
+   The functions above play a single note (set_frequency, set_volume,
+   set_tone_enabled) and set instrument 0 (waveform, envelope, filter, reverb,
+   unison, timbre). The functions below play up to SYNTHWAY_MAX_NOTES more
+   notes, on top of it: each one has its own envelopes, so it starts with its
+   own attack whatever the others do. Each note plays one of
+   SYNTHWAY_MAX_INSTRUMENTS instruments; an instrument filters and
+   reverberates the sum of its notes. Notes add up: several loud notes can
+   go beyond [-1, 1], which clips on the sound card. */
+
+/**
+ * Sets instrument slot (0 to SYNTHWAY_MAX_INSTRUMENTS - 1). Takes effect at
+ * the next audio block, also for its notes already playing, as the setters
+ * above do for instrument 0 (which this sets as they would).
+ * Returns SYNTHWAY_INVALID_PARAM, and keeps the instrument, when a value is
+ * out of the range its setter above accepts.
+ */
+SYNTHWAY_API synthway_result_t synthway_engine_set_instrument(
+    synthway_engine_t* engine,
+    uint32_t slot,
+    const synthway_instrument_t* instrument
+);
+
+SYNTHWAY_API synthway_result_t synthway_engine_get_instrument(
+    const synthway_engine_t* engine,
+    uint32_t slot,
+    synthway_instrument_t* out_instrument
+);
+
+/**
+ * Starts a note: frequency_hz (above 0, up to 24000) at volume (0 to 1), on
+ * instrument slot. note_id is the caller's name for it, for note_off. When
+ * note_id still sounds (held or fading out), that note starts again from
+ * its current level, at the new frequency. When all SYNTHWAY_MAX_NOTES are
+ * taken, the oldest note fading out makes way, else the oldest held one.
+ * Drops the glides the note was still to play (synthway_engine_note_glide).
+ * Takes effect at the next audio block (offline: the next render call).
+ * Returns SYNTHWAY_ERROR when too many notes are waiting for the audio
+ * thread (it is not running).
+ */
+SYNTHWAY_API synthway_result_t synthway_engine_note_on(
+    synthway_engine_t* engine,
+    uint32_t note_id,
+    uint32_t slot,
+    float frequency_hz,
+    float volume
+);
+
+/**
+ * Glides note note_id to frequency_hz (above 0, up to 24000) in seconds (0
+ * to SYNTHWAY_MAX_GLIDE_SECONDS; 0: a jump), in a straight line in
+ * semitones: the frequency grows by the same factor at every sample, so
+ * that each semitone takes the same time. The glides of a note chain: each
+ * starts where and when the one before ends, the first at the next audio
+ * block. A glide to the frequency the note already has holds it for that
+ * time. The note keeps gliding while it is released.
+ * A note holds up to SYNTHWAY_MAX_GLIDES glides waiting; more are ignored,
+ * as are the glides of a note that does not sound.
+ * Same timing and errors as synthway_engine_note_on.
+ */
+SYNTHWAY_API synthway_result_t synthway_engine_note_glide(
+    synthway_engine_t* engine,
+    uint32_t note_id,
+    float frequency_hz,
+    float seconds
+);
+
+/**
+ * Starts the release of note note_id; nothing when it is not held.
+ * Same timing and errors as synthway_engine_note_on.
+ */
+SYNTHWAY_API synthway_result_t synthway_engine_note_off(synthway_engine_t* engine, uint32_t note_id);
+
+/**
+ * Starts the release of every note started by synthway_engine_note_on (not
+ * the single-note API's). Same timing and errors as synthway_engine_note_on.
+ */
+SYNTHWAY_API synthway_result_t synthway_engine_all_notes_off(synthway_engine_t* engine);
+
+/**
+ * Notes started by synthway_engine_note_on that still sound (held or fading
+ * out), as of the last audio block.
+ */
+SYNTHWAY_API uint32_t synthway_engine_get_sounding_notes(const synthway_engine_t* engine);
+
+/* --------------------------------------------------------------------------
    Offline Rendering (no audio device)
    -------------------------------------------------------------------------- */
 /**
@@ -184,9 +271,10 @@ SYNTHWAY_API synthway_result_t synthway_engine_init_offline(
 );
 
 /**
- * Renders frame_count frames of interleaved float samples, in [-1, 1], into
- * out_samples (frame_count * channels values), exactly as the audio device
- * would receive them. Only for engines initialized with synthway_engine_init_offline.
+ * Renders frame_count frames of interleaved float samples, in [-1, 1] unless
+ * several notes add up beyond it, into out_samples (frame_count * channels
+ * values), exactly as the audio device would receive them. Only for engines
+ * initialized with synthway_engine_init_offline.
  */
 SYNTHWAY_API synthway_result_t synthway_engine_render(
     synthway_engine_t* engine,

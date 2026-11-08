@@ -52,6 +52,7 @@ try:  # run from src/ (uvicorn main:app, python main.py)
         EngineStatusResponse,
         EnvelopeAnalysis,
         Envelope,
+        Instrument,
         NoteSpan,
         Timbre,
         ToneControlRequest,
@@ -75,6 +76,7 @@ except ImportError:  # installed package (synthway-server command)
         EngineStatusResponse,
         EnvelopeAnalysis,
         Envelope,
+        Instrument,
         NoteSpan,
         Timbre,
         ToneControlRequest,
@@ -368,6 +370,18 @@ if HAS_FASTAPI:
                                       "envelope": {...}}, ...]},
              "unison": {"voices": 7, "detune": 12, "spread": 0.8}}
             ("timbre": null goes back to the single oscillator: waveform and envelope)
+        The messages above play a single note, on instrument 0. Polyphony, alongside it:
+          - {"type": "set_instrument", "slot": 1, "waveform": 0, "envelope": {...}, "timbre": {...},
+             "low_cutoff": 20, "cutoff": 20000, "resonance": 0, "reverb": 0, "unison": {...}}
+            (the whole instrument: an absent field takes its default; slot 0 to 15, 0 being set_param's)
+          - {"type": "note_on", "id": 7, "instrument": 1, "frequency": 440.0, "volume": 0.5,
+             "glides": [{"frequency": 660.0, "seconds": 0.5}, ...]}
+            (with an id: one more note, with its own attack; the same id strikes that note again;
+             "glides", optional, are queued right behind it, as note_glide would)
+          - {"type": "note_glide", "id": 7, "frequency": 660.0, "seconds": 0.5}
+            (to that frequency in that time, in a straight line in semitones, after the note's glides still to come)
+          - {"type": "note_off", "id": 7}
+          - {"type": "all_notes_off"} (every note with an id)
         An invalid message gets {"error": ...} back; the connection stays open.
         """
         if not await accept_local(websocket):
@@ -391,11 +405,27 @@ if HAS_FASTAPI:
                         # Start first: before that there is no engine to set the note on
                         if not core.is_running():
                             core.start_engine()
-                        core.set_frequency(float(freq))
-                        core.set_volume(float(vol))
-                        core.set_tone_enabled(True)
+                        if "id" in msg:
+                            core.note_on(int(msg["id"]), int(msg.get("instrument", 0)), float(freq), float(vol))
+                            # Its glides right behind it, so that they start with the note
+                            for glide in msg.get("glides", []):
+                                core.note_glide(int(msg["id"]), float(glide["frequency"]), float(glide["seconds"]))
+                        else:
+                            core.set_frequency(float(freq))
+                            core.set_volume(float(vol))
+                            core.set_tone_enabled(True)
                     elif action == "note_off":
-                        core.set_tone_enabled(False)
+                        if "id" in msg:
+                            core.note_off(int(msg["id"]))
+                        else:
+                            core.set_tone_enabled(False)
+                    elif action == "note_glide":
+                        core.note_glide(int(msg["id"]), float(msg["frequency"]), float(msg.get("seconds", 0.0)))
+                    elif action == "all_notes_off":
+                        core.all_notes_off()
+                    elif action == "set_instrument":
+                        fields = {key: value for key, value in msg.items() if key not in ("type", "slot")}
+                        core.set_instrument(int(msg.get("slot", 0)), Instrument(**fields))
                     elif action == "set_param":
                         if "frequency" in msg:
                             core.set_frequency(float(msg["frequency"]))
@@ -419,9 +449,10 @@ if HAS_FASTAPI:
                         if "unison" in msg:
                             unison = Unison(**msg["unison"])
                             core.set_unison(unison.voices, unison.detune, unison.spread)
-                except (ValueError, TypeError, AttributeError, RuntimeError) as ex:
-                    # Includes invalid JSON, pydantic validation errors and values refused by the core
-                    await websocket.send_json({"error": f"Invalid message: {ex}"})
+                except (ValueError, TypeError, AttributeError, KeyError, RuntimeError) as ex:
+                    # Includes invalid JSON, a missing field, pydantic validation errors and values refused by the core
+                    detail = f"missing field {ex}" if isinstance(ex, KeyError) else str(ex)
+                    await websocket.send_json({"error": f"Invalid message: {detail}"})
                     continue
 
                 # Send back current state

@@ -12,15 +12,17 @@ from typing import List, Optional, Sequence, Tuple
 
 try:
     from models import (
-        ANALYSIS_SPECTRUM_POINTS, MAX_PARTIALS, MAX_UNISON_DETUNE_CENTS, MAX_UNISON_VOICES, Analysis, AnalysisPartial,
-        ClipTrack, ClipWaveform, DeviceInfo, DeviceTypeEnum, Envelope, HarmonicLevel, HarmonicStateEnum, MidiPortInfo,
-        MidiPortTypeEnum, NoteSpan, ShapeFit, Timbre, WaveformEnum, WaveformFit, WaveShapeEnum,
+        ANALYSIS_SPECTRUM_POINTS, MAX_INSTRUMENTS, MAX_PARTIALS, MAX_UNISON_DETUNE_CENTS, MAX_UNISON_VOICES, Analysis,
+        AnalysisPartial, ClipTrack, ClipWaveform, DeviceInfo, DeviceTypeEnum, Envelope, HarmonicLevel,
+        HarmonicStateEnum, Instrument, MidiPortInfo, MidiPortTypeEnum, NoteSpan, ShapeFit, Timbre, WaveformEnum,
+        WaveformFit, WaveShapeEnum,
     )
 except ImportError:
     from .models import (
-        ANALYSIS_SPECTRUM_POINTS, MAX_PARTIALS, MAX_UNISON_DETUNE_CENTS, MAX_UNISON_VOICES, Analysis, AnalysisPartial,
-        ClipTrack, ClipWaveform, DeviceInfo, DeviceTypeEnum, Envelope, HarmonicLevel, HarmonicStateEnum, MidiPortInfo,
-        MidiPortTypeEnum, NoteSpan, ShapeFit, Timbre, WaveformEnum, WaveformFit, WaveShapeEnum,
+        ANALYSIS_SPECTRUM_POINTS, MAX_INSTRUMENTS, MAX_PARTIALS, MAX_UNISON_DETUNE_CENTS, MAX_UNISON_VOICES, Analysis,
+        AnalysisPartial, ClipTrack, ClipWaveform, DeviceInfo, DeviceTypeEnum, Envelope, HarmonicLevel,
+        HarmonicStateEnum, Instrument, MidiPortInfo, MidiPortTypeEnum, NoteSpan, ShapeFit, Timbre, WaveformEnum,
+        WaveformFit, WaveShapeEnum,
     )
 
 # synthway_result_t codes the server tells apart
@@ -127,6 +129,43 @@ def _timbre_to_c(timbre: Timbre) -> SynthwayTimbreC:
             ),
         )
     return c_timbre
+
+
+class SynthwayInstrumentC(ctypes.Structure):
+    """synthway_instrument_t: same fields, same order"""
+    _fields_ = [
+        ("waveform", ctypes.c_int),
+        ("envelope", SynthwayEnvelopeC),
+        ("filter_low_cutoff_hz", ctypes.c_float),
+        ("filter_high_cutoff_hz", ctypes.c_float),
+        ("filter_resonance", ctypes.c_float),
+        ("reverb_mix", ctypes.c_float),
+        ("unison_voices", ctypes.c_uint32),
+        ("unison_detune_cents", ctypes.c_float),
+        ("unison_spread", ctypes.c_float),
+        ("has_timbre", ctypes.c_bool),
+        ("timbre", SynthwayTimbreC),
+    ]
+
+
+def _instrument_to_c(instrument: Instrument) -> SynthwayInstrumentC:
+    envelope = instrument.envelope
+    c_instrument = SynthwayInstrumentC(
+        waveform=int(instrument.waveform),
+        # The single oscillator's envelope is always linear: its curves stay 0
+        envelope=SynthwayEnvelopeC(envelope.attack, envelope.decay, envelope.sustain, envelope.release),
+        filter_low_cutoff_hz=instrument.low_cutoff,
+        filter_high_cutoff_hz=instrument.cutoff,
+        filter_resonance=instrument.resonance,
+        reverb_mix=instrument.reverb,
+        unison_voices=instrument.unison.voices,
+        unison_detune_cents=instrument.unison.detune,
+        unison_spread=instrument.unison.spread,
+        has_timbre=instrument.timbre is not None,
+    )
+    if instrument.timbre is not None:
+        c_instrument.timbre = _timbre_to_c(instrument.timbre)
+    return c_instrument
 
 
 class SynthwayNoteSpanC(ctypes.Structure):
@@ -624,6 +663,8 @@ class SynthwayCore:
     _filter = (20.0, 20000.0, 0.0)
     _reverb = 0.0
     _unison = (1, 0.0, 0.0)  # voices, detune in cents, stereo spread: no unison
+    # Instrument slots 1 and up, by slot; slot 0 is the setters' above. None until one is set.
+    _instruments: Optional[dict] = None
 
     def __init__(self, lib_path: Optional[str] = None):
         self.lib_path = lib_path or _find_library()
@@ -741,6 +782,22 @@ class SynthwayCore:
 
         self._lib.synthway_get_max_partials.argtypes = []
         self._lib.synthway_get_max_partials.restype = ctypes.c_uint32
+
+        # Polyphony
+        self._lib.synthway_engine_set_instrument.argtypes = [
+            ctypes.c_void_p, ctypes.c_uint32, ctypes.POINTER(SynthwayInstrumentC)]
+        self._lib.synthway_engine_set_instrument.restype = ctypes.c_int
+        self._lib.synthway_engine_note_on.argtypes = [
+            ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_float, ctypes.c_float]
+        self._lib.synthway_engine_note_on.restype = ctypes.c_int
+        self._lib.synthway_engine_note_off.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+        self._lib.synthway_engine_note_off.restype = ctypes.c_int
+        self._lib.synthway_engine_note_glide.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_float, ctypes.c_float]
+        self._lib.synthway_engine_note_glide.restype = ctypes.c_int
+        self._lib.synthway_engine_all_notes_off.argtypes = [ctypes.c_void_p]
+        self._lib.synthway_engine_all_notes_off.restype = ctypes.c_int
+        self._lib.synthway_engine_get_sounding_notes.argtypes = [ctypes.c_void_p]
+        self._lib.synthway_engine_get_sounding_notes.restype = ctypes.c_uint32
 
         # SynthwayTimbreC mirrors the header: a core built with another limit
         # would read the structure at the wrong offsets
@@ -903,6 +960,8 @@ class SynthwayCore:
         self._apply_unison(self._engine, *self._unison)
         if self._timbre is not None:
             self._apply_timbre(self._engine, self._timbre)
+        for slot, instrument in (self._instruments or {}).items():
+            self._apply_instrument(self._engine, slot, instrument)
 
         start_res = self._lib.synthway_engine_start(self._engine)
         if start_res != 0:
@@ -1007,6 +1066,71 @@ class SynthwayCore:
     def get_max_partials(self) -> int:
         """Most partials a timbre can hold, checked against the core when the library is loaded."""
         return MAX_PARTIALS
+
+    # ---------- Polyphony: instrument slots and their notes ----------
+
+    def _apply_instrument(self, engine, slot: int, instrument: Instrument):
+        res = self._lib.synthway_engine_set_instrument(engine, slot, ctypes.byref(_instrument_to_c(instrument)))
+        self._check(res, f"Setting instrument {slot}")
+
+    def set_instrument(self, slot: int, instrument: Instrument):
+        """Sound of instrument slot (0 to MAX_INSTRUMENTS - 1) for the notes of note_on, kept across engine restarts.
+        Slot 0 is the single-note API's: this sets it through the setters above, as they would."""
+        if not 0 <= slot < MAX_INSTRUMENTS:
+            raise ValueError(f"Invalid instrument slot {slot} (0 to {MAX_INSTRUMENTS - 1})")
+        if slot == 0:
+            self.set_filter(instrument.low_cutoff, instrument.cutoff, instrument.resonance)
+            self.set_reverb(instrument.reverb)
+            self.set_unison(instrument.unison.voices, instrument.unison.detune, instrument.unison.spread)
+            self.set_envelope(instrument.envelope)
+            self.set_timbre(instrument.timbre)
+            self.set_waveform(instrument.waveform)
+            return
+        if self._engine:
+            self._apply_instrument(self._engine, slot, instrument)
+        if self._instruments is None:
+            self._instruments = {}
+        self._instruments[slot] = instrument
+
+    def get_instrument(self, slot: int) -> Optional[Instrument]:
+        """Instrument set in slot 1 and up; None when none was"""
+        return (self._instruments or {}).get(slot)
+
+    @staticmethod
+    def _check_note_id(note_id: int):
+        if not 0 <= note_id <= 0xFFFFFFFF:
+            raise ValueError(f"Invalid note id {note_id} (0 to {0xFFFFFFFF})")
+
+    def note_on(self, note_id: int, slot: int, frequency: float, volume: float):
+        """Starts note note_id on instrument slot, alongside the others (see synthway_engine_note_on)."""
+        self._check_note_id(note_id)
+        if self._engine:
+            res = self._lib.synthway_engine_note_on(self._engine, note_id, slot, ctypes.c_float(frequency), ctypes.c_float(volume))
+            self._check(res, "Starting a note")
+
+    def note_glide(self, note_id: int, frequency: float, seconds: float):
+        """Glides note note_id to frequency in seconds, in a straight line in semitones, after its glides
+        still to come (see synthway_engine_note_glide)."""
+        self._check_note_id(note_id)
+        if self._engine:
+            res = self._lib.synthway_engine_note_glide(self._engine, note_id, ctypes.c_float(frequency), ctypes.c_float(seconds))
+            self._check(res, "Gliding a note")
+
+    def note_off(self, note_id: int):
+        self._check_note_id(note_id)
+        if self._engine:
+            self._check(self._lib.synthway_engine_note_off(self._engine, note_id), "Releasing a note")
+
+    def all_notes_off(self):
+        """Releases every note started by note_on (not the single-note API's)."""
+        if self._engine:
+            self._check(self._lib.synthway_engine_all_notes_off(self._engine), "Releasing the notes")
+
+    def get_sounding_notes(self) -> int:
+        """Notes of note_on still held or fading out"""
+        if self._engine:
+            return int(self._lib.synthway_engine_get_sounding_notes(self._engine))
+        return 0
 
     def get_sample_rate(self) -> Optional[int]:
         """Sample rate of the running engine, None without one."""

@@ -107,6 +107,8 @@ recordings/
 *-recorded.*
 *_recording.*
 *_recorded.*
+*.mp3
+*.wav
 
 # IDEs & System
 .vscode/

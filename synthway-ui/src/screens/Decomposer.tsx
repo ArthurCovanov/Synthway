@@ -376,7 +376,7 @@ export function Decomposer({ onOpenAnalyzer }: { onOpenAnalyzer: () => void }) {
   return (
     <div className={layout.screen}>
       <ScreenHeader
-        index="05"
+        index="03"
         eyebrow="Séparation de sources"
         title="Decomposer"
         subtitle="Décompose un morceau en ses pistes (batterie, basse, voix, autres…), puis analyse celle qui t’intéresse."

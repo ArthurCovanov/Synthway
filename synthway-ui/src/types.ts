@@ -95,6 +95,28 @@ export interface TimbreParams {
 /** SYNTHWAY_MAX_PARTIALS, until /api/engine/status gives the server's value */
 export const DEFAULT_MAX_PARTIALS = 64;
 
+/** SYNTHWAY_MAX_INSTRUMENTS: instrument slots of the engine; 0 is the one set_param sets */
+export const MAX_INSTRUMENTS = 16;
+
+/** A glide of a note (synthway_engine_note_glide): to this frequency, in this time, in a straight line in semitones */
+export interface NoteGlide {
+  frequency: number;
+  seconds: number;
+}
+
+/** synthway_instrument_t, as set_instrument takes it: an absent field takes its default */
+export interface InstrumentParams {
+  waveform?: Waveform;
+  envelope?: EnvelopeParams;
+  /** null or absent: the single oscillator (waveform, envelope) */
+  timbre?: TimbreParams | null;
+  low_cutoff?: number;
+  cutoff?: number;
+  resonance?: number;
+  reverb?: number;
+  unison?: UnisonParams;
+}
+
 export interface EngineStatus {
   is_running: boolean;
   is_tone_enabled: boolean;

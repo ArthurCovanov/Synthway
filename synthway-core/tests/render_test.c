@@ -834,6 +834,342 @@ static void test_unison(void) {
     free(mono);
 }
 
+/* ---------------------------------------------------------------------------
+   Polyphony: notes on instruments, each with its own envelopes
+   --------------------------------------------------------------------------- */
+
+/* One sine partial at full amplitude with this envelope, band open, no reverb */
+static synthway_instrument_t sine_instrument(float attack, float decay, float sustain, float release) {
+    synthway_instrument_t instrument;
+    memset(&instrument, 0, sizeof(instrument));
+    instrument.waveform = SYNTHWAY_WAVEFORM_SINE;
+    instrument.envelope.attack_s = 0.005f;
+    instrument.envelope.sustain_level = 1.0f;
+    instrument.envelope.release_s = 0.01f;
+    instrument.filter_low_cutoff_hz = 20.0f;
+    instrument.filter_high_cutoff_hz = 20000.0f;
+    instrument.unison_voices = 1;
+    synthway_partial_t partial = sine_partial(1.0f, 1.0f);
+    partial.envelope.attack_s = attack;
+    partial.envelope.decay_s = decay;
+    partial.envelope.sustain_level = sustain;
+    partial.envelope.release_s = release;
+    instrument.has_timbre = true;
+    instrument.timbre = timbre_of(1, &partial);
+    return instrument;
+}
+
+/* Mono offline engine with the single-note API silent */
+static synthway_engine_t* poly_engine(void) {
+    synthway_engine_t* engine = offline_engine(1);
+    synthway_engine_set_tone_enabled(engine, false);
+    return engine;
+}
+
+static void test_poly_overlapping_notes(void) {
+    synthway_engine_t* engine = poly_engine();
+    const synthway_instrument_t sine = sine_instrument(0.005f, 0.0f, 1.0f, 0.01f);
+    const synthway_result_t set = synthway_engine_set_instrument(engine, 1, &sine);
+    synthway_engine_note_on(engine, 1, 1, 440.0f, 0.4f);
+    free(render(engine, SAMPLE_RATE / 5));
+    synthway_engine_note_on(engine, 2, 1, 660.0f, 0.3f);
+    /* 0.5 s after the second note: whole periods of both */
+    float* both = render(engine, WARMUP_FRAMES + SAMPLE_RATE / 2);
+    const double both_440 = measure_amplitude(both + WARMUP_FRAMES, SAMPLE_RATE / 2, 440.0);
+    const double both_660 = measure_amplitude(both + WARMUP_FRAMES, SAMPLE_RATE / 2, 660.0);
+    const uint32_t sounding_both = synthway_engine_get_sounding_notes(engine);
+
+    synthway_engine_note_off(engine, 1);
+    float* after = render(engine, WARMUP_FRAMES + SAMPLE_RATE / 20);
+    const double after_440 = measure_amplitude(after + WARMUP_FRAMES, SAMPLE_RATE / 20, 440.0);
+    const double after_660 = measure_amplitude(after + WARMUP_FRAMES, SAMPLE_RATE / 20, 660.0);
+    const uint32_t sounding_after = synthway_engine_get_sounding_notes(engine);
+
+    char detail[192];
+    snprintf(detail, sizeof(detail), "together 440 Hz %.4f, 660 Hz %.4f, %u note(s); first released: %.5f and %.4f, %u note(s)",
+             both_440, both_660, sounding_both, after_440, after_660, sounding_after);
+    check(set == SYNTHWAY_OK && fabs(both_440 - 0.4) < 0.005 && fabs(both_660 - 0.3) < 0.005 && sounding_both == 2
+              && after_440 < 0.001 && fabs(after_660 - 0.3) < 0.005 && sounding_after == 1,
+          "polyphony: a second note plays along the first, each released apart", detail);
+    free(both);
+    free(after);
+    synthway_engine_destroy(engine);
+}
+
+/* A pluck: up in 5 ms, then down to silence in 0.2 s while held */
+static void test_poly_each_note_attacks(void) {
+    synthway_engine_t* engine = poly_engine();
+    const synthway_instrument_t pluck = sine_instrument(0.005f, 0.2f, 0.0f, 0.01f);
+    synthway_engine_set_instrument(engine, 1, &pluck);
+    synthway_engine_note_on(engine, 1, 1, 220.0f, 0.5f);
+    float* first = render(engine, SAMPLE_RATE / 2);
+    const double first_end = measure_peak(first + SAMPLE_RATE / 2 - SAMPLE_RATE / 20, SAMPLE_RATE / 20, 1);
+
+    /* Another note while the first is held but faded out: its own attack */
+    synthway_engine_note_on(engine, 2, 1, 330.0f, 0.5f);
+    float* second = render(engine, SAMPLE_RATE / 2);
+    const double second_peak = measure_peak(second, SAMPLE_RATE / 50, 1);
+
+    /* The same note struck again: a new attack too */
+    synthway_engine_note_on(engine, 1, 1, 220.0f, 0.5f);
+    float* again = render(engine, SAMPLE_RATE / 50);
+    const double again_peak = measure_peak(again, SAMPLE_RATE / 50, 1);
+    const uint32_t sounding = synthway_engine_get_sounding_notes(engine);
+
+    char detail[160];
+    snprintf(detail, sizeof(detail), "first note faded to %.5f; second note peak %.3f; first struck again %.3f; %u note(s) held",
+             first_end, second_peak, again_peak, sounding);
+    check(first_end < 0.001 && second_peak > 0.44 && again_peak > 0.44 && sounding == 2,
+          "polyphony: each note starts with its own attack, even struck again", detail);
+    free(first);
+    free(second);
+    free(again);
+    synthway_engine_destroy(engine);
+}
+
+static void test_poly_instruments_apart(void) {
+    synthway_engine_t* engine = poly_engine();
+    synthway_instrument_t muffled = sine_instrument(0.005f, 0.0f, 1.0f, 0.01f);
+    muffled.filter_high_cutoff_hz = 300.0f;
+    const synthway_instrument_t open = sine_instrument(0.005f, 0.0f, 1.0f, 0.01f);
+    synthway_engine_set_instrument(engine, 1, &muffled);
+    synthway_engine_set_instrument(engine, 2, &open);
+    synthway_engine_note_on(engine, 10, 1, 3000.0f, 0.5f);
+    synthway_engine_note_on(engine, 20, 2, 2000.0f, 0.5f);
+    float* x = render(engine, WARMUP_FRAMES + SAMPLE_RATE / 4);
+    const double muffled_3000 = measure_amplitude(x + WARMUP_FRAMES, SAMPLE_RATE / 4, 3000.0);
+    const double open_2000 = measure_amplitude(x + WARMUP_FRAMES, SAMPLE_RATE / 4, 2000.0);
+
+    /* The single-note API plays along, on instrument 0 */
+    synthway_engine_set_frequency(engine, 440.0f);
+    synthway_engine_set_volume(engine, 0.25f);
+    synthway_engine_set_tone_enabled(engine, true);
+    float* y = render(engine, WARMUP_FRAMES + SAMPLE_RATE / 4);
+    const double single_440 = measure_amplitude(y + WARMUP_FRAMES, SAMPLE_RATE / 4, 440.0);
+    const double still_2000 = measure_amplitude(y + WARMUP_FRAMES, SAMPLE_RATE / 4, 2000.0);
+
+    char detail[192];
+    snprintf(detail, sizeof(detail), "3000 Hz through a 300 Hz low-pass %.4f, 2000 Hz open %.4f; single note 440 Hz %.4f along 2000 Hz %.4f",
+             muffled_3000, open_2000, single_440, still_2000);
+    check(muffled_3000 < 0.01 && fabs(open_2000 - 0.5) < 0.005 && fabs(single_440 - 0.25) < 0.005 && fabs(still_2000 - 0.5) < 0.005,
+          "polyphony: each instrument filters its own notes, the single note plays along", detail);
+    free(x);
+    free(y);
+    synthway_engine_destroy(engine);
+}
+
+static void test_poly_reverb_per_instrument(void) {
+    double tails[2];
+    for (int wet = 0; wet < 2; ++wet) {
+        synthway_engine_t* engine = poly_engine();
+        synthway_instrument_t instrument = sine_instrument(0.005f, 0.0f, 1.0f, 0.01f);
+        const synthway_instrument_t dry = instrument;
+        instrument.reverb_mix = wet ? 0.6f : 0.0f;
+        synthway_engine_set_instrument(engine, 1, &instrument);
+        synthway_engine_set_instrument(engine, 2, &dry);
+        synthway_engine_note_on(engine, 1, 1, 440.0f, 0.5f);
+        synthway_engine_note_on(engine, 2, 2, 660.0f, 0.5f);
+        free(render(engine, SAMPLE_RATE / 4));
+        synthway_engine_all_notes_off(engine);
+        float* x = render(engine, SAMPLE_RATE / 2);
+        tails[wet] = measure_rms(x + SAMPLE_RATE / 10, SAMPLE_RATE / 5, 1);
+        free(x);
+        synthway_engine_destroy(engine);
+    }
+    char detail[128];
+    snprintf(detail, sizeof(detail), "0.1 to 0.3 s after the notes: dry %.6f, one instrument with reverb %.4f", tails[0], tails[1]);
+    check(tails[0] == 0.0 && tails[1] > 0.01, "polyphony: only the instrument with reverb rings on", detail);
+}
+
+static void test_poly_voice_limit(void) {
+    synthway_engine_t* engine = poly_engine();
+    const synthway_instrument_t sine = sine_instrument(0.005f, 0.0f, 1.0f, 0.01f);
+    synthway_engine_set_instrument(engine, 1, &sine);
+    /* One more than the engine holds: the oldest, at 200 Hz, makes way */
+    for (uint32_t k = 0; k <= SYNTHWAY_MAX_NOTES; ++k) {
+        synthway_engine_note_on(engine, 100 + k, 1, 200.0f + 10.0f * (float)k, 0.02f);
+    }
+    float* x = render(engine, SAMPLE_RATE / 5);
+    const float* window = x + SAMPLE_RATE / 10; /* 0.1 s: whole periods of every 10 Hz */
+    const double oldest = measure_amplitude(window, SAMPLE_RATE / 10, 200.0);
+    const double second = measure_amplitude(window, SAMPLE_RATE / 10, 210.0);
+    const double newest = measure_amplitude(window, SAMPLE_RATE / 10, 200.0 + 10.0 * SYNTHWAY_MAX_NOTES);
+    const uint32_t full = synthway_engine_get_sounding_notes(engine);
+
+    synthway_engine_all_notes_off(engine);
+    float* y = render(engine, SAMPLE_RATE / 10);
+    const double tail = measure_peak(y + SAMPLE_RATE / 20, SAMPLE_RATE / 20, 1);
+    const uint32_t left = synthway_engine_get_sounding_notes(engine);
+
+    char detail[160];
+    snprintf(detail, sizeof(detail), "%u notes asked, %u sound; oldest %.5f, second %.4f, newest %.4f; all off: peak %.6f, %u left",
+             SYNTHWAY_MAX_NOTES + 1, full, oldest, second, newest, tail, left);
+    check(full == SYNTHWAY_MAX_NOTES && oldest < 0.0005 && fabs(second - 0.02) < 0.001 && fabs(newest - 0.02) < 0.001
+              && tail == 0.0 && left == 0,
+          "polyphony: beyond the limit the oldest note makes way; all notes off", detail);
+    free(x);
+    free(y);
+    synthway_engine_destroy(engine);
+}
+
+static void test_poly_validation(void) {
+    synthway_engine_t* engine = poly_engine();
+    synthway_instrument_t good = sine_instrument(0.005f, 0.0f, 1.0f, 0.01f);
+    good.reverb_mix = 0.25f;
+    synthway_instrument_t bad_band = good;
+    bad_band.filter_low_cutoff_hz = 5000.0f;
+    bad_band.filter_high_cutoff_hz = 1000.0f;
+    synthway_instrument_t bad_partial = good;
+    bad_partial.timbre.partials[0].amplitude = 2.0f;
+    synthway_instrument_t bad_unison = good;
+    bad_unison.unison_voices = 0;
+
+    const int set = synthway_engine_set_instrument(engine, 3, &good) == SYNTHWAY_OK;
+    const int refused = synthway_engine_set_instrument(engine, SYNTHWAY_MAX_INSTRUMENTS, &good) == SYNTHWAY_INVALID_PARAM
+        && synthway_engine_set_instrument(engine, 3, &bad_band) == SYNTHWAY_INVALID_PARAM
+        && synthway_engine_set_instrument(engine, 3, &bad_partial) == SYNTHWAY_INVALID_PARAM
+        && synthway_engine_set_instrument(engine, 3, &bad_unison) == SYNTHWAY_INVALID_PARAM
+        && synthway_engine_set_instrument(engine, 3, NULL) == SYNTHWAY_INVALID_PARAM
+        && synthway_engine_note_on(engine, 1, SYNTHWAY_MAX_INSTRUMENTS, 440.0f, 0.5f) == SYNTHWAY_INVALID_PARAM
+        && synthway_engine_note_on(engine, 1, 0, 0.0f, 0.5f) == SYNTHWAY_INVALID_PARAM
+        && synthway_engine_note_on(engine, 1, 0, NAN, 0.5f) == SYNTHWAY_INVALID_PARAM
+        && synthway_engine_note_on(engine, 1, 0, 440.0f, 1.5f) == SYNTHWAY_INVALID_PARAM;
+
+    synthway_instrument_t kept;
+    synthway_engine_get_instrument(engine, 3, &kept);
+    const int unchanged = kept.reverb_mix == 0.25f && kept.filter_high_cutoff_hz == 20000.0f && kept.has_timbre
+        && kept.timbre.partial_count == 1 && kept.timbre.partials[0].amplitude == 1.0f;
+
+    /* Instrument 0 is the one the single-note API's setters set */
+    synthway_engine_set_reverb(engine, 0.3f);
+    synthway_instrument_t first;
+    synthway_engine_get_instrument(engine, 0, &first);
+    synthway_engine_set_instrument(engine, 0, &good);
+    const int shared = first.reverb_mix == 0.3f && !first.has_timbre && synthway_engine_get_reverb(engine) == 0.25f
+        && synthway_engine_has_timbre(engine);
+
+    /* Too many notes waiting for an audio thread that does not run */
+    int accepted = 1;
+    for (uint32_t k = 0; k < 1024; ++k) {
+        accepted = accepted && synthway_engine_note_off(engine, k) == SYNTHWAY_OK;
+    }
+    const int full = synthway_engine_note_off(engine, 0) == SYNTHWAY_ERROR;
+    free(render(engine, 1));
+    const int room_again = synthway_engine_note_off(engine, 0) == SYNTHWAY_OK;
+
+    char detail[160];
+    snprintf(detail, sizeof(detail), "set %d, refused %d, kept %d, instrument 0 shared %d, queue 1024 %d then full %d, room after a block %d",
+             set, refused, unchanged, shared, accepted, full, room_again);
+    check(set && refused && unchanged && shared && accepted && full && room_again,
+          "polyphony: invalid instruments and notes refused, instrument 0 shared, queue bounded", detail);
+    synthway_engine_destroy(engine);
+}
+
+/* ---------------------------------------------------------------------------
+   Glides: a note's frequency on a straight line in semitones
+   --------------------------------------------------------------------------- */
+
+/* Frequency over 40 ms centred on seconds */
+static double frequency_at(const float* x, double seconds) {
+    const uint32_t window = SAMPLE_RATE / 25;
+    return measure_frequency(x + (uint32_t)(seconds * SAMPLE_RATE) - window / 2, window, 1);
+}
+
+static int within(double value, double expected, double share) {
+    return fabs(value - expected) <= expected * share;
+}
+
+static void test_glide_follows_semitones(void) {
+    synthway_engine_t* engine = poly_engine();
+    const synthway_instrument_t sine = sine_instrument(0.005f, 0.0f, 1.0f, 0.01f);
+    synthway_engine_set_instrument(engine, 1, &sine);
+    synthway_engine_note_on(engine, 1, 1, 220.0f, 0.5f);
+    /* An octave up in 1 s, held 0.5 s, then down a fourth in 0.25 s */
+    const int queued = synthway_engine_note_glide(engine, 1, 440.0f, 1.0f) == SYNTHWAY_OK
+        && synthway_engine_note_glide(engine, 1, 440.0f, 0.5f) == SYNTHWAY_OK
+        && synthway_engine_note_glide(engine, 1, 330.0f, 0.25f) == SYNTHWAY_OK;
+    float* x = render(engine, 2 * SAMPLE_RATE);
+    const double up_quarter = frequency_at(x, 0.25), up_half = frequency_at(x, 0.5), up_three = frequency_at(x, 0.75);
+    const double held = frequency_at(x, 1.25), down_half = frequency_at(x, 1.625), after = frequency_at(x, 1.9);
+
+    char detail[192];
+    snprintf(detail, sizeof(detail), "%.1f / %.1f / %.1f Hz up (261.6 / 311.1 / 370.0), held %.1f, down %.1f (381.1), after %.1f",
+             up_quarter, up_half, up_three, held, down_half, after);
+    check(queued && within(up_quarter, 220.0 * pow(2.0, 0.25), 0.003) && within(up_half, 220.0 * sqrt(2.0), 0.003)
+              && within(up_three, 220.0 * pow(2.0, 0.75), 0.003) && within(held, 440.0, 0.002)
+              && within(down_half, 440.0 * sqrt(0.75), 0.003) && within(after, 330.0, 0.002),
+          "glide: a straight line in semitones, chained, a glide to the same note holds it", detail);
+    free(x);
+    synthway_engine_destroy(engine);
+}
+
+static void test_glide_jump_and_release(void) {
+    synthway_engine_t* engine = poly_engine();
+    const synthway_instrument_t sine = sine_instrument(0.005f, 0.0f, 1.0f, 0.5f);
+    synthway_engine_set_instrument(engine, 1, &sine);
+    synthway_engine_note_on(engine, 2, 1, 440.0f, 0.5f);
+    synthway_engine_note_glide(engine, 2, 660.0f, 0.0f); /* a jump */
+    float* held = render(engine, SAMPLE_RATE / 5);
+    const double jumped = frequency_at(held, 0.1);
+
+    /* Released, it keeps gliding while it fades out */
+    synthway_engine_note_off(engine, 2);
+    synthway_engine_note_glide(engine, 2, 330.0f, 0.1f);
+    float* fading = render(engine, SAMPLE_RATE / 4);
+    const double released = frequency_at(fading, 0.2);
+    const double level = measure_peak(fading + SAMPLE_RATE / 5 - SAMPLE_RATE / 50, SAMPLE_RATE / 50, 1);
+
+    char detail[128];
+    snprintf(detail, sizeof(detail), "jump to %.1f Hz; released, glided to %.1f Hz at level %.3f", jumped, released, level);
+    check(within(jumped, 660.0, 0.002) && within(released, 330.0, 0.002) && level > 0.05,
+          "glide: 0 s is a jump, and a released note keeps gliding", detail);
+    free(held);
+    free(fading);
+    synthway_engine_destroy(engine);
+}
+
+static void test_glide_limits(void) {
+    synthway_engine_t* engine = poly_engine();
+    const synthway_instrument_t sine = sine_instrument(0.005f, 0.0f, 1.0f, 0.01f);
+    synthway_engine_set_instrument(engine, 1, &sine);
+
+    /* note_on drops the glides still to come */
+    synthway_engine_note_on(engine, 3, 1, 440.0f, 0.5f);
+    synthway_engine_note_glide(engine, 3, 880.0f, 1.0f);
+    free(render(engine, SAMPLE_RATE / 10));
+    synthway_engine_note_on(engine, 3, 1, 440.0f, 0.5f);
+    float* again = render(engine, SAMPLE_RATE / 2);
+    const double restruck = frequency_at(again, 0.4);
+
+    /* SYNTHWAY_MAX_GLIDES wait; the one after is ignored, as is a glide of a note that does not sound */
+    synthway_engine_note_on(engine, 4, 1, 330.0f, 0.5f);
+    for (uint32_t k = 0; k < SYNTHWAY_MAX_GLIDES; ++k) {
+        synthway_engine_note_glide(engine, 4, 330.0f, 0.005f);
+    }
+    synthway_engine_note_glide(engine, 4, 990.0f, 0.0f);
+    const int unknown = synthway_engine_note_glide(engine, 99, 990.0f, 0.0f) == SYNTHWAY_OK;
+    float* full = render(engine, SAMPLE_RATE / 2);
+    /* 0.3 to 0.5 s: past the glides, whole periods of 330, 440 (note 3) and 990 Hz */
+    const double kept = measure_amplitude(full + 3 * SAMPLE_RATE / 10, SAMPLE_RATE / 5, 330.0);
+    const double ignored = measure_amplitude(full + 3 * SAMPLE_RATE / 10, SAMPLE_RATE / 5, 990.0);
+
+    const int refused = synthway_engine_note_glide(engine, 4, 0.0f, 1.0f) == SYNTHWAY_INVALID_PARAM
+        && synthway_engine_note_glide(engine, 4, NAN, 1.0f) == SYNTHWAY_INVALID_PARAM
+        && synthway_engine_note_glide(engine, 4, 30000.0f, 1.0f) == SYNTHWAY_INVALID_PARAM
+        && synthway_engine_note_glide(engine, 4, 440.0f, -0.1f) == SYNTHWAY_INVALID_PARAM
+        && synthway_engine_note_glide(engine, 4, 440.0f, SYNTHWAY_MAX_GLIDE_SECONDS + 1.0f) == SYNTHWAY_INVALID_PARAM
+        && synthway_engine_note_glide(NULL, 4, 440.0f, 1.0f) == SYNTHWAY_INVALID_PARAM;
+
+    char detail[192];
+    snprintf(detail, sizeof(detail), "struck again: %.1f Hz; %u glides kept 330 Hz %.3f, the next one ignored (990 Hz %.4f), unknown note %d, refused %d",
+             restruck, SYNTHWAY_MAX_GLIDES, kept, ignored, unknown, refused);
+    check(within(restruck, 440.0, 0.002) && fabs(kept - 0.5) < 0.005 && ignored < 0.001 && unknown && refused,
+          "glide: dropped by note_on, bounded queue, invalid values refused", detail);
+    free(again);
+    free(full);
+    synthway_engine_destroy(engine);
+}
+
 static void test_wav_export(const char* path) {
     const uint32_t frames = SAMPLE_RATE / 2;
     synthway_engine_t* engine = offline_engine(2);
@@ -918,6 +1254,15 @@ int main(int argc, char* argv[]) {
     test_decay_and_release_curves_apart();
     test_convex_attack();
     test_unison();
+    test_poly_overlapping_notes();
+    test_poly_each_note_attacks();
+    test_poly_instruments_apart();
+    test_poly_reverb_per_instrument();
+    test_poly_voice_limit();
+    test_poly_validation();
+    test_glide_follows_semitones();
+    test_glide_jump_and_release();
+    test_glide_limits();
     test_wav_export(wav_path);
 
     printf("%s: %d failure(s)\n", failures ? "FAILED" : "OK", failures);

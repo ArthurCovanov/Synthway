@@ -673,9 +673,10 @@ function sendText(socket, text) {
 function handleMessage(message) {
   if (message.type === 'note_on') {
     state.running = true; // the real server starts the engine first if needed
-    Object.assign(state, { frequency: message.frequency, volume: message.volume, enabled: true });
+    // With an id, one more note alongside the single one (polyphony): the single note is untouched
+    if (!('id' in message)) Object.assign(state, { frequency: message.frequency, volume: message.volume, enabled: true });
   } else if (message.type === 'note_off') {
-    state.enabled = false;
+    if (!('id' in message)) state.enabled = false;
   } else if (message.type === 'set_param') {
     for (const key of ['frequency', 'volume', 'waveform', 'enabled']) {
       if (key in message) state[key] = message[key];

@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useRef } from 'react';
-import type { ToneParams } from '../types';
+import type { InstrumentParams, ToneParams } from '../types';
 import { unisonOf, type Instrument } from './instruments';
 import { toTimbre } from './partials';
 import { useSynthServer } from './SynthServer';
 
-/** What the engine plays of an instrument: its volume, partials, band-pass filter, reverb and unison */
-export function instrumentParams(instrument: Instrument, maxPartials: number): ToneParams {
+/** The sound of an instrument, for an instrument slot: partials, band-pass filter, reverb and unison.
+    A note's volume is given when it starts. */
+export function instrumentSound(instrument: Instrument, maxPartials: number): InstrumentParams {
   return {
-    volume: instrument.volume,
     timbre: toTimbre(instrument.partials, maxPartials),
     low_cutoff: instrument.filter.lowCutoff,
     cutoff: instrument.filter.cutoff,
@@ -15,6 +15,11 @@ export function instrumentParams(instrument: Instrument, maxPartials: number): T
     reverb: instrument.reverb ?? 0,
     unison: unisonOf(instrument),
   };
+}
+
+/** What the engine plays of an instrument on instrument 0: its sound, and the single note's volume */
+export function instrumentParams(instrument: Instrument, maxPartials: number): ToneParams {
+  return { volume: instrument.volume, ...instrumentSound(instrument, maxPartials) };
 }
 
 /**

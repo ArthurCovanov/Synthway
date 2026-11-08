@@ -118,6 +118,40 @@ typedef struct synthway_timbre {
 } synthway_timbre_t;
 
 /* --------------------------------------------------------------------------
+   Polyphony: instruments, and the notes that play them
+   -------------------------------------------------------------------------- */
+
+/* Instruments the engine holds at once (synthway_engine_set_instrument).
+   Instrument 0 is the one the single-note API plays and sets. */
+#define SYNTHWAY_MAX_INSTRUMENTS 16
+
+/* Notes that can sound at once (synthway_engine_note_on), besides the
+   single-note API's own */
+#define SYNTHWAY_MAX_NOTES 32
+
+/* Glides a note holds waiting (synthway_engine_note_glide), besides the one it plays */
+#define SYNTHWAY_MAX_GLIDES 64
+
+/* Longest glide, in seconds */
+#define SYNTHWAY_MAX_GLIDE_SECONDS 600.0f
+
+/* Everything that makes an instrument's sound. A note's frequency and volume
+   are given when it starts (synthway_engine_note_on). */
+typedef struct synthway_instrument {
+    synthway_waveform_t waveform;  /* of the single oscillator, played when has_timbre is false */
+    synthway_envelope_t envelope;  /* of the single oscillator; its curves are ignored (always linear) */
+    float filter_low_cutoff_hz;    /* band-pass, as in synthway_engine_set_filter */
+    float filter_high_cutoff_hz;
+    float filter_resonance;
+    float reverb_mix;              /* as in synthway_engine_set_reverb */
+    uint32_t unison_voices;        /* as in synthway_engine_set_unison */
+    float unison_detune_cents;
+    float unison_spread;
+    bool has_timbre;               /* false: the single oscillator plays, and timbre is ignored */
+    synthway_timbre_t timbre;
+} synthway_instrument_t;
+
+/* --------------------------------------------------------------------------
    Audio Device Information
    -------------------------------------------------------------------------- */
 typedef struct synthway_device_info {

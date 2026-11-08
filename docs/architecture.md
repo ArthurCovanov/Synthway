@@ -56,7 +56,7 @@ L'UI appelle des URL relatives (`/api`, `/health`, `/ws`) que Vite redirige vers
 | Canal | Messages | Usage |
 | --- | --- | --- |
 | REST (HTTP) | `GET /health`, `GET /api/devices`, `POST /api/engine/start`, `POST /api/engine/stop`, `GET /api/engine/status`, `POST /api/synth/tone`, `POST /api/synth/envelope`, `POST` et `DELETE /api/synth/timbre` | Actions ponctuelles : connexion (vérifiée toutes les 4 s), liste des sorties audio, allumer ou couper le moteur, réglages initiaux |
-| WebSocket `/ws/synth` | `note_on`, `note_off`, `set_param` | Temps réel : les notes et les réglages modifiés en direct. Le serveur répond à chaque message avec l'état du moteur |
+| WebSocket `/ws/synth` | `note_on`, `note_off`, `set_param`, `set_instrument`, `note_glide`, `all_notes_off` | Temps réel : les notes (la note unique, ou des notes nommées par `id` sur l'un des 16 instruments, qui peuvent glisser d'une hauteur à l'autre) et les réglages modifiés en direct. Le serveur répond à chaque message avec l'état du moteur |
 
 Le WebSocket se reconnecte tout seul, avec un délai qui double de 0,5 à 8 s.
 
@@ -139,25 +139,25 @@ sequenceDiagram
     participant E as engine_params.c (core)
     participant A as engine.c et synth.c, thread audio
     K->>K: midiToFrequency(60) = 261,63 Hz
-    K->>S: noteOn(261.63, 0.3)
-    S->>M: {"type": "note_on", "frequency": 261.63, "volume": 0.3}
-    M->>B: set_frequency, set_volume, set_tone_enabled(True)
-    B->>E: synthway_engine_set_frequency(engine, 261.63), etc.
+    K->>S: startNote(60, 0, 261.63, 0.3)
+    S->>M: {"type": "note_on", "id": 60, "instrument": 0, "frequency": 261.63, "volume": 0.3}
+    M->>B: note_on(60, 0, 261.63, 0.3)
+    B->>E: synthway_engine_note_on(engine, 60, 0, 261.63, 0.3)
     E-->>B: SYNTHWAY_OK, rend la main aussitôt
     M-->>S: état du moteur en JSON
     Note over A: au bloc suivant, 5 à 20 ms plus tard
-    A->>A: lit les cibles et calcule les échantillons
+    A->>A: prend la note dans la file, lui donne une voix, calcule les échantillons
 ```
 
-1. `press()` (`KeyboardDock.tsx`) convertit la note MIDI en Hz : **c'est l'UI qui calcule la fréquence.**
-2. `SynthSocket.noteOn` envoie `{"type": "note_on", "frequency": 261.63, "volume": 0.3}` sur le WebSocket.
-3. Le gestionnaire `websocket_synth_endpoint` (`main.py`) démarre le moteur s'il est arrêté, puis appelle `set_frequency`, `set_volume` et `set_tone_enabled(True)`.
-4. `core_bridge.py` traduit chaque appel en appel C, par exemple `self._lib.synthway_engine_set_frequency(self._engine, ctypes.c_float(freq))`.
-5. Le core écrit trois variables atomiques et rend la main. Le serveur renvoie l'état du moteur à l'UI.
-6. Au bloc suivant, le thread audio voit `tone_enabled` passer à vrai et lance l'attaque de l'enveloppe : le son monte jusqu'au niveau de maintien.
-7. Au relâchement de la touche, l'UI envoie `note_off`, ce qui met `tone_enabled` à faux : le thread audio lance le relâchement, et le son s'éteint en `release` secondes.
+1. `press()` (`KeyboardDock.tsx`) convertit la note MIDI en Hz : **c'est l'UI qui calcule la fréquence.** Le numéro MIDI sert de nom à la note (`id`).
+2. `SynthSocket.startNote` envoie `{"type": "note_on", "id": 60, "instrument": 0, ...}` sur le WebSocket.
+3. Le gestionnaire `websocket_synth_endpoint` (`main.py`) démarre le moteur s'il est arrêté, puis appelle `note_on`.
+4. `core_bridge.py` traduit l'appel en appel C : `self._lib.synthway_engine_note_on(...)`.
+5. Le core ajoute la note à la file des notes (`sw_note_queue`) et rend la main. Le serveur renvoie l'état du moteur à l'UI.
+6. Au bloc suivant, le thread audio prend la note dans la file et lui donne une voix libre (sinon celle de la note la plus ancienne), qui lance son attaque : le son monte jusqu'au niveau de maintien, quelles que soient les autres notes.
+7. Au relâchement de la touche, l'UI envoie `{"type": "note_off", "id": 60}` : le thread audio lance le relâchement de cette voix seulement, et elle s'éteint en `release` secondes.
 
-Le moteur reste monophonique pour les notes directes du clavier et de l'aperçu de l'Instrument Creator. Le Composer cadence la partition au tempo et envoie les notes simultanées sous forme d'un timbre temporaire : chaque note devient un partiel accordé à sa fréquence et garde l'enveloppe de son instrument. Le moteur additionne ces partiels dans son thread audio (jusqu'à `max_partials`, 64 par défaut). Le transport gère lecture, pause, reprise et position de départ ; le playhead défile dans le roll. `src/interpreter/` fournit la sélection sans allocation des notes actives à un pas donné.
+Sans `id`, `note_on` et `note_off` jouent la note unique, sur l'instrument 0, par trois variables atomiques (`set_frequency`, `set_volume`, `set_tone_enabled`). Le clavier joue sur l'instrument 0, celui que l'Instrument Creator règle en direct par `set_param`. Le Composer donne à chaque piste son instrument (1 à 15, par `set_instrument`) et cadence la partition au tempo : chaque note de la partition devient une note du moteur, démarrée à son premier pas et relâchée après son dernier. Le transport gère lecture, pause, reprise et position de départ ; le playhead défile dans le roll. `src/interpreter/` fournit la sélection sans allocation des notes actives à un pas donné (inutilisé pour l'instant : l'UI fait cette sélection).
 
 ## Le rôle du serveur
 
@@ -230,8 +230,9 @@ flowchart LR
 - **Les effets audio du système éteignent une note tenue** : en mode partagé, Windows applique au micro ses effets et ceux du fabricant (réduction de bruit, gain automatique ; Dolby sur les micros Intel Smart Sound), qui prennent un son stable pour du bruit de fond. Le core ouvre donc le micro en mode exclusif quand il le peut (`synthway_analyzer_is_input_exclusive`), et l'Analyzer prévient quand il n'a obtenu que le mode partagé.
 - **Un timbre remplace la forme d'onde et l'enveloppe** : tant qu'un timbre est en place, `set_waveform` et `set_envelope` n'ont pas d'effet audible. `DELETE /api/synth/timbre` (ou `"timbre": null`) revient à l'oscillateur unique.
 - **Le pont ignore les codes de retour des setters** (seul le rendu hors ligne les vérifie). Une fréquence hors bornes reçue par le WebSocket est refusée par le core sans que personne ne soit prévenu.
-- **Un `note_on` porte ouverte ne relance pas l'attaque** (legato). Pour rejouer une note avec son attaque, il faut un `note_off` puis un `note_on`, séparés d'au moins un bloc.
-- **Le core ne lit les réglages qu'une fois par bloc** : un réglage met jusqu'à un bloc (5 à 20 ms) à être pris en compte. C'est voulu (voir le commentaire de `sw_engine_render`, dans `engine.c`). Conséquence : un `note_off` suivi d'un `note_on` dans le même bloc n'est pas vu comme une nouvelle note.
+- **Un `note_on` sans `id` porte ouverte ne relance pas l'attaque** (legato) : c'est la note unique. Pour rejouer une note avec son attaque, il faut un `note_off` puis un `note_on`, séparés d'au moins un bloc, ou une note avec un `id` (polyphonie), qui a toujours sa propre attaque.
+- **Le core ne lit les réglages qu'une fois par bloc** : un réglage met jusqu'à un bloc (5 à 20 ms) à être pris en compte. C'est voulu (voir le commentaire de `sw_engine_render`, dans `engine.c`). Conséquence : un `note_off` suivi d'un `note_on` sans `id` dans le même bloc n'est pas vu comme une nouvelle note. Les notes avec un `id` passent par une file : leur ordre est gardé, mais elles aussi ne démarrent qu'au bloc suivant. Leurs glissés (`note_glide`) sont ensuite suivis à l'échantillon près par le thread audio : une courbe envoyée avec sa note en garde le rythme exact ; seul son départ peut glisser d'un bloc si le bloc tombe entre le `note_on` et ses glissés.
+- **`synthway_instrument_t` a sa copie ctypes** (`SynthwayInstrumentC`, `core_bridge.py`), sans contrôle de taille au chargement : `test_render.py` vérifie qu'un instrument fait l'aller-retour par le core sans changer. À mettre à jour avec la structure C.
 
 ## Ajouter un réglage de son de bout en bout
 

@@ -10,8 +10,9 @@ import core_bridge
 import main
 from core_bridge import CoreError
 from models import (
-    MAX_PARTIALS, Analysis, AnalysisPartial, ClipTrack, ClipWaveform, DeviceInfo, DeviceTypeEnum, Envelope,
-    HarmonicLevel, HarmonicStateEnum, NoteSpan, Partial, ShapeFit, Timbre, WaveformEnum, WaveformFit, WaveShapeEnum,
+    MAX_INSTRUMENTS, MAX_PARTIALS, Analysis, AnalysisPartial, ClipTrack, ClipWaveform, DeviceInfo, DeviceTypeEnum,
+    Envelope, HarmonicLevel, HarmonicStateEnum, Instrument, NoteSpan, Partial, ShapeFit, Timbre, WaveformEnum,
+    WaveformFit, WaveShapeEnum,
 )
 
 
@@ -53,6 +54,33 @@ class FakeLib:
     def synthway_engine_set_timbre(self, engine, timbre):
         # timbre is ctypes.byref(SynthwayTimbreC), or None for the single oscillator
         self.calls.append(("timbre", None if timbre is None else [p.ratio for p in timbre._obj.partials[: timbre._obj.partial_count]]))
+        return 0
+
+    def synthway_engine_set_waveform(self, engine, waveform):
+        self.calls.append(("waveform", waveform))
+        return 0
+
+    def synthway_engine_set_instrument(self, engine, slot, instrument):
+        # instrument is ctypes.byref(SynthwayInstrumentC)
+        c = instrument._obj
+        timbre = [p.ratio for p in c.timbre.partials[: c.timbre.partial_count]] if c.has_timbre else None
+        self.calls.append(("instrument", slot, c.filter_low_cutoff_hz, c.filter_high_cutoff_hz, c.reverb_mix, timbre))
+        return 0
+
+    def synthway_engine_note_on(self, engine, note_id, slot, frequency, volume):
+        self.calls.append(("note_on", note_id, slot, frequency.value, volume.value))
+        return 0
+
+    def synthway_engine_note_off(self, engine, note_id):
+        self.calls.append(("note_off", note_id))
+        return 0
+
+    def synthway_engine_note_glide(self, engine, note_id, frequency, seconds):
+        self.calls.append(("note_glide", note_id, frequency.value, seconds.value))
+        return 0
+
+    def synthway_engine_all_notes_off(self, engine):
+        self.calls.append("all_notes_off")
         return 0
 
     def synthway_engine_start(self, engine):
@@ -189,6 +217,26 @@ class FakeCore:
 
     def get_max_partials(self):
         return MAX_PARTIALS
+
+    # Polyphony, recorded like the real bridge passes it on: notes only with an engine
+    def set_instrument(self, slot, instrument):
+        self.calls.append(("instrument", slot, instrument.reverb, instrument.timbre is not None))
+
+    def note_on(self, note_id, slot, frequency, volume):
+        if self.running:
+            self.calls.append(("note_on", note_id, slot, frequency, volume))
+
+    def note_off(self, note_id):
+        if self.running:
+            self.calls.append(("note_off", note_id))
+
+    def note_glide(self, note_id, frequency, seconds):
+        if self.running:
+            self.calls.append(("note_glide", note_id, frequency, seconds))
+
+    def all_notes_off(self):
+        if self.running:
+            self.calls.append("all_notes_off")
 
     def get_sample_rate(self):
         return 48000 if self.running else None
@@ -450,6 +498,44 @@ def test_attack_curve_reaches_the_core():
     assert (same.curve, same.release_curve) == (1, 1) and (apart.curve, apart.release_curve) == (1, 0)
 
 
+def test_instrument_is_kept_across_engine_restarts():
+    lib = FakeLib()
+    bridge = bridge_with(lib)
+    bridge.set_instrument(2, Instrument(
+        low_cutoff=100.0, cutoff=5000.0, reverb=0.3, timbre=Timbre(partials=[{"ratio": 1.0}, {"ratio": 3.0}])))
+    bridge.start_engine()
+    bridge.start_engine()
+    applied = [call for call in lib.calls if call[0] == "instrument"]
+    assert len(applied) == 2 and applied[0][:4] == ("instrument", 2, 100.0, 5000.0)
+    assert applied[0][4] == pytest.approx(0.3) and applied[0][5] == pytest.approx([1.0, 3.0])
+    assert lib.calls.index(applied[0]) < lib.calls.index("start")
+
+    # Slot 0 is the single-note API's: set through its setters, kept with them
+    bridge.set_instrument(0, Instrument(reverb=0.5, unison={"voices": 3, "detune": 10.0, "spread": 0.5}))
+    assert bridge.get_reverb() == 0.5 and bridge.get_unison() == (3, 10.0, 0.5) and bridge.get_timbre() is None
+
+    with pytest.raises(ValueError):
+        bridge.set_instrument(MAX_INSTRUMENTS, Instrument())
+    with pytest.raises(ValueError):
+        Instrument(low_cutoff=5000.0, cutoff=100.0)
+
+
+def test_notes_reach_the_core():
+    lib = FakeLib()
+    bridge = bridge_with(lib)
+    bridge.note_on(7, 1, 440.0, 0.5)  # no engine: nothing to play on
+    assert not any(call[0] == "note_on" for call in lib.calls if isinstance(call, tuple))
+    bridge.start_engine()
+    bridge.note_on(7, 1, 440.0, 0.5)
+    bridge.note_glide(7, 660.0, 0.25)
+    bridge.note_off(7)
+    bridge.all_notes_off()
+    assert lib.calls[-4:] == [
+        ("note_on", 7, 1, 440.0, 0.5), ("note_glide", 7, 660.0, 0.25), ("note_off", 7), "all_notes_off"]
+    with pytest.raises(ValueError):
+        bridge.note_on(-1, 1, 440.0, 0.5)
+
+
 def test_failed_start_releases_the_engine():
     lib = FakeLib(start_result=-4)
     bridge = bridge_with(lib)
@@ -468,6 +554,43 @@ def test_first_note_plays_the_requested_note(server):
         state = ws.receive_json()
     assert fake.calls[0] == "start"
     assert state == {"frequency": 523.25, "volume": 0.4, "waveform": 0, "running": True, "enabled": True}
+
+
+def test_notes_with_an_id_play_alongside(server):
+    client, fake = server
+    with client.websocket_connect("/ws/synth") as ws:
+        ws.send_json({"type": "set_instrument", "slot": 1, "reverb": 0.2, "timbre": {"partials": [{"ratio": 1.0}]}})
+        ws.receive_json()
+        ws.send_json({"type": "note_on", "id": 3, "instrument": 1, "frequency": 330.0, "volume": 0.6})
+        state = ws.receive_json()
+        ws.send_json({"type": "note_off", "id": 3})
+        ws.receive_json()
+        ws.send_json({"type": "all_notes_off"})
+        ws.receive_json()
+        ws.send_json({"type": "set_instrument", "slot": 1, "low_cutoff": 5000, "cutoff": 100})
+        refused = ws.receive_json()
+    # The engine starts before the note; the single note stays off
+    assert fake.calls == [("instrument", 1, 0.2, True), "start", ("note_on", 3, 1, 330.0, 0.6), ("note_off", 3), "all_notes_off"]
+    assert state["running"] is True and state["enabled"] is False
+    assert "error" in refused
+
+
+def test_notes_glide(server):
+    client, fake = server
+    with client.websocket_connect("/ws/synth") as ws:
+        ws.send_json({"type": "note_on", "id": 5, "instrument": 2, "frequency": 220.0, "volume": 0.5,
+                      "glides": [{"frequency": 440.0, "seconds": 1.0}, {"frequency": 440.0, "seconds": 0.5}]})
+        ws.receive_json()
+        ws.send_json({"type": "note_glide", "id": 5, "frequency": 330.0, "seconds": 0.25})
+        ws.receive_json()
+        ws.send_json({"type": "note_glide", "id": 5})
+        refused = ws.receive_json()
+    # The note's glides right behind it, in order
+    assert fake.calls == [
+        "start", ("note_on", 5, 2, 220.0, 0.5), ("note_glide", 5, 440.0, 1.0), ("note_glide", 5, 440.0, 0.5),
+        ("note_glide", 5, 330.0, 0.25),
+    ]
+    assert "error" in refused  # no frequency
 
 
 def test_note_off_mutes_without_stopping(server):

@@ -119,9 +119,10 @@ Le pont expose aussi ce rendu : `SynthwayCore.render()` (échantillons en mémoi
 
 - **Démarrage muet :** `/api/engine/start` démarre le moteur sans son. Le son ne vient qu'avec un `note_on`, ou avec `"enabled": true` sur `/api/synth/tone`.
 - **`note_on` sans moteur :** si le moteur n'est pas démarré, `note_on` le démarre d'abord, puis joue la note demandée.
-- **Une note à la fois :** le moteur est monophonique, et `note_off` coupe le son sans arrêter le moteur.
-  - **Composer :** les commandes directes `note_on` restent monophoniques. Pour lire une composition, l'UI envoie au même WebSocket un timbre temporaire assemblé depuis les notes simultanées, puis commande la hauteur de référence ; le core additionne ses partiels. La limite est celle de `max_partials` (64 par défaut).
-- **Enveloppe :** `note_on` lance l'attaque et `note_off` le relâchement de l'enveloppe ADSR. Un `note_on` sur une note déjà ouverte change la hauteur sans relancer l'attaque (legato). Le serveur garde l'enveloppe et l'applique à chaque démarrage du moteur : on peut la régler avant de démarrer l'audio.
+- **La note unique :** un `note_on` sans `id` joue la note unique du moteur, sur l'instrument 0 (celui de `set_param` et de `/api/synth/*`), et `note_off` sans `id` coupe le son sans arrêter le moteur.
+- **Polyphonie :** un `note_on` avec un `id` joue une note de plus, avec ses propres enveloppes, sur l'un des 16 instruments du moteur (`instrument`, 0 par défaut), réglés par `set_instrument` : jusqu'à 32 notes à la fois, en plus de la note unique. `note_off` avec le même `id` la relâche, `all_notes_off` les relâche toutes. Le serveur garde les instruments 1 à 15 et les applique à chaque démarrage du moteur, comme l'instrument 0. Le clavier de l'UI et la lecture du Composer jouent ainsi : chaque note a sa vraie attaque, même pendant qu'une autre est tenue.
+- **Glissés :** `note_glide` fait glisser une note (avec `id`) vers une fréquence en un temps donné, en ligne droite en demi-tons (`synthway_engine_note_glide`). Les glissés d'une note s'enchaînent ; un glissé vers la même fréquence la tient. Le core les suit à l'échantillon près : passés dans le `note_on` (`"glides"`), ils partent avec la note.
+- **Enveloppe :** `note_on` lance l'attaque et `note_off` le relâchement de l'enveloppe ADSR. Un `note_on` sans `id` sur la note unique déjà ouverte change la hauteur sans relancer l'attaque (legato) ; avec un `id` qui sonne encore, la note repart de son niveau courant avec une nouvelle attaque. Le serveur garde l'enveloppe et l'applique à chaque démarrage du moteur : on peut la régler avant de démarrer l'audio.
 - **Analyzer :** deux analyseurs du core (`synthway_analyzer_t`), indépendants du moteur et créés au premier usage : l'un pour le micro, l'autre pour le fichier chargé, pour qu'un long décodage ne bloque pas l'analyse en direct. Le micro est ouvert par le core, seulement quand une page envoie `start` sur `/ws/analyzer`, et fermé à `stop` ou quand la page se déconnecte. Une seule page l'écoute à la fois. Rien n'est joué. Le micro n'est enregistré que si la page envoie `record` : le core garde l'enregistrement en mémoire, sans limite de durée, et ses échantillons ne passent par le serveur que lorsqu'on le télécharge en WAV. Le serveur l'alimente en appelant l'analyse en direct toutes les 50 ms. Sinon, seuls les résultats de l'analyse sortent du core. Un fichier importé arrive entier dans le corps de la requête, et le core le décode en mémoire (WAV, FLAC, MP3 ; 256 Mo et 10 minutes au plus).
 - **Timbre (synthèse additive) :** un timbre remplace la forme d'onde et l'enveloppe par une liste de partiels, chacun avec son rapport à la note jouée, son amplitude, sa forme d'onde et son enveloppe. Comme l'enveloppe, le serveur le garde et l'applique à chaque démarrage du moteur. 64 partiels au plus (`max_partials` dans `/api/engine/status`, `MAX_PARTIALS` dans `models.py`, vérifié contre le core au chargement de la bibliothèque). Le serveur ne prévient ni des partiels au-delà de la moitié de la fréquence d'échantillonnage ni de la saturation : l'UI s'en charge.
 - **Decomposer (séparation de sources) :** facultatif. Demucs v4 vit dans `synthway-demucs/`, avec son propre Python et PyTorch (`uv sync`), que le serveur n'importe jamais : `src/separation.py` lance `synthway-demucs/separate.py` dans un processus à part et suit les lignes JSON qu'il écrit. C'est un traitement de fichier hors ligne, aucun flux audio temps réel ne passe par Python. Un morceau à la fois, une séparation à la fois. Le Decomposer démarre vide à chaque lancement du serveur. Le morceau et ses pistes peuvent être retirés à tout moment (`DELETE /api/separation/source`). Les poids sont téléchargés au premier usage d'un modèle. Sans Demucs installé, ou avec `SYNTHWAY_DEMUCS=0`, les routes `/api/separation/...` répondent 503 et `GET /api/separation` dit pourquoi. Licence des poids non précisée : essai local seulement, voir `synthway-demucs/README.md`.
@@ -195,9 +196,24 @@ Idéal pour l'interface graphique afin de limiter l'overhead HTTP :
       { "ratio": 2.76, "amplitude": 0.2, "waveform": 0,
         "envelope": { "attack": 0.002, "decay": 1.1, "sustain": 0, "release": 0.8, "curve": 1 } } ] } }
   ```
+- **Polyphonie** : un instrument entier (un champ absent prend sa valeur par défaut : sinus, enveloppe du moteur, pas de timbre, filtre ouvert, ni réverbération ni unisson ; `slot` de 0 à 15, 0 étant celui de `set_param`), puis des notes nommées par `id` (entier de 0 à 2³² − 1, choisi par la page), en plus de la note unique :
+  ```json
+  { "type": "set_instrument", "slot": 1, "timbre": { "partials": [ ... ] },
+    "low_cutoff": 20, "cutoff": 6500, "resonance": 0.35, "reverb": 0.2,
+    "unison": { "voices": 3, "detune": 10, "spread": 0.5 } }
+  { "type": "note_on", "id": 7, "instrument": 1, "frequency": 440.0, "volume": 0.3 }
+  { "type": "note_off", "id": 7 }
+  { "type": "all_notes_off" }
+  ```
+- **Glissés** (fréquence de 0 à 24000 Hz exclu, `seconds` de 0, un saut, à 600) : à la suite des glissés en attente de la note, ou dès son départ avec `"glides"` dans le `note_on` :
+  ```json
+  { "type": "note_on", "id": 7, "instrument": 1, "frequency": 220.0, "volume": 0.3,
+    "glides": [ { "frequency": 440.0, "seconds": 1.0 }, { "frequency": 440.0, "seconds": 0.5 } ] }
+  { "type": "note_glide", "id": 7, "frequency": 330.0, "seconds": 0.25 }
+  ```
 - **Retour du serveur** :
   À chaque modification, le serveur renvoie l'état synchronisé du moteur audio à tous les clients connectés.
-- **Message invalide** (JSON cassé, valeur hors bornes) : le serveur répond `{"error": "..."}` et la connexion reste ouverte.
+- **Message invalide** (JSON cassé, champ obligatoire absent, valeur hors bornes) : le serveur répond `{"error": "..."}` et la connexion reste ouverte.
 
 ### Canal WebSocket (`/ws/analyzer`)
 

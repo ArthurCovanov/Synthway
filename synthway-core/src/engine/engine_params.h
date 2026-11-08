@@ -37,11 +37,9 @@ typedef struct sw_timbre_exchange {
     atomic_flag writer_lock;
 } sw_timbre_exchange;
 
-typedef struct sw_engine_params {
-    _Atomic bool tone_enabled;
+/* The sound of one instrument slot */
+typedef struct sw_instrument_params {
     _Atomic synthway_waveform_t waveform;
-    _Atomic float target_frequency;
-    _Atomic float target_volume;
     _Atomic float env_attack;   /* seconds */
     _Atomic float env_decay;    /* seconds */
     _Atomic float env_sustain;  /* level in [0, 1] */
@@ -54,13 +52,56 @@ typedef struct sw_engine_params {
     _Atomic float unison_detune_cents;
     _Atomic float unison_spread;        /* in [0, 1] */
     sw_timbre_exchange timbre;
+} sw_instrument_params;
+
+/* Notes go to the audio thread through a ring of events: writers append
+   under a spin lock that the audio thread never takes, and publish the new
+   head (release); the audio thread reads up to it (acquire) at the start of
+   each block, then publishes the tail it has reached. */
+typedef enum sw_note_event_type {
+    SW_NOTE_EVENT_ON,
+    SW_NOTE_EVENT_OFF,
+    SW_NOTE_EVENT_ALL_OFF,
+    SW_NOTE_EVENT_GLIDE
+} sw_note_event_type;
+
+typedef struct sw_note_event {
+    sw_note_event_type type;
+    uint32_t note_id;
+    uint32_t instrument;
+    float frequency_hz;
+    float volume;
+    float seconds;                 /* of a glide */
+} sw_note_event;
+
+/* A power of two, so that the indices can wrap around freely */
+#define SW_NOTE_QUEUE_CAPACITY 1024u
+
+typedef struct sw_note_queue {
+    sw_note_event events[SW_NOTE_QUEUE_CAPACITY];
+    _Atomic uint32_t head;         /* events written: owned by the writers */
+    _Atomic uint32_t tail;         /* events read: owned by the audio thread */
+    atomic_flag writer_lock;
+} sw_note_queue;
+
+typedef struct sw_engine_params {
+    /* The single-note API's note */
+    _Atomic bool tone_enabled;
+    _Atomic float target_frequency;
+    _Atomic float target_volume;
+    sw_instrument_params instruments[SYNTHWAY_MAX_INSTRUMENTS];
+    sw_note_queue notes;
+    _Atomic uint32_t sounding_notes; /* written by the audio thread after each block */
 } sw_engine_params;
 
 /* Default sound, tone enabled, with a short envelope that does not click */
 void sw_engine_params_init(sw_engine_params* params);
 
 /* Reads every parameter once, into the plain values the next block is rendered with.
-   Called by the audio thread only: the timbre it points to stays valid until its next call. */
+   Called by the audio thread only: the timbres it points to stay valid until its next call. */
 void sw_engine_params_snapshot(sw_engine_params* params, sw_synth_params* out);
+
+/* Hands the notes waiting in the queue to synth, in order. Called by the audio thread only. */
+void sw_engine_params_take_notes(sw_engine_params* params, sw_synth* synth);
 
 #endif /* SW_ENGINE_PARAMS_H */
