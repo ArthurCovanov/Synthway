@@ -1,4 +1,21 @@
-import { Crosshair, Eraser, GripVertical, Lock, LockOpen, Pause, Play, Plus, Repeat, Square, Trash2 } from 'lucide-react';
+import {
+  ArrowLeft,
+  ArrowRight,
+  Crosshair,
+  Eraser,
+  Eye,
+  EyeOff,
+  GripVertical,
+  Lock,
+  LockOpen,
+  Pause,
+  Play,
+  Plus,
+  Repeat,
+  Square,
+  Trash2,
+  X,
+} from 'lucide-react';
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
 import layout from '../components/layout.module.css';
 import { ScreenHeader } from '../components/ScreenHeader';
@@ -13,7 +30,7 @@ import {
   type Track,
 } from '../lib/composition';
 import { unisonOf, type Instrument } from '../lib/instruments';
-import { useSpaceBar } from '../lib/keyboard';
+import { isTyping, useSpaceBar } from '../lib/keyboard';
 import { isBlackKey, midiToFrequency, midiToName } from '../lib/music';
 import { toTimbre } from '../lib/partials';
 import { HUE_VAR, HUES } from '../lib/neon';
@@ -58,14 +75,14 @@ const NOTE_LENGTHS = [
 ];
 
 function audibleTracks(tracks: Track[]): Track[] {
-  const solo = tracks.filter((track) => track.solo);
-  return solo.length > 0 ? solo : tracks.filter((track) => !track.muted);
+  return tracks.filter((track) => !track.muted);
 }
 
 export function Composer({ instruments }: { instruments: Instrument[] }) {
   const { canPlay, noteOn, noteOff, setParams, engine, startAudio, busy, connection, coreLoaded, socketOpen } = useSynthServer();
   const [composition, setComposition] = usePersistentState<Composition>('synthway.composition.v1', defaultComposition);
   const [selectedTrackId, setSelectedTrackId] = useState(() => composition.tracks[0]?.id ?? '');
+  const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
   const [lockedTracks, setLockedTracks] = usePersistentState<Record<string, boolean>>(
     'synthway.composer-track-locks.v1',
     () => ({}),
@@ -98,9 +115,23 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
     moved: boolean;
   } | null>(null);
   const rollScrollRef = useRef<HTMLDivElement>(null);
+  const laneRef = useRef<HTMLDivElement>(null);
+  const noteResizeRef = useRef<{
+    pointerId: number;
+    noteId: string;
+    edge: 'start' | 'end';
+    pitch: number;
+    originalStart: number;
+    originalLength: number;
+    minStart: number;
+    maxEnd: number;
+    startX: number;
+    moved: boolean;
+  } | null>(null);
 
   const { tracks, bpm, beatsPerBar, bars } = composition;
   const track = tracks.find((item) => item.id === selectedTrackId) ?? tracks[0];
+  const selectedNote = track?.notes.find((item) => item.id === selectedNoteId) ?? null;
   const stepsPerBar = beatsPerBar * STEPS_PER_BEAT;
   const totalSteps = bars * stepsPerBar;
   const pitches = Array.from(
@@ -192,7 +223,13 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
     setComposition((current) => ({ ...current, tracks: update(current.tracks) }));
 
   const updateTrack = (id: string, patch: Partial<Track>) =>
-    setTracks((list) => list.map((item) => (item.id === id && !lockedTracks[id] ? { ...item, ...patch } : item)));
+    setTracks((list) =>
+      list.map((item) => {
+        if (item.id !== id) return item;
+        if (lockedTracks[id] && !('hidden' in patch)) return item;
+        return { ...item, ...patch };
+      }),
+    );
 
   const recenterOnPitch = (pitch: number) => {
     setHighestVisiblePitch(pitch + PITCH_WINDOW_CENTER);
@@ -205,6 +242,7 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
 
   const selectTrack = (item: Track) => {
     setSelectedTrackId(item.id);
+    setSelectedNoteId(null);
     recenterOnPitch(item.basePitch ?? DEFAULT_BASE_PITCH);
   };
 
@@ -263,6 +301,7 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
     if (tracks.length <= 1 || lockedTracks[id]) return;
     const next = tracks.filter((item) => item.id !== id);
     setTracks(() => next);
+    setSelectedNoteId(null);
     if (id === track.id) selectTrack(next[0]);
   };
 
@@ -276,6 +315,93 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
     auditionTimer.current = window.setTimeout(noteOff, AUDITION_MS);
   };
 
+  const deleteSelectedNote = () => {
+    if (!selectedNote || !track || lockedTracks[track.id]) return;
+    updateTrack(track.id, { notes: track.notes.filter((item) => item.id !== selectedNote.id) });
+    setSelectedNoteId(null);
+  };
+
+  const updateSelectedNote = (patch: Partial<Note>) => {
+    if (!selectedNote || !track || lockedTracks[track.id]) return;
+    const nextPitch = patch.pitch !== undefined ? Math.max(0, Math.min(127, patch.pitch)) : selectedNote.pitch;
+    let nextStart = patch.start !== undefined ? Math.max(0, Math.min(totalSteps - 1, patch.start)) : selectedNote.start;
+    let nextLength = patch.length !== undefined ? Math.max(1, patch.length) : selectedNote.length;
+
+    if (nextStart + nextLength > totalSteps) {
+      if (patch.start !== undefined) {
+        nextStart = Math.max(0, totalSteps - nextLength);
+      } else {
+        nextLength = Math.max(1, totalSteps - nextStart);
+      }
+    }
+
+    const otherNotesOnPitch = track.notes.filter((n) => n.id !== selectedNote.id && n.pitch === nextPitch);
+    const nextNoteOnPitch = otherNotesOnPitch
+      .filter((n) => n.start >= nextStart)
+      .sort((a, b) => a.start - b.start)[0];
+    if (nextNoteOnPitch && nextStart + nextLength > nextNoteOnPitch.start) {
+      const availableLength = nextNoteOnPitch.start - nextStart;
+      if (availableLength > 0) {
+        nextLength = availableLength;
+      } else {
+        return;
+      }
+    }
+
+    const prevNoteOnPitch = otherNotesOnPitch.find((n) => n.start < nextStart && n.start + n.length > nextStart);
+    if (prevNoteOnPitch) {
+      return;
+    }
+
+    const updated: Note = {
+      ...selectedNote,
+      pitch: nextPitch,
+      start: nextStart,
+      length: nextLength,
+    };
+
+    updateTrack(track.id, {
+      notes: track.notes.map((n) => (n.id === selectedNote.id ? updated : n)),
+    });
+
+    if (patch.pitch !== undefined && patch.pitch !== selectedNote.pitch) {
+      audition(nextPitch);
+    }
+  };
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (isTyping(event.target)) return;
+      if (event.key === 'Delete' || event.key === 'Backspace') {
+        if (selectedNoteId && track && !lockedTracks[track.id]) {
+          event.preventDefault();
+          deleteSelectedNote();
+        }
+      } else if (event.key === 'Escape') {
+        if (selectedNoteId) {
+          event.preventDefault();
+          setSelectedNoteId(null);
+        }
+      } else if (selectedNote && track && !lockedTracks[track.id]) {
+        if (event.key === 'ArrowUp') {
+          event.preventDefault();
+          updateSelectedNote({ pitch: selectedNote.pitch + (event.shiftKey ? 12 : 1) });
+        } else if (event.key === 'ArrowDown') {
+          event.preventDefault();
+          updateSelectedNote({ pitch: selectedNote.pitch - (event.shiftKey ? 12 : 1) });
+        } else if (event.key === 'ArrowLeft') {
+          event.preventDefault();
+          updateSelectedNote({ start: selectedNote.start - (event.shiftKey ? STEPS_PER_BEAT : 1) });
+        } else if (event.key === 'ArrowRight') {
+          event.preventDefault();
+          updateSelectedNote({ start: selectedNote.start + (event.shiftKey ? STEPS_PER_BEAT : 1) });
+        }
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [selectedNoteId, selectedNote, track, lockedTracks, deleteSelectedNote, updateSelectedNote]);
+
   const onLanePointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 || !track || lockedTracks[track.id]) return;
     const rect = event.currentTarget.getBoundingClientRect();
@@ -283,13 +409,19 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
     const pitch = highestVisiblePitch - Math.floor((event.clientY - rect.top) / row);
     if (step < 0 || step >= totalSteps || !Number.isSafeInteger(pitch)) return;
 
+    // Si on clique sur une case déjà occupée par une note de cette piste : la sélectionner
+    const covered = track.notes.find((note) => note.pitch === pitch && step >= note.start && step < note.start + note.length);
+    if (covered) {
+      setSelectedNoteId(covered.id);
+      audition(covered.pitch);
+      return;
+    }
+
     // Never overlap the next note on the same pitch
     const nextStart = Math.min(
       totalSteps,
       ...track.notes.filter((note) => note.pitch === pitch && note.start > step).map((note) => note.start),
     );
-    const covered = track.notes.some((note) => note.pitch === pitch && step >= note.start && step < note.start + note.length);
-    if (covered) return;
 
     const maxLength = nextStart - step;
     const initialLength = Math.min(noteLength, maxLength);
@@ -326,13 +458,85 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
     updateTrack(draw.trackId, { notes: [...track.notes, note] });
     noteDrawRef.current = null;
     setDraftNote(null);
+    setSelectedNoteId(note.id);
     audition(draw.pitch);
   };
 
-  const removeNote = (event: PointerEvent, note: Note) => {
+  const onNotePointerDown = (event: PointerEvent<HTMLDivElement>, note: Note) => {
+    if (event.button !== 0) return;
     event.stopPropagation();
-    if (lockedTracks[track.id]) return;
-    updateTrack(track.id, { notes: track.notes.filter((item) => item.id !== note.id) });
+    setSelectedNoteId(note.id);
+    audition(note.pitch);
+  };
+
+  const onResizePointerDown = (event: PointerEvent<HTMLDivElement>, note: Note, edge: 'start' | 'end') => {
+    if (event.button !== 0 || !track || lockedTracks[track.id]) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setSelectedNoteId(note.id);
+
+    const otherNotesOnPitch = track.notes.filter((n) => n.id !== note.id && n.pitch === note.pitch);
+
+    const nextNote = otherNotesOnPitch
+      .filter((n) => n.start >= note.start + note.length)
+      .sort((a, b) => a.start - b.start)[0];
+    const maxEnd = nextNote ? nextNote.start : totalSteps;
+
+    const prevNote = otherNotesOnPitch
+      .filter((n) => n.start < note.start)
+      .sort((a, b) => b.start - a.start)[0];
+    const minStart = prevNote ? prevNote.start + prevNote.length : 0;
+
+    noteResizeRef.current = {
+      pointerId: event.pointerId,
+      noteId: note.id,
+      edge,
+      pitch: note.pitch,
+      originalStart: note.start,
+      originalLength: note.length,
+      minStart,
+      maxEnd,
+      startX: event.clientX,
+      moved: false,
+    };
+  };
+
+  const onResizePointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    const resize = noteResizeRef.current;
+    if (!resize || resize.pointerId !== event.pointerId || !laneRef.current) return;
+    if (!resize.moved && Math.abs(event.clientX - resize.startX) < 4) return;
+    resize.moved = true;
+    const rect = laneRef.current.getBoundingClientRect();
+    const currentStep = Math.floor((event.clientX - rect.left) / cell);
+
+    if (resize.edge === 'end') {
+      const newEnd = Math.max(resize.originalStart, Math.min(resize.maxEnd - 1, currentStep));
+      const newLength = Math.max(1, Math.min(resize.maxEnd - resize.originalStart, newEnd - resize.originalStart + 1));
+      updateTrack(track.id, {
+        notes: track.notes.map((n) => (n.id === resize.noteId ? { ...n, length: newLength } : n)),
+      });
+    } else {
+      const fixedEnd = resize.originalStart + resize.originalLength;
+      const newStart = Math.max(resize.minStart, Math.min(fixedEnd - 1, currentStep));
+      const newLength = fixedEnd - newStart;
+      updateTrack(track.id, {
+        notes: track.notes.map((n) => (n.id === resize.noteId ? { ...n, start: newStart, length: newLength } : n)),
+      });
+    }
+  };
+
+  const onResizePointerUp = (event: PointerEvent<HTMLDivElement>) => {
+    const resize = noteResizeRef.current;
+    if (!resize || resize.pointerId !== event.pointerId) return;
+    if (resize.moved) {
+      audition(resize.pitch);
+    }
+    noteResizeRef.current = null;
+  };
+
+  const onResizePointerCancel = () => {
+    noteResizeRef.current = null;
   };
 
   /** The wheel scrolls the roll; with Ctrl (a touchpad pinch too) or Alt, it zooms horizontally around the pointer */
@@ -507,7 +711,10 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
         </select>
         <Button
           disabled={!track || track.notes.length === 0 || !!lockedTracks[track?.id ?? '']}
-          onClick={() => updateTrack(track.id, { notes: [] })}
+          onClick={() => {
+            updateTrack(track.id, { notes: [] });
+            setSelectedNoteId(null);
+          }}
           title="Effacer toutes les notes de la piste sélectionnée"
         >
           <Eraser size={15} />
@@ -627,7 +834,7 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
                       className={styles.ms}
                       data-kind="mute"
                       aria-pressed={item.muted}
-                      title="Muet"
+                      title={item.muted ? 'Activer le son de la piste' : 'Couper le son de la piste (Muet)'}
                       disabled={!!lockedTracks[item.id]}
                       onClick={(event) => {
                         event.stopPropagation();
@@ -638,17 +845,16 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
                     </button>
                     <button
                       type="button"
-                      className={styles.ms}
-                      data-kind="solo"
-                      aria-pressed={item.solo}
-                      title="Solo"
-                      disabled={!!lockedTracks[item.id]}
+                      className={styles.trackVisibility}
+                      aria-label={item.hidden ? `Afficher ${item.name} sur le piano roll` : `Masquer ${item.name} du piano roll`}
+                      aria-pressed={!item.hidden}
+                      title={item.hidden ? 'Afficher les notes sur le piano roll' : 'Masquer les notes sur le piano roll'}
                       onClick={(event) => {
                         event.stopPropagation();
-                        updateTrack(item.id, { solo: !item.solo });
+                        updateTrack(item.id, { hidden: !item.hidden });
                       }}
                     >
-                      S
+                      {item.hidden ? <EyeOff size={13} /> : <Eye size={13} />}
                     </button>
                   </div>
                   <select
@@ -696,11 +902,120 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
               Piano roll <span className={styles.count}>{track?.name}</span>
             </h2>
             <span className={styles.rollHint}>
-              Molette : défiler · Ctrl + molette : zoom horizontal · clic milieu : déplacer · clic : ajouter une note · clic sur une note : supprimer
+              Molette : défiler · Ctrl + molette : zoom horizontal · clic milieu : déplacer · clic : ajouter une note · bords : redimensionner · clic sur une note : sélectionner (Suppr pour effacer)
               {lockedTracks[track?.id ?? ''] ? ' · piste verrouillée' : ''}
               {canPlay ? ' · aperçu sonore actif' : ''}
             </span>
           </div>
+
+          {selectedNote && (
+            <div className={styles.noteInspector}>
+              <div className={styles.noteInspectorTitle}>
+                <span className={styles.noteInspectorDot} style={{ background: HUE_VAR[hueOf(track)] }} />
+                <span className={styles.noteInspectorPitch}>{midiToName(selectedNote.pitch)}</span>
+                <span className={styles.noteInspectorFreq}>({Math.round(midiToFrequency(selectedNote.pitch) * 10) / 10} Hz)</span>
+              </div>
+
+              <div className={styles.noteInspectorGroup}>
+                <span className={styles.noteInspectorLabel}>Hauteur</span>
+                <Button
+                  size="small"
+                  disabled={!!lockedTracks[track.id] || selectedNote.pitch <= 11}
+                  onClick={() => updateSelectedNote({ pitch: selectedNote.pitch - 12 })}
+                  title="Descendre d'une octave (Maj + Bas)"
+                >
+                  -12
+                </Button>
+                <Button
+                  size="small"
+                  disabled={!!lockedTracks[track.id] || selectedNote.pitch <= 0}
+                  onClick={() => updateSelectedNote({ pitch: selectedNote.pitch - 1 })}
+                  title="Descendre d'un demi-ton (Bas)"
+                >
+                  -1
+                </Button>
+                <Button
+                  size="small"
+                  disabled={!!lockedTracks[track.id] || selectedNote.pitch >= 127}
+                  onClick={() => updateSelectedNote({ pitch: selectedNote.pitch + 1 })}
+                  title="Monter d'un demi-ton (Haut)"
+                >
+                  +1
+                </Button>
+                <Button
+                  size="small"
+                  disabled={!!lockedTracks[track.id] || selectedNote.pitch >= 116}
+                  onClick={() => updateSelectedNote({ pitch: selectedNote.pitch + 12 })}
+                  title="Monter d'une octave (Maj + Haut)"
+                >
+                  +12
+                </Button>
+              </div>
+
+              <div className={styles.noteInspectorGroup}>
+                <span className={styles.noteInspectorLabel}>Durée</span>
+                {NOTE_LENGTHS.map((opt) => (
+                  <Button
+                    key={opt.value}
+                    size="small"
+                    disabled={!!lockedTracks[track.id]}
+                    variant={selectedNote.length === opt.value ? 'primary' : undefined}
+                    onClick={() => updateSelectedNote({ length: opt.value })}
+                    title={`${opt.title} (${opt.value} pas)`}
+                  >
+                    {opt.label}
+                  </Button>
+                ))}
+              </div>
+
+              <div className={styles.noteInspectorGroup}>
+                <span className={styles.noteInspectorLabel}>Position</span>
+                <Button
+                  size="small"
+                  iconOnly
+                  disabled={!!lockedTracks[track.id] || selectedNote.start <= 0}
+                  onClick={() => updateSelectedNote({ start: selectedNote.start - 1 })}
+                  title="Reculer d'un pas (Gauche)"
+                >
+                  <ArrowLeft size={13} />
+                </Button>
+                <span className={styles.noteInspectorPosText}>
+                  {`M${Math.floor(selectedNote.start / stepsPerBar) + 1}.${Math.floor((selectedNote.start % stepsPerBar) / STEPS_PER_BEAT) + 1}.${(selectedNote.start % STEPS_PER_BEAT) + 1}`}
+                </span>
+                <Button
+                  size="small"
+                  iconOnly
+                  disabled={!!lockedTracks[track.id] || selectedNote.start + selectedNote.length >= totalSteps}
+                  onClick={() => updateSelectedNote({ start: selectedNote.start + 1 })}
+                  title="Avancer d'un pas (Droite)"
+                >
+                  <ArrowRight size={13} />
+                </Button>
+              </div>
+
+              <div className={styles.noteInspectorActions}>
+                <Button
+                  size="small"
+                  disabled={!!lockedTracks[track.id]}
+                  className={styles.deleteNoteBtn}
+                  onClick={deleteSelectedNote}
+                  title="Supprimer la note sélectionnée (Touche Suppr ou Retour arrière)"
+                >
+                  <Trash2 size={13} />
+                  Supprimer
+                </Button>
+                <Button
+                  size="small"
+                  iconOnly
+                  onClick={() => setSelectedNoteId(null)}
+                  title="Désélectionner (Échap)"
+                >
+                  <X size={14} />
+                </Button>
+              </div>
+            </div>
+          )}
+
           <div
             className={styles.rollScroll}
             ref={rollScrollRef}
@@ -735,6 +1050,7 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
               </div>
               <div
                 className={styles.lane}
+                ref={laneRef}
                 onPointerDown={onLanePointerDown}
                 onPointerMove={onLanePointerMove}
                 onPointerUp={onLanePointerUp}
@@ -755,24 +1071,69 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
                     )}
                   />
                 ))}
+                {/* Ghost notes des autres pistes visibles */}
+                {tracks
+                  .filter((other) => other.id !== track.id && !other.hidden)
+                  .map((other) => {
+                    const otherHue = hueOf(other);
+                    return other.notes
+                      .filter((note) => note.start < totalSteps && note.pitch >= lowestVisiblePitch && note.pitch <= highestVisiblePitch)
+                      .map((note) => (
+                        <div
+                          key={`ghost-${other.id}-${note.id}`}
+                          className={cx(styles.note, styles.ghost)}
+                          title={`${other.name} · ${midiToName(note.pitch)}`}
+                          style={
+                            {
+                              '--hue': HUE_VAR[otherHue],
+                              left: note.start * cell + 1,
+                              top: (highestVisiblePitch - note.pitch) * row,
+                              width: note.length * cell - 2,
+                            } as CSSProperties
+                          }
+                          aria-hidden="true"
+                        />
+                      ));
+                  })}
+                {/* Notes de la piste sélectionnée actuellement (sur laquelle on travaille) */}
                 {track.notes
                   .filter((note) => note.start < totalSteps && note.pitch >= lowestVisiblePitch && note.pitch <= highestVisiblePitch)
-                  .map((note) => (
-                    <div
-                      key={note.id}
-                      className={styles.note}
-                      title={`${midiToName(note.pitch)} : clic pour supprimer`}
-                      style={
-                        {
-                          '--hue': HUE_VAR[hueOf(track)],
-                          left: note.start * cell + 1,
-                          top: (highestVisiblePitch - note.pitch) * row,
-                          width: note.length * cell - 2,
-                        } as CSSProperties
-                      }
-                      onPointerDown={(event) => removeNote(event, note)}
-                    />
-                  ))}
+                  .map((note) => {
+                    const isSelected = note.id === selectedNoteId;
+                    return (
+                      <div
+                        key={note.id}
+                        className={cx(styles.note, isSelected && styles.noteSelected)}
+                        title={`${midiToName(note.pitch)} (${note.length} pas) · glisser les bords pour redimensionner · Suppr pour effacer`}
+                        style={
+                          {
+                            '--hue': HUE_VAR[hueOf(track)],
+                            left: note.start * cell + 1,
+                            top: (highestVisiblePitch - note.pitch) * row,
+                            width: note.length * cell - 2,
+                          } as CSSProperties
+                        }
+                        onPointerDown={(event) => onNotePointerDown(event, note)}
+                      >
+                        <div
+                          className={cx(styles.resizeHandle, styles.resizeHandleLeft)}
+                          title="Glisser pour ajuster le début"
+                          onPointerDown={(event) => onResizePointerDown(event, note, 'start')}
+                          onPointerMove={onResizePointerMove}
+                          onPointerUp={onResizePointerUp}
+                          onPointerCancel={onResizePointerCancel}
+                        />
+                        <div
+                          className={cx(styles.resizeHandle, styles.resizeHandleRight)}
+                          title="Glisser pour ajuster la durée"
+                          onPointerDown={(event) => onResizePointerDown(event, note, 'end')}
+                          onPointerMove={onResizePointerMove}
+                          onPointerUp={onResizePointerUp}
+                          onPointerCancel={onResizePointerCancel}
+                        />
+                      </div>
+                    );
+                  })}
                 {draftNote && (
                   <div
                     className={cx(styles.note, styles.noteDraft)}

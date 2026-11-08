@@ -53,9 +53,8 @@ def demucs_python(demucs_dir: Path) -> Path:
 
 class Separation:
     """
-    One piece of music at a time (the source) and its stems, kept in
-    synthway-demucs/work/ so that they come back after a restart. One
-    separation runs at a time, in a process of its own.
+    One piece of music at a time (the source) and its stems. Starts empty when
+    the server launches; one separation runs at a time, in a process of its own.
     """
 
     def __init__(self, demucs_dir: Optional[Path] = None, enabled: Optional[bool] = None):
@@ -74,7 +73,6 @@ class Separation:
         self._source: Optional[dict] = None  # {"name", "file", "size"}
         self._job = self._idle_job()
         self._result: Optional[dict] = None
-        self._restore()
 
     @staticmethod
     def _idle_job() -> dict:
@@ -113,6 +111,15 @@ class Separation:
 
     # ---------- The source ----------
 
+    def _clean_work(self) -> None:
+        """Removes source files and stems, preserving other directories (like comparaison/)."""
+        if self.work_dir.is_dir():
+            for item in self.work_dir.glob("source*"):
+                if item.is_file():
+                    item.unlink(missing_ok=True)
+        if self.stems_dir.is_dir():
+            shutil.rmtree(self.stems_dir, ignore_errors=True)
+
     def set_source(self, name: str, data: bytes) -> None:
         """The piece to decompose, in place of the previous one and its stems"""
         reason = self.unavailable_reason()
@@ -123,13 +130,23 @@ class Separation:
                 raise SeparationError(409, "Une décomposition est en cours")
             suffix = Path(name).suffix.lower()
             file = f"source{suffix if suffix in SOURCE_SUFFIXES else ''}"
-            shutil.rmtree(self.work_dir, ignore_errors=True)
+            self._clean_work()
             self.work_dir.mkdir(parents=True, exist_ok=True)
             (self.work_dir / file).write_bytes(data)
             self._source = {"name": name, "file": file, "size": len(data)}
             (self.work_dir / "source.json").write_text(json.dumps(self._source), encoding="utf-8")
             self._result = None
             self._job = self._idle_job()
+
+    def clear(self) -> None:
+        """Clears the piece and its stems: the Decomposer becomes empty."""
+        with self._lock:
+            if self._job["state"] == "running":
+                raise SeparationError(409, "Une décomposition est en cours")
+            self._source = None
+            self._job = self._idle_job()
+            self._result = None
+            self._clean_work()
 
     def source_file(self) -> tuple[Path, str]:
         """The uploaded file and its name"""
@@ -241,20 +258,6 @@ class Separation:
             if self._result is None or name not in [stem["name"] for stem in self._result["stems"]]:
                 raise SeparationError(404, f"Aucune piste « {name} »")
             return self.stems_dir / f"{name}.wav"
-
-    def _restore(self) -> None:
-        """The source and the stems of the last separation, kept on disk"""
-        try:
-            source = json.loads((self.work_dir / "source.json").read_text(encoding="utf-8"))
-            if not (self.work_dir / source["file"]).is_file():
-                return
-            self._source = source
-            result = json.loads((self.stems_dir / "result.json").read_text(encoding="utf-8"))
-            self._job = {**self._idle_job(), "state": "done", "progress": 1.0, "model": result["model"],
-                         "device": result["device"]}
-            self._result = result
-        except (OSError, ValueError, KeyError, TypeError):
-            pass  # nothing kept, or the source without stems
 
     def stop(self) -> None:
         """Ends a separation in progress: the server is stopping"""

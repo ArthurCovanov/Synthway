@@ -36,8 +36,8 @@
   gap: 3px;
   padding: 9px 14px;
   border-radius: var(--radius-m);
-  border: 1px solid var(--line-strong);
-  background: linear-gradient(180deg, rgba(255, 26, 168, 0.07), rgba(46, 77, 255, 0.06));
+  border: 1px solid rgba(255, 155, 47, 0.35);
+  background: linear-gradient(180deg, rgba(255, 155, 47, 0.12), rgba(255, 100, 15, 0.07));
 }
 
 .creditEyebrow {
@@ -57,11 +57,11 @@
   letter-spacing: 0.08em;
   color: var(--text-0);
   text-decoration: none;
-  text-shadow: 0 0 14px rgba(163, 28, 255, 0.5);
+  text-shadow: 0 0 14px rgba(255, 140, 20, 0.55);
 }
 
 .creditName:hover {
-  color: var(--neon-pink-soft);
+  color: var(--neon-orange);
 }
 
 .creditNote {
@@ -70,7 +70,7 @@
 }
 
 .creditNote a {
-  color: var(--neon-blue-soft);
+  color: var(--neon-orange);
 }
 
 /* The piece: drop zone, then its name */

@@ -956,6 +956,15 @@ if HAS_FASTAPI:
             raise refused(ex) from ex
         return separation.status()
 
+    @app.delete("/api/separation/source")
+    async def separation_clear():
+        """Clears the piece and its stems: the Decomposer becomes empty."""
+        try:
+            await asyncio.to_thread(separation.clear)
+        except SeparationError as ex:
+            raise refused(ex) from ex
+        return separation.status()
+
     @app.get("/api/separation/source")
     async def separation_source_audio(request: Request):
         """The piece as it was sent, for the browser to play it."""

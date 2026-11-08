@@ -173,13 +173,27 @@ def test_separation_can_be_cancelled(server):
     assert client.get("/api/separation").json()["source"]["name"] == "a.mp3"
 
 
-def test_separation_comes_back_after_a_restart(server, demucs_dir):
+def test_separation_starts_empty_after_a_restart(server, demucs_dir):
     client, _ = server
     client.post("/api/separation/source?name=a.flac", content=b"fLaC")
     client.post("/api/separation/run", json={"model": "htdemucs"})
     eventually(lambda: job(client)["state"] == "done")
 
+    # A new Separation instance starts empty
     restarted = Separation(demucs_dir, enabled=True).status()
-    assert restarted["source"] == {"name": "a.flac", "size": 4}
-    assert restarted["job"]["state"] == "done" and restarted["job"]["model"] == "htdemucs"
-    assert [stem["name"] for stem in restarted["result"]["stems"]] == ["drums", "other"]
+    assert restarted["source"] is None
+    assert restarted["job"]["state"] == "idle"
+    assert restarted["result"] is None
+
+
+def test_separation_can_be_cleared(server):
+    client, _ = server
+    client.post("/api/separation/source?name=a.flac", content=b"fLaC")
+    client.post("/api/separation/run", json={"model": "htdemucs"})
+    eventually(lambda: job(client)["state"] == "done")
+
+    status = client.delete("/api/separation/source").json()
+    assert status["source"] is None
+    assert status["job"]["state"] == "idle"
+    assert status["result"] is None
+    assert client.get("/api/separation/source").status_code == 404

@@ -1,4 +1,4 @@
-import { AudioLines, Download, ExternalLink, FileAudio, Pause, Play, Square, Upload } from 'lucide-react';
+import { AudioLines, Download, ExternalLink, FileAudio, Pause, Play, Square, Trash2, Upload } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type DragEvent, type MouseEvent } from 'react';
 import layout from '../components/layout.module.css';
 import { ScreenHeader } from '../components/ScreenHeader';
@@ -327,6 +327,16 @@ export function Decomposer({ onOpenAnalyzer }: { onOpenAnalyzer: () => void }) {
     }
   };
 
+  const clear = async () => {
+    setError(null);
+    stop();
+    try {
+      setStatus(await api.clearSeparationSource());
+    } catch (failure) {
+      setError(`Effacement impossible : ${describe(failure)}`);
+    }
+  };
+
   /** The stem becomes the Analyzer's file, which opens on it */
   const analyze = async (name: string) => {
     setBusy(name);
@@ -402,6 +412,17 @@ export function Decomposer({ onOpenAnalyzer }: { onOpenAnalyzer: () => void }) {
                   >
                     {track === 'source' && playing ? <Pause size={13} /> : <Play size={13} />}
                     {track === 'source' && playing ? 'Pause' : 'Lire'}
+                  </Button>
+                )}
+                {source && (
+                  <Button
+                    size="small"
+                    disabled={!canChange}
+                    onClick={() => void clear()}
+                    title="Retire le morceau et ses pistes pour vider le tableau"
+                  >
+                    <Trash2 size={13} />
+                    Retirer
                   </Button>
                 )}
                 <Button size="small" variant={source ? 'default' : 'primary'} disabled={!canChange} onClick={() => fileInput.current?.click()}>

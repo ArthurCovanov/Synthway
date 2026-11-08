@@ -219,7 +219,7 @@ flowchart LR
 ```
 
 - Le serveur n'importe jamais PyTorch : le Python de MSYS2 n'en a pas, et un plantage de Demucs ne doit pas emporter le serveur. Il lance `separate.py` avec le Python de `synthway-demucs/.venv`, dans un thread qui lit ses lignes JSON et tient l'état à jour ; l'UI le demande toutes les 500 ms pendant la séparation.
-- Le morceau et ses pistes restent dans `synthway-demucs/work/` : ils reviennent après un redémarrage du serveur. « Analyser » relit une piste et la passe à l'analyseur du fichier, comme un fichier importé dans l'Analyzer.
+- Le Decomposer démarre vide à chaque lancement du serveur ; le morceau et ses pistes peuvent être retirés à tout moment (`DELETE /api/separation/source`). « Analyser » relit une piste et la passe à l'analyseur du fichier, comme un fichier importé dans l'Analyzer.
 - Sans `synthway-demucs` (ou avec `SYNTHWAY_DEMUCS=0`), tout le reste marche pareil : `GET /api/separation` dit pourquoi le Decomposer est indisponible.
 
 ## Pièges connus

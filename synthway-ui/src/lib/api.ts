@@ -179,6 +179,8 @@ export const api = {
   separation: () => request<SeparationStatus>('/api/separation'),
   /** The piece to decompose, in place of the previous one and its stems */
   uploadSeparationSource: (file: File) => uploadAudio<SeparationStatus>('/api/separation/source', file),
+  /** Clears the piece and its stems: the Decomposer becomes empty */
+  clearSeparationSource: () => request<SeparationStatus>('/api/separation/source', { method: 'DELETE' }),
   /** Starts decomposing the piece, in the background: separation() follows it */
   runSeparation: (model: SeparationModel) => postExplained<SeparationStatus>('/api/separation/run', { model }),
   cancelSeparation: () => postExplained<SeparationStatus>('/api/separation/cancel'),

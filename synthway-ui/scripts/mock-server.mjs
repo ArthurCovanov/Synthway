@@ -475,6 +475,14 @@ function separationRoute(req, res, url, raw) {
     log(`   piece: ${separationSource.name}, ${raw.length} bytes (not decoded)`);
     return json(res, separationStatus());
   }
+  if (route === 'DELETE /api/separation/source') {
+    if (separationJob.state === 'running') return error(res, 409, 'Une décomposition est en cours');
+    separationSource = null;
+    separationResult = null;
+    separationJob = { state: 'idle', stage: null, progress: 0, model: null, device: null, error: null };
+    log('   piece cleared');
+    return json(res, separationStatus());
+  }
   if (route === 'GET /api/separation/source') {
     if (!separationSource) return error(res, 404, 'Aucun morceau chargé');
     return sendWav(req, res, silentWav(SEPARATION_SECONDS), 'inline');

@@ -17,7 +17,9 @@ export interface Track {
   /** Reference pitch used when centering this track's piano roll. */
   basePitch?: number;
   muted: boolean;
-  solo: boolean;
+  solo?: boolean;
+  /** When true, this track's ghost notes are hidden when another track is selected */
+  hidden?: boolean;
   notes: Note[];
 }
 
@@ -45,6 +47,7 @@ export function createTrack(index: number, instrumentId: string, hue: NeonHue): 
     basePitch: DEFAULT_BASE_PITCH,
     muted: false,
     solo: false,
+    hidden: false,
     notes: [],
   };
 }
@@ -63,6 +66,7 @@ export function defaultComposition(): Composition {
         basePitch: DEFAULT_BASE_PITCH,
         muted: false,
         solo: false,
+        hidden: false,
         // A minor arpeggio climbing over two bars
         notes: notes([
           [69, 0, 2], [72, 2, 2], [76, 4, 2], [79, 6, 2],
@@ -78,6 +82,7 @@ export function defaultComposition(): Composition {
         basePitch: DEFAULT_BASE_PITCH,
         muted: false,
         solo: false,
+        hidden: false,
         notes: notes([
           [45, 0, 4], [45, 6, 2], [41, 8, 4], [41, 14, 2],
           [43, 16, 4], [43, 22, 2], [40, 24, 8],
@@ -91,6 +96,7 @@ export function defaultComposition(): Composition {
         basePitch: DEFAULT_BASE_PITCH,
         muted: false,
         solo: false,
+        hidden: false,
         notes: [],
       },
     ],

@@ -1,5 +1,26 @@
 # Journal de travail
 
+## 2026-11-05 21:19 · Gemini · en cours
+**Tâche :** Composer : redimensionnement horizontal des notes à la souris (bords gauche et droit) pour ajuster leur durée personnalisée
+**Fichiers :** synthway-ui/src/screens/Composer.tsx, synthway-ui/src/screens/Composer.module.css, synthway-ui/README.md, docs/journal.md
+
+## 2026-11-05 21:12 · Gemini · terminé
+**Tâche :** Composer : sélectionner une note au clic plutôt que la supprimer, inspecteur / options de la note sélectionnée, suppression via la touche Suppr
+**Fichiers :** synthway-ui/src/screens/Composer.tsx, synthway-ui/src/screens/Composer.module.css, synthway-ui/README.md, docs/journal.md
+**Résultat :** Un clic sur une note existante du piano roll la sélectionne désormais au lieu de la supprimer (surbrillance blanche avec contour néon `styles.noteSelected` et audition sonore si l'audio est activé). Un clic dans une case vide ajoute une note et la sélectionne immédiatement. Lorsqu'une note est sélectionnée, un inspecteur contextuel dédié s'affiche au-dessus de la grille avec le nom de la note, sa fréquence en Hz, des boutons de transposition (±1 demi-ton, ±1 octave), des boutons de durée (1/16, 1/8, 1/4, 1/2), des boutons de déplacement temporel (pas précédent / suivant), un bouton de désélection et un bouton « Supprimer ». Au clavier, la touche Suppr (ou Retour arrière) efface directement la note sélectionnée (hors saisie texte), Échap la désélectionne, et les flèches directionnelles permettent de la transposer ou de la déplacer. Documentation mise à jour (`synthway-ui/README.md`). Vérifié : typage TypeScript et build Vite réussis (1550 modules transformés, 0 erreur). Aucun son joué.
+
+## 2026-11-05 21:02 · Gemini · terminé
+**Tâche :** Composer : remplacer les boutons solo par un bouton Afficher / Masquer (Hide / Display) sur chaque piste, et afficher les notes des autres pistes en transparence sur le piano roll lorsqu'elles sont visibles
+**Fichiers :** synthway-ui/src/lib/composition.ts, synthway-ui/src/screens/Composer.tsx, synthway-ui/src/screens/Composer.module.css, synthway-ui/README.md, docs/journal.md
+**Résultat :** Suppression du bouton Solo (`S`) sur chaque piste de la liste et remplacement par un bouton Visibilité (icône `Eye` / `EyeOff`) pour masquer ou afficher ses notes sur le piano roll. Les pistes audibles sont désormais simplement celles qui ne sont pas muettes (`!track.muted`). Sur le piano roll, la piste sélectionnée reste la piste active de travail (notes au premier plan, opacité 100 %, éditables, avec recentrage automatique conservé lors de la sélection de piste). Toutes les autres pistes visibles (`!hidden`) sont rendues en arrière-plan en transparence (notes fantômes / ghost notes, avec leur couleur d'instrument respective et `pointer-events: none` pour ne pas gêner l'édition). Lorsqu'une piste est masquée via son bouton visibilité, ses notes fantômes disparaissent du piano roll. Styles ajoutés pour `.trackVisibility` et opacité calibrée pour `.ghost`. Documentation mise à jour (`synthway-ui/README.md`). Vérifié : typage TypeScript et build Vite réussis (1550 modules, 0 erreur). Aucun son joué.
+
+
+## 2026-11-05 20:45 · Gemini · terminé
+**Tâche :** Decomposer : démarrer vide au lancement du serveur (ne plus restaurer l'ancien morceau au démarrage), bouton pour retirer le morceau chargé
+**Fichiers :** synthway-server/ (src/{separation.py, main.py}, tests/test_separation.py, README.md), synthway-ui/ (src/lib/api.ts, src/screens/Decomposer.tsx, scripts/mock-server.mjs, README.md), docs/architecture.md, docs/journal.md
+**Résultat :** Le Decomposer démarre désormais vide à chaque lancement du serveur (`_restore` supprimé). Nettoyage de `synthway-demucs/work/` (fichiers `source*` et sous-dossier `stems` supprimés, préservation de `comparaison/`). Ajout de la route `DELETE /api/separation/source` dans le serveur et le serveur factice, et de la méthode `api.clearSeparationSource()` dans l'UI. Dans `Decomposer.tsx`, ajout d'un bouton « Retirer » pour pouvoir vider le morceau et ses pistes à tout moment. Documentation mise à jour (`architecture.md`, `synthway-server/README.md`, `synthway-ui/README.md`). Vérifié : typage TypeScript et build Vite de `synthway-ui` sans erreur, tests unitaires `tests/test_separation.py` (7/7 réussis).
+
+
 ## 2026-11-05 19:47 · Claude · terminé
 **Tâche :** Composer : zoomer le piano roll à Ctrl + molette (capturée : le navigateur ne zoome pas), la molette seule continuant de faire défiler les notes
 **Fichiers :** synthway-ui/src/screens/Composer.tsx, synthway-ui/README.md, docs/journal.md

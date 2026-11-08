@@ -227,10 +227,38 @@
   background: rgba(255, 176, 46, 0.14);
 }
 
-.ms[data-kind='solo'][aria-pressed='true'] {
-  color: var(--ok);
-  border-color: rgba(47, 243, 201, 0.5);
-  background: rgba(47, 243, 201, 0.12);
+.trackVisibility {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid var(--line-strong);
+  background: transparent;
+  color: var(--text-2);
+  transition:
+    color 0.15s,
+    border-color 0.15s,
+    background 0.15s;
+}
+
+.trackVisibility:hover {
+  color: var(--text-0);
+  background: var(--bg-5);
+}
+
+.trackVisibility[aria-pressed='true'] {
+  color: var(--neon-blue);
+  border-color: rgba(95, 120, 255, 0.45);
+  background: rgba(95, 120, 255, 0.1);
+}
+
+.trackVisibility[aria-pressed='false'] {
+  color: var(--text-3);
+  opacity: 0.55;
+  border-color: transparent;
 }
 
 .trackInstrument {
@@ -290,6 +318,103 @@
 .rollHint {
   font-size: 12px;
   color: var(--text-2);
+}
+
+.noteInspector {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 6px 12px;
+  margin-bottom: 8px;
+  border-radius: 9px;
+  border: 1px solid rgba(163, 28, 255, 0.4);
+  background: rgba(22, 17, 44, 0.85);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 0 16px rgba(163, 28, 255, 0.15);
+  animation: inspectorFadeIn 0.15s ease-out;
+}
+
+@keyframes inspectorFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.noteInspectorTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.noteInspectorDot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  box-shadow: 0 0 8px currentColor;
+}
+
+.noteInspectorPitch {
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-0);
+  text-shadow: 0 0 10px rgba(255, 255, 255, 0.5);
+}
+
+.noteInspectorFreq {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-2);
+}
+
+.noteInspectorGroup {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 10px;
+  border-left: 1px solid var(--line);
+}
+
+.noteInspectorLabel {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin-right: 2px;
+}
+
+.noteInspectorPosText {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-1);
+  padding: 0 4px;
+  min-width: 58px;
+  text-align: center;
+}
+
+.noteInspectorActions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.deleteNoteBtn {
+  color: #ffb3c9;
+  border-color: rgba(255, 60, 120, 0.4);
+}
+
+.deleteNoteBtn:hover:not(:disabled) {
+  border-color: var(--neon-pink);
+  background: rgba(255, 26, 168, 0.15);
+  box-shadow: 0 0 10px rgba(255, 26, 168, 0.3);
 }
 
 .rollScroll {
@@ -430,6 +555,67 @@
   filter: brightness(1.2);
 }
 
+.noteSelected {
+  outline: 2px solid #ffffff;
+  outline-offset: 1px;
+  box-shadow:
+    0 0 12px #ffffff,
+    0 0 20px color-mix(in srgb, var(--hue) 90%, #ffffff),
+    inset 0 0 0 1px #ffffff;
+  z-index: 3;
+  filter: brightness(1.3);
+}
+
+.resizeHandle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  z-index: 2;
+  cursor: ew-resize;
+  opacity: 0;
+  background: rgba(255, 255, 255, 0.15);
+  transition: opacity 0.12s, background-color 0.12s;
+}
+
+.note:hover .resizeHandle,
+.noteSelected .resizeHandle {
+  opacity: 1;
+}
+
+.resizeHandle:hover {
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.resizeHandleLeft {
+  left: 0;
+  border-top-left-radius: 4px;
+  border-bottom-left-radius: 4px;
+}
+
+.resizeHandleRight {
+  right: 0;
+  border-top-right-radius: 4px;
+  border-bottom-right-radius: 4px;
+}
+
+.resizeHandle::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.85);
+}
+
+.resizeHandleLeft::after {
+  left: 2px;
+}
+
+.resizeHandleRight::after {
+  right: 2px;
+}
+
 .noteDraft {
   pointer-events: none;
   opacity: 0.72;
@@ -439,8 +625,9 @@
 
 .ghost {
   pointer-events: none;
-  opacity: 0.18;
+  opacity: 0.32;
   box-shadow: none;
+  filter: saturate(0.85);
 }
 
 /* ---------- Transport dock ---------- */
