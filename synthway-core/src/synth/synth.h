@@ -74,13 +74,30 @@ typedef struct sw_voice {
     sw_synth_partial partials[SYNTHWAY_MAX_PARTIALS]; /* timbre, by partial index */
 } sw_voice;
 
+/* A setting of an instrument on one side, taken over by automation
+   (synthway_engine_automate). Ramps go in a straight line in the setting's
+   line unit: log2 of the frequency for the cutoffs, the value for the others. */
+typedef struct sw_automation {
+    bool active;                     /* taken over: position applies instead of the instrument's setting */
+    bool pending;                    /* a ramp to start at the next block, from where the setting is then */
+    float pending_value;
+    float pending_seconds;
+    uint32_t left;                   /* samples left in the running ramp, 0: holds `held` */
+    float held;                      /* the value the last ramp ends at, exactly */
+    double position;                 /* where the setting is, in line unit; double, so that it does not drift */
+    double step;                     /* added at each sample of the running ramp */
+    double target;                   /* where the running ramp ends, in line unit */
+} sw_automation;
+
 /* What every note of an instrument goes through, in this order: the filter,
-   then the reverb. Both are linear: filtering the sum of the notes is the
-   same as filtering each of them. */
+   the reverb, then the gain and the pan of its automation. The first two are
+   linear: filtering the sum of the notes is the same as filtering each of them. */
 typedef struct sw_instrument_bus {
     sw_filter_state high_pass[2];    /* left, right */
     sw_filter_state low_pass[2];
     bool active;                     /* processed by the previous block */
+    sw_automation automation[SYNTHWAY_AUTOMATION_PARAM_COUNT][2]; /* by setting, then side (left, right) */
+    float gain[2];                   /* left and right, smoothed towards the gain and pan of the automation; 1: untouched */
     sw_reverb reverb;                /* last: its delay lines are large */
 } sw_instrument_bus;
 
@@ -114,6 +131,14 @@ void sw_synth_note_glide(sw_synth* synth, uint32_t note_id, float frequency_hz, 
 
 /* Releases every voice but voice 0 */
 void sw_synth_all_notes_off(sw_synth* synth);
+
+/* Queues a ramp of a setting of instrument on side (SYNTHWAY_SIDE_*), started
+   by the next block: see synthway_engine_automate. Values already checked. */
+void sw_synth_automate(sw_synth* synth, uint32_t instrument, uint32_t param, uint32_t side, float value, float seconds);
+
+/* Gives the settings of instrument back to it, or of every instrument when
+   instrument is SYNTHWAY_MAX_INSTRUMENTS: see synthway_engine_clear_automation */
+void sw_synth_clear_automation(sw_synth* synth, uint32_t instrument);
 
 /* Voices but voice 0 that are held, about to start or still fading out */
 uint32_t sw_synth_sounding_notes(const sw_synth* synth);

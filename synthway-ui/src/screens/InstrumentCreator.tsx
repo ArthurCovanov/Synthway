@@ -1,6 +1,7 @@
-import { AlertTriangle, Copy, Lock, LockOpen, Magnet, Plus, Search, Trash2, Upload } from 'lucide-react';
+import { AlertTriangle, Copy, Download, GripVertical, Lock, LockOpen, Magnet, Plus, Search, Trash2, Upload } from 'lucide-react';
 import {
   useMemo,
+  useRef,
   useState,
   type CSSProperties,
   type Dispatch,
@@ -11,6 +12,7 @@ import { EnvelopesGraph } from '../components/EnvelopesGraph';
 import { SpectrumGlyph, WaveGlyph } from '../components/icons';
 import { HIGHEST_MIDI, KeyboardDock } from '../components/KeyboardDock';
 import layout from '../components/layout.module.css';
+import { Notice, useNotice } from '../components/Notice';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { SpectrumGraph } from '../components/SpectrumGraph';
 import {
@@ -28,6 +30,14 @@ import {
 } from '../components/ui';
 import { WaveScope } from '../components/WaveScope';
 import { useAppearance } from '../lib/appearance';
+import { chooseFiles, FileFormatError, fileNameOf, saveTextFile } from '../lib/files';
+import {
+  importInstruments,
+  INSTRUMENT_FILE,
+  INSTRUMENT_FILE_ACCEPT,
+  instrumentFileText,
+  parseInstrumentFile,
+} from '../lib/instrumentFile';
 import { useInstrumentSound } from '../lib/instrumentSound';
 import {
   CATEGORY_LABEL,
@@ -301,16 +311,34 @@ function InstrumentCard({
   instrument,
   selected,
   canDelete,
+  dragging,
+  dropIndicator,
+  disabledReorder,
   onSelect,
   onDuplicate,
   onDelete,
+  onMoveUp,
+  onMoveDown,
+  onDragStart,
+  onDragMove,
+  onDragEnd,
+  onDragCancel,
 }: {
   instrument: Instrument;
   selected: boolean;
   canDelete: boolean;
+  dragging?: boolean;
+  dropIndicator?: 'before' | 'after' | null;
+  disabledReorder?: boolean;
   onSelect: () => void;
   onDuplicate: () => void;
   onDelete: () => void;
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
+  onDragStart?: (event: React.PointerEvent<HTMLElement>, id: string) => void;
+  onDragMove?: (event: React.PointerEvent<HTMLElement>) => void;
+  onDragEnd?: (event: React.PointerEvent<HTMLElement>) => void;
+  onDragCancel?: () => void;
 }) {
   const count = instrument.partials.length;
   const active = activePartials(instrument.partials);
@@ -319,31 +347,82 @@ function InstrumentCard({
     <div
       role="button"
       tabIndex={0}
+      data-instrument-id={instrument.id}
       aria-pressed={selected}
-      className={cx(styles.card, selected && styles.cardSelected)}
+      className={cx(
+        styles.card,
+        selected && styles.cardSelected,
+        dragging && styles.cardDragging,
+        Boolean(dropIndicator) && styles.cardDropTarget,
+      )}
       style={{ '--hue': HUE_VAR[instrument.hue] } as CSSProperties}
       onClick={onSelect}
       onKeyDown={(event) => {
-        if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
-          event.preventDefault();
-          onSelect();
+        if (event.target === event.currentTarget) {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            onSelect();
+          } else if (event.altKey && (event.key === 'ArrowUp' || event.key === 'ArrowLeft')) {
+            event.preventDefault();
+            onMoveUp?.();
+          } else if (event.altKey && (event.key === 'ArrowDown' || event.key === 'ArrowRight')) {
+            event.preventDefault();
+            onMoveDown?.();
+          }
         }
       }}
+      onPointerDown={(event) => {
+        if (event.button !== 0 || disabledReorder) return;
+        if ((event.target as HTMLElement).closest('button')) return;
+        event.currentTarget.setPointerCapture(event.pointerId);
+        onDragStart?.(event, instrument.id);
+      }}
+      onPointerMove={onDragMove}
+      onPointerUp={onDragEnd}
+      onPointerCancel={onDragCancel}
     >
+      {dropIndicator === 'before' && <div className={cx(styles.dropBar, styles.dropBarBefore)} />}
+      {dropIndicator === 'after' && <div className={cx(styles.dropBar, styles.dropBarAfter)} />}
       <div className={styles.cardTop}>
-        {only && only.ratio === 1 ? (
-          <WaveGlyph waveform={only.waveform} width={34} height={16} className={styles.cardGlyph} />
-        ) : (
-          <SpectrumGlyph
-            partials={active.map((partial) => ({
-              ratio: partial.ratio,
-              amplitude: partial.amplitude,
-              color: HUE_HEX[partial.hue],
-            }))}
-            width={34}
-            height={16}
-          />
-        )}
+        <div className={styles.cardTopLeft}>
+          <button
+            type="button"
+            className={styles.dragHandle}
+            aria-label={`Déplacer ${instrument.name}`}
+            title={
+              disabledReorder
+                ? 'Un seul instrument chargé'
+                : 'Glisser pour réordonner les instruments (ou Alt+↑ / Alt+↓)'
+            }
+            disabled={disabledReorder}
+            onClick={(event) => event.stopPropagation()}
+            onPointerDown={(event) => {
+              if (event.button !== 0 || disabledReorder) return;
+              event.preventDefault();
+              event.stopPropagation();
+              event.currentTarget.setPointerCapture(event.pointerId);
+              onDragStart?.(event, instrument.id);
+            }}
+            onPointerMove={onDragMove}
+            onPointerUp={onDragEnd}
+            onPointerCancel={onDragCancel}
+          >
+            <GripVertical size={14} />
+          </button>
+          {only && only.ratio === 1 ? (
+            <WaveGlyph waveform={only.waveform} width={34} height={16} className={styles.cardGlyph} />
+          ) : (
+            <SpectrumGlyph
+              partials={active.map((partial) => ({
+                ratio: partial.ratio,
+                amplitude: partial.amplitude,
+                color: HUE_HEX[partial.hue],
+              }))}
+              width={34}
+              height={16}
+            />
+          )}
+        </div>
         <div className={styles.cardActions}>
           <button
             type="button"
@@ -411,6 +490,16 @@ export function InstrumentCreator({
   const [query, setQuery] = useState('');
   const [magnet, setMagnet] = usePersistentState<boolean>('synthway.spectrum-magnet.v1', () => true);
   const [selectedPartialId, setSelectedPartialId] = useState<string | null>(null);
+  const [notice, showNotice] = useNotice();
+  const [draggedInstrumentId, setDraggedInstrumentId] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<{ id: string; position: 'before' | 'after' } | null>(null);
+  const instrumentDragRef = useRef<{
+    id: string;
+    pointerId: number;
+    x: number;
+    y: number;
+    moved: boolean;
+  } | null>(null);
 
   const selected = instruments.find((instrument) => instrument.id === selectedId) ?? instruments[0];
   const partials = selected.partials;
@@ -544,6 +633,157 @@ export function InstrumentCreator({
     }
   };
 
+  const reorderInstrument = (sourceId: string, targetId: string, position: 'before' | 'after') => {
+    if (sourceId === targetId) return;
+    setInstruments((list) => {
+      const from = list.findIndex((item) => item.id === sourceId);
+      if (from < 0) return list;
+      const next = [...list];
+      const [moved] = next.splice(from, 1);
+      const to = next.findIndex((item) => item.id === targetId);
+      if (to < 0) return list;
+      const insertIndex = position === 'after' ? to + 1 : to;
+      next.splice(insertIndex, 0, moved);
+      return next;
+    });
+  };
+
+  const moveInstrumentInView = (id: string, delta: -1 | 1) => {
+    const visibleIndex = visible.findIndex((item) => item.id === id);
+    if (visibleIndex < 0) return;
+    const target = visible[visibleIndex + delta];
+    if (!target) return;
+    reorderInstrument(id, target.id, delta < 0 ? 'before' : 'after');
+  };
+
+  const handleDragStart = (event: React.PointerEvent<HTMLElement>, id: string) => {
+    instrumentDragRef.current = {
+      id,
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      moved: false,
+    };
+  };
+
+  const handleDragMove = (event: React.PointerEvent<HTMLElement>) => {
+    const drag = instrumentDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (!drag.moved && Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < 5) return;
+    if (!drag.moved) {
+      drag.moved = true;
+      setDraggedInstrumentId(drag.id);
+    }
+    let target = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>('[data-instrument-id]');
+    if (!target) {
+      target =
+        document.elementFromPoint(event.clientX, event.clientY - 7)?.closest<HTMLElement>('[data-instrument-id]') ??
+        document.elementFromPoint(event.clientX, event.clientY + 7)?.closest<HTMLElement>('[data-instrument-id]');
+    }
+    const targetId = target?.dataset.instrumentId ?? null;
+    if (target && targetId && targetId !== drag.id) {
+      const rect = target.getBoundingClientRect();
+      const midY = rect.top + rect.height / 2;
+      const position = event.clientY < midY ? 'before' : 'after';
+      setDropTarget({ id: targetId, position });
+    } else {
+      setDropTarget(null);
+    }
+  };
+
+  const handleDragEnd = (event: React.PointerEvent<HTMLElement>) => {
+    const drag = instrumentDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (drag.moved) {
+      if (dropTarget && dropTarget.id !== drag.id) {
+        reorderInstrument(drag.id, dropTarget.id, dropTarget.position);
+      }
+      setSelectedId(drag.id);
+    }
+    instrumentDragRef.current = null;
+    setDraggedInstrumentId(null);
+    setDropTarget(null);
+  };
+
+  const handleDragCancel = () => {
+    instrumentDragRef.current = null;
+    setDraggedInstrumentId(null);
+    setDropTarget(null);
+  };
+
+  /** Saves the selected instrument in a file of its own, to share it or keep it apart */
+  const exportSelected = async () => {
+    const instrument = selected;
+    try {
+      const result = await saveTextFile(
+        instrumentFileText(instrument),
+        INSTRUMENT_FILE,
+        fileNameOf(instrument.name, INSTRUMENT_FILE.extension, 'Instrument'),
+      );
+      if (!result.saved) return;
+      showNotice({
+        tone: 'success',
+        title: `« ${instrument.name} » ${result.handle ? 'exporté dans' : 'téléchargé :'} « ${result.name} ».`,
+      });
+    } catch (error) {
+      showNotice({
+        tone: 'error',
+        title: `« ${instrument.name} » n’a pas pu être exporté.`,
+        details: [error instanceof Error ? error.message : String(error)],
+      });
+    }
+  };
+
+  /**
+   * Adds the instruments of the files chosen at the end of the library, each locked: the user unlocks it
+   * to change it. Under its own id when it is free (compositions using it find it again), as a copy
+   * otherwise; one already there, the same, is only selected.
+   */
+  const importFromFiles = async () => {
+    const files = await chooseFiles(INSTRUMENT_FILE_ACCEPT, true);
+    if (!files.length) return;
+    const read: Instrument[] = [];
+    const failures: string[] = [];
+    for (const file of files) {
+      try {
+        read.push(parseInstrumentFile(await file.text()));
+      } catch (error) {
+        if (!(error instanceof FileFormatError)) console.error(error);
+        failures.push(`« ${file.name} » n’a pas pu être importé : ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    const outcomes = importInstruments(instruments, read);
+    const added = outcomes.filter((outcome) => outcome.kind !== 'present').map((outcome) => outcome.instrument);
+    if (added.length) setInstruments((list) => [...list, ...added]);
+    const last = outcomes[outcomes.length - 1];
+    if (last) setSelectedId(last.instrument.id);
+
+    const details: string[] = [];
+    for (const outcome of outcomes) {
+      if (outcome.kind === 'copied') {
+        details.push(
+          `Une autre version de « ${outcome.existing.name} » est déjà dans ta bibliothèque : celle du fichier est ajoutée à côté, sous le nom « ${outcome.instrument.name} ».`,
+        );
+      } else if (outcome.kind === 'present') {
+        details.push(`« ${outcome.instrument.name} » était déjà dans ta bibliothèque, à l’identique : rien n’est ajouté.`);
+      }
+    }
+    details.push(...failures);
+    const title =
+      added.length === 0
+        ? failures.length
+          ? 'Aucun instrument importé.'
+          : 'Rien de nouveau à importer.'
+        : added.length === 1
+          ? `« ${added[0].name} » importé, verrouillé : déverrouille-le pour le modifier.`
+          : `${added.length} instruments importés, verrouillés : déverrouille-les pour les modifier.`;
+    showNotice({
+      tone: failures.length ? (added.length ? 'warning' : 'error') : details.length ? 'info' : 'success',
+      title,
+      details,
+    });
+  };
+
   const needle = query.trim().toLowerCase();
   const visible = needle
     ? instruments.filter((item) =>
@@ -585,21 +825,42 @@ export function InstrumentCreator({
               <Plus size={15} />
               Nouvel instrument
             </Button>
-            <Button size="small" disabled title="Bientôt : import de presets">
+            <Button
+              size="small"
+              title={`Importer des instruments (${INSTRUMENT_FILE.extension}) : ils arrivent verrouillés`}
+              onClick={() => void importFromFiles()}
+            >
               <Upload size={14} />
               Importer
             </Button>
+            <Button
+              size="small"
+              title={`Exporter « ${selected.name} » dans un fichier ${INSTRUMENT_FILE.extension}`}
+              onClick={() => void exportSelected()}
+            >
+              <Download size={14} />
+              Exporter
+            </Button>
           </div>
-          <div className={styles.grid}>
+          <div className={styles.grid} data-dragging={draggedInstrumentId ? 'true' : undefined}>
             {visible.map((instrument) => (
               <InstrumentCard
                 key={instrument.id}
                 instrument={instrument}
                 selected={instrument.id === selected.id}
                 canDelete={instruments.length > 1 && !instrument.locked}
+                dragging={draggedInstrumentId === instrument.id}
+                dropIndicator={dropTarget?.id === instrument.id ? dropTarget.position : null}
+                disabledReorder={instruments.length <= 1}
                 onSelect={() => setSelectedId(instrument.id)}
                 onDuplicate={() => add(duplicateInstrument(instrument), instrument.id)}
                 onDelete={() => remove(instrument.id)}
+                onMoveUp={() => moveInstrumentInView(instrument.id, -1)}
+                onMoveDown={() => moveInstrumentInView(instrument.id, 1)}
+                onDragStart={handleDragStart}
+                onDragMove={handleDragMove}
+                onDragEnd={handleDragEnd}
+                onDragCancel={handleDragCancel}
               />
             ))}
             {visible.length === 0 && <p className={styles.empty}>Aucun instrument ne correspond à « {query} ».</p>}
@@ -654,11 +915,17 @@ export function InstrumentCreator({
             onChange={(event) => update({ description: event.target.value })}
           />
           {locked && (
-            <p className={styles.lockNote}>
+            <div className={styles.lockNote}>
               <Lock size={13} />
-              Instrument verrouillé : il se joue toujours, mais rien n’est modifiable. Duplique-le pour en faire une
-              variante.
-            </p>
+              <span>
+                Instrument verrouillé : il se joue toujours, mais rien n’est modifiable. Déverrouille-le pour le modifier,
+                ou duplique-le pour en faire une variante.
+              </span>
+              <Button size="small" className={styles.lockNoteAction} onClick={() => setInstrumentLocked(false)}>
+                <LockOpen size={13} />
+                Déverrouiller
+              </Button>
+            </div>
           )}
 
           <Section
@@ -1249,6 +1516,7 @@ export function InstrumentCreator({
         </Panel>
       </div>
 
+      <Notice notice={notice} onClose={() => showNotice(null)} />
       <KeyboardDock instrument={selected} onOctaveChange={(octave) => update({ octave })} />
     </div>
   );

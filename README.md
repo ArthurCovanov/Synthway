@@ -1,201 +1,167 @@
-# 🎹 Synthway
+<p align="center">
+  <img src="synthway-ui/src/assets/brand/logo-640.png" alt="Synthway" width="360">
+</p>
 
-> Synthétiseur audio modulaire et surface de contrôle temps réel multiplateforme (Windows & Linux).
-> Architecture en 3 piliers : **Moteur C/C++ (miniaudio)** ➔ **Serveur Python (FastAPI/WebSockets)** ➔ **Interface Web (React/Vite)**.
+<p align="center">
+  <strong>Un synthétiseur additif qu'on sculpte partiel par partiel, depuis le navigateur.</strong><br>
+  Créez vos sons, composez vos morceaux, analysez un enregistrement pour en faire un instrument.
+</p>
+
+<p align="center">
+  <a href="#fonctionnalités">Fonctionnalités</a> ·
+  <a href="#architecture">Architecture</a> ·
+  <a href="#démarrage-rapide">Démarrage rapide</a> ·
+  <a href="docs/developpement.md">Guide de développement</a>
+</p>
 
 ---
 
-## 🏛️ Vue d'ensemble de l'Architecture
+Synthway réunit dans une même interface web un éditeur de timbres, un séquenceur multi-pistes, un analyseur de son et un outil de séparation de sources. Le son, lui, ne passe jamais par le navigateur : il est calculé par un moteur écrit en C, dans son propre thread audio, au plus près de la carte son. L'interface et le serveur n'envoient que des commandes (notes, réglages) : aucun flux audio ne transite par Python ni par le réseau.
 
-Synthway est structuré en **3 sous-projets indépendants et hautement découplés**, permettant à des développeurs humains ou des agents IA de travailler en parallèle sur chaque couche :
+## Fonctionnalités
+
+### 🎛️ Instrument Creator : sculpter un son
+
+![Instrument Creator : spectre de partiels inharmoniques de l'instrument Neon Bell, avec ses enveloppes et l'onde résultante](docs/images/instrument-creator.png)
+
+- **Synthèse additive** : jusqu'à 64 partiels par instrument. Chacun a son rapport à la note (harmonique ou non, de ×0,01 à ×1000), son amplitude, sa forme d'onde (sinus, carré, triangle, dent de scie) et sa propre enveloppe.
+- **Spectre éditable à la souris** : on glisse un partiel vers la droite pour monter sa hauteur, vers le haut pour son amplitude ; les enveloppes et l'onde résultante suivent en direct.
+- **Filtre passe-bande, réverbération et unisson** : jusqu'à 8 voix désaccordées par partiel, avec leur largeur stéréo.
+- **Préréglages** pour démarrer (lead, basse, nappe, orgue, cloche, supersaw…), et instruments partagés en fichiers `.swinst`.
+- **Jouable tout de suite** au clavier de l'ordinateur (AZERTY ou QWERTY) ou à la souris.
+
+### 🎼 Composer : écrire un morceau
+
+![Composer : piano roll multi-pistes, glissé entre deux notes et courbe d'automation du volume](docs/images/composer.png)
+
+- **Piano roll multi-pistes** : chaque piste est jouée par l'un de vos instruments, les autres restent visibles en transparence.
+- **Glissés de hauteur** : un double-clic sur une note y pose un point, qu'on tire vers la hauteur voulue.
+- **Automation** : volume, panoramique, passe-bas, passe-haut, résonance, réverbération et désaccord varient au fil du morceau, en mono ou séparément à gauche et à droite.
+- **Annuler / rétablir**, et morceaux enregistrés en `.swsong` avec les instruments qu'ils utilisent.
+- **Export WAV ou OGG** : le morceau est rendu hors ligne par le même moteur que la lecture, chaque note à l'échantillon près.
+
+### 🔬 Analyzer : comprendre un son
+
+![Analyzer : forme d'onde d'un fichier, accordeur sur la note Sol 3 et spectre mesuré avec ses harmoniques](docs/images/analyzer.png)
+
+- **Au micro ou depuis un fichier** (WAV, FLAC, MP3) : accordeur (note, écart en cents, fréquence), spectre mesuré et liste des partiels.
+- **La note suivie tout le long d'un fichier** : un clic choisit le moment analysé, et l'Analyzer dit de quelle forme d'onde le son est le plus proche.
+- **D'un son à un instrument** : les partiels mesurés deviennent un instrument à l'essai, jouable au clavier, puis enregistré dans la bibliothèque.
+
+### 🎚️ Decomposer : séparer les pistes d'un morceau (facultatif)
+
+![Decomposer : un morceau séparé en six pistes (batterie, basse, autres, voix, guitare, piano)](docs/images/decomposer.png)
+
+- Un morceau (WAV, FLAC, MP3, OGG) séparé en 4 ou 6 pistes (batterie, basse, voix, autres, guitare, piano) par [Demucs v4](https://github.com/adefossez/demucs).
+- Chaque piste s'écoute, se télécharge, ou part dans l'Analyzer pour en tirer un instrument.
+- Module installé à part (PyTorch, environ 3 Go). Les poids pré-entraînés de Demucs n'ont pas de licence claire : ce module est réservé à un essai local, voir [`synthway-demucs/README.md`](synthway-demucs/README.md).
+
+## Architecture
 
 ```mermaid
 flowchart LR
-    subgraph UI ["synthway-ui (Frontend)"]
-        React["React + TypeScript + Vite"]
-        UI_Controls["Instrument Creator, Composer, Analyzer, Decomposer, Réglages"]
-    end
+    UI["synthway-ui<br/>React · TypeScript · Vite"]
+    Server["synthway-server<br/>Python · FastAPI"]
+    Core["synthway-core<br/>C11 · miniaudio · RtMidi"]
+    Demucs["synthway-demucs<br/>Demucs v4, facultatif"]
+    Out["Carte son"]
 
-    subgraph Server ["synthway-server (Ordonnanceur)"]
-        FastAPI["FastAPI (REST & WebSockets)"]
-        Bridge["Pont FFI (ctypes)"]
-    end
-
-    subgraph Demucs ["synthway-demucs (facultatif)"]
-        Separate["Demucs v4 (PyTorch), processus à part"]
-    end
-
-    subgraph Core ["synthway-core (Moteur Audio)"]
-        Engine["Moteur Audio C11 (Oscillateurs, DSP)"]
-        Devices["Énumération Périphériques"]
-        Miniaudio["miniaudio (WASAPI / ALSA / PulseAudio)"]
-        Midi["Énumération Ports MIDI"]
-        RtMidi["RtMidi (WinMM / ALSA / CoreMIDI)"]
-    end
-
-    UI_Controls -->|REST: Découverte & Config| FastAPI
-    UI_Controls <-->|WebSocket: Note On/Off, Knobs temps réel| FastAPI
-    FastAPI --> Bridge
-    FastAPI -->|Séparation de sources d'un fichier, hors ligne| Separate
-    Bridge -->|Appels C ABI (synthway.dll / libsynthway.so)| Engine
-    Engine --> Miniaudio
-    Devices --> Miniaudio
-    Midi --> RtMidi
-    Miniaudio -->|Audio Buffer| Hardware["Haut-parleurs / Casque"]
-    RtMidi <-->|Messages MIDI| Controllers["Claviers / Contrôleurs MIDI"]
+    UI -- "REST + WebSocket<br/>commandes seulement" --> Server
+    Server -- "ctypes<br/>ABI C" --> Core
+    Server -. "processus à part" .-> Demucs
+    Core -- "thread audio<br/>temps réel" --> Out
 ```
 
-Le détail des échanges entre les couches (qui stocke quoi, où vit le signal audio, trajet d'une note de l'UI jusqu'à la carte son) est dans [`docs/architecture.md`](docs/architecture.md).
+| Dossier | Rôle | Technologies |
+| --- | --- | --- |
+| [`synthway-core/`](synthway-core/) | Moteur temps réel : synthèse, lecture, analyse, rendu WAV et OGG, périphériques audio, liste des ports MIDI | C11 (C++17 pour RtMidi), bibliothèque partagée |
+| [`synthway-server/`](synthway-server/) | API REST et WebSocket, pilote le moteur par FFI | Python, FastAPI |
+| [`synthway-ui/`](synthway-ui/) | Interface de contrôle | React, TypeScript, Vite |
+| [`synthway-demucs/`](synthway-demucs/) | Séparation de sources, facultative | Demucs v4, PyTorch |
 
----
+Le trajet d'une note, de l'interface jusqu'à la carte son, est décrit dans [`docs/architecture.md`](docs/architecture.md).
 
-## 📁 Arborescence Globale du Répertoire
+## Démarrage rapide
 
-```text
-synthway/
-├── .gitignore                  # Fichiers ignorés (builds C, venvs Python, node_modules)
-├── README.md                   # Ce document (guide d'ensemble humains & agents)
-├── AGENTS.md                   # Règles communes aux agents IA (Claude, Gemini) et aux humains
-├── CLAUDE.md                   # Point d'entrée de Claude Code (importe AGENTS.md)
-├── .claude/skills/             # Skills partagés par les agents (procédures pas à pas)
-├── .agents/skills.json         # Redirige Antigravity (Gemini) vers .claude/skills
-├── docs/journal.md             # Journal : qui travaille sur quoi
-├── docs/architecture.md        # Fonctionnement : flux de données entre les couches
-│
-├── synthway-core/              # 1. Cœur audio temps réel C/C++ (miniaudio + RtMidi)
-│   ├── CMakeLists.txt          # Configuration de build CMake cross-platform
-│   ├── Makefile                # Makefile standard (Linux/WSL, MSYS2)
-│   ├── build.ps1               # Script de compilation Windows PowerShell
-│   ├── build.sh                # Script de compilation Linux Bash
-│   ├── README.md               # Guide dédié du Core (API C, compilation, CLI)
-│   ├── include/synthway/       # En-têtes C publics (synthway.h, qui inclut types.h, devices.h, engine.h)
-│   ├── src/                    # Sources en trois sous-couches : engine/ (chef d'orchestre), synth/ (calcul du son), io/ (carte son, MIDI, fichiers)
-│   ├── examples/               # Exécutable de test CLI (cli_main.c)
-│   └── vendor/                 # Bibliothèques tierces non modifiées (miniaudio, RtMidi)
-│
-├── synthway-server/            # 2. Ordonnanceur & API Python (FastAPI + WebSockets)
-│   ├── README.md               # Guide dédié du Serveur (endpoints, FFI, WebSocket)
-│   ├── requirements.txt        # Dépendances Python
-│   ├── pyproject.toml          # Spécification du projet Python
-│   └── src/                    # Code source du serveur
-│       ├── __init__.py         # Module Python
-│       ├── main.py             # Application FastAPI & mode autonome
-│       ├── core_bridge.py      # Pont ctypes vers libsynthway
-│       ├── models.py           # Modèles Pydantic / Dataclasses
-│       └── separation.py       # Decomposer : lance Demucs dans un processus à part
-│
-├── synthway-demucs/            # Facultatif : séparation de sources (Demucs v4), essai local
-│   ├── README.md               # Installation (uv sync), licence, désactivation
-│   ├── separate.py             # Script lancé par le serveur
-│   └── vendor/demucs/          # Dépôt amont de Demucs, non modifié
-│
-└── synthway-ui/                # 3. Interface Graphique Utilisateur (React + Vite)
-    ├── README.md               # Guide dédié de l'UI (composants, connexion au serveur, stack)
-    ├── package.json            # Dépendances Node.js (React, Vite, Lucide)
-    ├── tsconfig.json           # Configuration TypeScript
-    ├── vite.config.ts          # Configuration Vite, adresse du serveur
-    ├── index.html              # Page web hôte
-    ├── scripts/                # Déclinaisons du logo, serveur factice muet
-    └── src/                    # Code source de l'IHM
-        ├── App.tsx             # Navigation entre les 5 écrans
-        ├── screens/            # Instrument Creator, Composer, Analyzer, Decomposer, Réglages
-        ├── components/         # Barre latérale, contrôles, oscilloscope, clavier
-        ├── lib/                # Client API/WebSocket, modèles, état partagé
-        ├── styles/             # Thème synthwave (couleurs du logo), polices
-        └── assets/             # Logo décliné, polices OFL
-```
+### Windows : rien à installer
 
----
+1. Téléchargez `Synthway-<version>-windows-x64.zip` sur la page **Releases** du dépôt.
+2. Dézippez-le où vous voulez.
+3. Double-cliquez sur `synthway.bat`.
 
-## ⚡ Démarrage Rapide
+Synthway s'ouvre dans le navigateur. Activez l'audio avec le bouton ⏻ du clavier, en bas de l'écran. Pour quitter, fermez la fenêtre noire.
 
-### Étape 1 : Compiler et Tester le Moteur Audio (`synthway-core`)
+Le moteur, l'interface et Python sont dans le dossier : rien n'est installé sur l'ordinateur, et supprimer le dossier suffit pour désinstaller. Si Windows affiche « Windows a protégé votre ordinateur » au premier lancement, cliquez sur « Informations complémentaires », puis « Exécuter quand même ».
 
-Le cœur n'a besoin que d'un compilateur C11 **et** C++17 (`gcc`/`g++` ou `clang`) et, sous Linux, des en-têtes ALSA (`libasound2-dev`). miniaudio et RtMidi sont fournis dans `synthway-core/vendor/`.
+### Depuis les sources
 
-- **Sous Linux / WSL Debian** :
-  ```bash
-  cd synthway-core
-  make
-  ./build/bin/synthway_cli --list
-  ./build/bin/synthway_cli --midi
-  ./build/bin/synthway_cli --tone 440 2
-  ```
+**Prérequis :** Python 3.9 ou plus récent, Node.js 18 ou plus récent et un compilateur C11 et C++17. miniaudio, RtMidi, libogg et libvorbis sont fournis dans le dépôt.
 
-- **Sous Windows (PowerShell)** :
+- **Windows :** installez Python, Node.js et [MSYS2](https://www.msys2.org/), qui fournit le compilateur :
+
   ```powershell
-  cd synthway-core
-  .\build.ps1
-  .\build\bin\synthway_cli.exe --list
-  .\build\bin\synthway_cli.exe --midi
-  .\build\bin\synthway_cli.exe --tone 440 2
+  winget install Python.Python.3.13
+  winget install OpenJS.NodeJS.LTS
+  winget install MSYS2.MSYS2
   ```
 
-### Étape 2 : Lancer le Serveur Python (`synthway-server`)
+  Puis, dans le terminal « MSYS2 UCRT64 » (menu Démarrer) :
 
-Le serveur fait le lien entre la bibliothèque C compilée et le réseau :
+  ```bash
+  pacman -S --needed mingw-w64-ucrt-x86_64-gcc
+  ```
 
-```bash
-cd synthway-server
-pip install -r requirements.txt
-cd src
-uvicorn main:app --reload --port 18741
-```
-> *Astuce* : Vous pouvez aussi lancer `python main.py` pour un test autonome sans FastAPI.
+- **Linux (Debian, Ubuntu) :** `sudo apt install build-essential libasound2-dev python3-venv nodejs npm` (Node.js 18 ou plus récent).
 
-> **Pour jouer, lancez le serveur sous Windows**, pas dans WSL : le son de WSL passe par WSLg et arrive avec environ une demi-seconde de retard. Commandes et réglages dans le [README du serveur](synthway-server/README.md#3-lancer-le-serveur).
+Puis lancez Synthway :
 
-### Étape 3 : Lancer l'Interface Graphique (`synthway-ui`)
+- **Windows :** double-cliquez sur `synthway.bat`.
+- **Linux :** `python3 synthway.py`
 
-```bash
-cd synthway-ui
-npm install
-npm run dev
-```
-Ouvrez [http://localhost:5173](http://localhost:5173) pour utiliser le synthétiseur dans votre navigateur. Vite ne sert que la page : le navigateur parle directement au serveur, sur `http://127.0.0.1:18741`. Si le serveur tourne sur un autre port que 18741, ou pour travailler sans lui avec le serveur factice muet, voir le [README de l'UI](synthway-ui/README.md).
+Le lanceur prépare ce qui manque. Au premier lancement, il compile le moteur, installe les paquets du serveur et de l'interface et construit l'interface, ce qui prend quelques minutes. Il démarre ensuite le serveur, qui sert aussi l'interface, et ouvre Synthway dans le navigateur ([http://127.0.0.1:18741](http://127.0.0.1:18741)). Pour tout arrêter : Ctrl+C, ou fermez la fenêtre.
 
-### Étape 4 (facultative) : la séparation de sources (`synthway-demucs`)
+Les lancements suivants sont immédiats. Après une mise à jour du dépôt, le lanceur ne refait que ce qui a changé. Options (`python synthway.py --help`) : `--no-browser`, `--port`.
 
-L'onglet Decomposer décompose un morceau en pistes avec Demucs v4. Il lui faut son propre environnement Python, créé par [uv](https://docs.astral.sh/uv/) (environ 3 Go avec PyTorch) :
+**Facultatif : le Decomposer**
 
 ```bash
 cd synthway-demucs
 uv sync
 ```
 
-Puis redémarrez le serveur. Licence des poids non précisée : essai local seulement. Voir le [README de synthway-demucs](synthway-demucs/README.md).
+Il faut [uv](https://docs.astral.sh/uv/). Relancez ensuite Synthway.
 
----
+Synthway tourne sous Windows et Linux. Sous WSL, le son passe par WSLg et arrive avec environ une demi-seconde de retard : lancez plutôt Synthway sous Windows. Lancement à la main couche par couche, tests et serveur factice pour travailler sans son : voir le [guide de développement](docs/developpement.md).
 
-## 💻 Compatibilité Multiplateforme (Windows & Linux / WSL)
+## État du projet
 
-Le projet est conçu pour fonctionner de manière transparente sous **Windows** et **Linux (Debian / WSL)** sans aucun chemin codé en dur (`no hardcoded paths`) :
+Synthway est jeune : chaque couche en est à son premier jet, et ses API peuvent encore changer. Il est développé sous Windows, où se testent le son et le micro ; le moteur compile et passe aussi ses tests sous Linux. Le moteur sait déjà lister les ports MIDI ; jouer depuis un clavier MIDI est à venir.
 
-- **Résolution dynamique des chemins** : Le pont Python `core_bridge.py` localise automatiquement `synthway.dll` ou `libsynthway.so` selon l'OS et l'emplacement relatif (`../synthway-core/build/lib/`).
-- **Interopérabilité WSL** : Si vous travaillez via un lien symbolique sous WSL Debian (ex: `/home/Abyssal/workspace/synthway` pointant vers le disque Windows), vous pouvez indifféremment exécuter les commandes côté Linux ou côté Windows.
-- **Backend audio miniaudio** : Utilise nativement **WASAPI** sous Windows et **ALSA / PulseAudio / JACK** sous Linux avec détection dynamique.
-- **Backend MIDI RtMidi** : **WinMM** sous Windows, **ALSA** sous Linux, **CoreMIDI** sous macOS.
+## Contribuer
 
----
+- [`docs/developpement.md`](docs/developpement.md) : arborescence, compilation et règles d'architecture de chaque couche.
+- [`docs/architecture.md`](docs/architecture.md) : comment l'interface, le serveur et le moteur communiquent.
+- [`docs/formats-de-fichier.md`](docs/formats-de-fichier.md) : les formats `.swsong` (morceaux) et `.swinst` (instruments).
+- Chaque dossier a son propre `README.md`, avec son API et ses commandes.
 
-## 🤖 Guide pour les Développeurs Humains et Agents IA
+Synthway est développé avec l'aide d'agents IA (Claude Code, Gemini) ; leurs consignes communes, qui valent aussi pour les humains, sont dans [`AGENTS.md`](AGENTS.md).
 
-L'utilisateur, Claude et Gemini travaillent dans ce même dossier. Les règles de travail communes (journal, conventions, skills partagés) sont dans [`AGENTS.md`](AGENTS.md).
+## Crédits
 
-Lors de l'ajout de nouvelles fonctionnalités, respectez scrupuleusement les frontières d'architecture :
+Synthway s'appuie sur des projets open source :
 
-1. **Règles pour `synthway-core` (Temps Réel)** :
-   - Le code dans `synthway-core` doit rester en **C11 / C++ portable**, sans allocation dynamique (`malloc`/`free`), sans entrées/sorties disque, et sans appel système bloquant dans le thread audio : le callback de `src/io/audio_output.c`, `sw_engine_render` et tout `src/synth/`.
-   - Tout paramètre partagé (fréquence, volume, forme d'onde) doit être modifiable sans blocage de verrou.
-   - Ne jamais introduire de dépendance réseau ou HTTP dans `synthway-core`.
-2. **Règles pour `synthway-server` (Ordonnancement)** :
-   - Toute nouvelle fonction exportée par `synthway-core` doit avoir sa signature enregistrée dans `core_bridge.py`.
-   - Utilisez le WebSocket `/ws/synth` pour les actions à haute fréquence (notes, modulations, télémétrie FFT/oscilloscope).
-   - Utilisez les routes REST (`/api/*`) pour les opérations de configuration (choix de carte son, profils, presets).
-3. **Règles pour `synthway-ui` (Ergonomie & Contrôle)** :
-   - Conserver l'interface réactive et découplée : elle doit afficher l'état de synchronisation avec le serveur.
-   - Pour une version application de bureau sans navigateur, préférer **Tauri** à Electron pour sa légèreté.
-4. **Règles pour `synthway-demucs` (facultatif)** :
-   - Le serveur n'importe jamais PyTorch ni Demucs : il lance `separate.py` avec le Python de `synthway-demucs/.venv`, dans un processus à part, et lit ses lignes JSON.
-   - Tout doit continuer de marcher sans ce dossier : le Decomposer dit alors pourquoi il ne peut rien décomposer.
-   - `vendor/demucs/` reste le dépôt amont, sans modification. Les poids téléchargés (`models/`) ne sont jamais commités.
+| Projet | Usage | Licence |
+| --- | --- | --- |
+| [miniaudio](https://github.com/mackron/miniaudio) | Sortie et entrée audio, décodage de fichiers | Domaine public ou MIT-0 |
+| [RtMidi](https://github.com/thestk/rtmidi) | Liste des ports MIDI | Type MIT |
+| [libogg](https://xiph.org/ogg/) et [libvorbis](https://xiph.org/vorbis/) | Export OGG | BSD-3-Clause, © Xiph.Org Foundation |
+| [FastAPI](https://fastapi.tiangolo.com/), [Uvicorn](https://www.uvicorn.org/) | Serveur | MIT, BSD-3-Clause |
+| [React](https://react.dev/), [Vite](https://vite.dev/), [Lucide](https://lucide.dev/) | Interface, icônes | MIT, MIT, ISC |
+| Michroma, Inter, JetBrains Mono | Polices de l'interface | SIL OFL 1.1 |
+| [Demucs](https://github.com/adefossez/demucs) | Séparation de sources (facultative) | MIT pour le code ; poids sans licence claire |
+
+Versions, sources et notices : [`synthway-core/vendor/README.md`](synthway-core/vendor/README.md) et [`synthway-ui/src/assets/fonts/README.md`](synthway-ui/src/assets/fonts/README.md).
+
+## Licence
+
+Synthway est distribué sous licence [Apache 2.0](LICENSE). Les bibliothèques et polices tierces fournies dans le dépôt gardent leur propre licence (voir [Crédits](#crédits)) ; les poids de Demucs, téléchargés à part par le module facultatif, n'en font pas partie.

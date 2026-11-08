@@ -1,6 +1,6 @@
 # Helper build script for Windows PowerShell
 # Usage: .\build.ps1 [-Clean] [-Test]
-#   -Clean : rebuild everything, including the third-party libraries (miniaudio, RtMidi)
+#   -Clean : rebuild everything, including the third-party libraries (miniaudio, RtMidi, libogg, libvorbis)
 #   -Test  : then run the offline render and analysis tests (no audio device, no sound)
 param([switch]$Clean, [switch]$Test)
 $ErrorActionPreference = "Stop"
@@ -92,6 +92,45 @@ if (Test-Stale $rtmidiLib @("vendor/rtmidi/RtMidi.cpp", "vendor/rtmidi/RtMidi.h"
     Write-Host "[=] librtmidi.a is up to date"
 }
 
+# libogg and libvorbis, for Ogg Vorbis files. src/io/xiph holds the
+# ogg/config_types.h that libogg's configure would generate.
+$xiphIncludes = @("-Ivendor/libogg/include", "-Isrc/io/xiph", "-Ivendor/libvorbis/include")
+$xiphConfig = "src/io/xiph/ogg/config_types.h"
+
+$oggLib = "$vendorDir/libogg.a"
+$oggFiles = @(Get-ChildItem -Recurse -File vendor/libogg | ForEach-Object { $_.FullName }) + $xiphConfig
+if (Test-Stale $oggLib $oggFiles) {
+    Write-Host "[*] Building libogg.a..."
+    New-Item -ItemType Directory -Path "$vendorDir/libogg" -Force | Out-Null
+    $oggObjects = @()
+    foreach ($source in Get-ChildItem vendor/libogg/src -Filter *.c) {
+        $object = "$vendorDir/libogg/$($source.BaseName).o"
+        Invoke-Native $cc -O2 -w -std=gnu11 @xiphIncludes -c $source.FullName -o $object
+        $oggObjects += $object
+    }
+    Remove-Item $oggLib -ErrorAction SilentlyContinue
+    Invoke-Native ar rcs $oggLib @oggObjects
+} else {
+    Write-Host "[=] libogg.a is up to date"
+}
+
+$vorbisLib = "$vendorDir/libvorbis.a"
+$vorbisFiles = @(Get-ChildItem -Recurse -File vendor/libvorbis, vendor/libogg/include | ForEach-Object { $_.FullName }) + $xiphConfig
+if (Test-Stale $vorbisLib $vorbisFiles) {
+    Write-Host "[*] Building libvorbis.a (with the encoder)..."
+    New-Item -ItemType Directory -Path "$vendorDir/libvorbis" -Force | Out-Null
+    $vorbisObjects = @()
+    foreach ($source in Get-ChildItem vendor/libvorbis/lib -Filter *.c) {
+        $object = "$vendorDir/libvorbis/$($source.BaseName).o"
+        Invoke-Native $cc -O2 -w -std=gnu11 @xiphIncludes -Ivendor/libvorbis/lib -c $source.FullName -o $object
+        $vorbisObjects += $object
+    }
+    Remove-Item $vorbisLib -ErrorAction SilentlyContinue
+    Invoke-Native ar rcs $vorbisLib @vorbisObjects
+} else {
+    Write-Host "[=] libvorbis.a is up to date"
+}
+
 # --------------------------------------------------------------------------
 # Synthway library
 # --------------------------------------------------------------------------
@@ -102,12 +141,12 @@ $sources = @(
     "synth/synth", "synth/oscillator", "synth/envelope", "synth/reverb", "interpreter/interpreter",
     "analyzer/analyzer",
     "analysis/analysis", "analysis/notes", "analysis/waveform", "analysis/pitch", "analysis/spectrum", "analysis/fft",
-    "io/audio_output", "io/audio_input", "io/audio_file", "io/wav_file", "io/audio_devices", "io/midi_ports"
+    "io/audio_output", "io/audio_input", "io/audio_file", "io/wav_file", "io/audio_writer", "io/audio_devices", "io/midi_ports"
 )
 foreach ($name in $sources) {
     Write-Host "[*] Compiling src/$name.c..."
     New-Item -ItemType Directory -Path (Split-Path "$objDir/$name.o") -Force | Out-Null
-    Invoke-Native $cc -O2 -Wall -std=c11 -DSYNTHWAY_BUILD_SHARED -Iinclude -Isrc -Ivendor/miniaudio -Ivendor/rtmidi -c "src/$name.c" -o "$objDir/$name.o"
+    Invoke-Native $cc -O2 -Wall -std=c11 -DSYNTHWAY_BUILD_SHARED -Iinclude -Isrc -Ivendor/miniaudio -Ivendor/rtmidi @xiphIncludes -c "src/$name.c" -o "$objDir/$name.o"
 }
 $objects = $sources | ForEach-Object { "$objDir/$_.o" }
 
@@ -117,7 +156,7 @@ $objects = $sources | ForEach-Object { "$objDir/$_.o" }
 # -fno-use-linker-plugin works around the incomplete MSYS2 GCC install
 # (liblto_plugin.dll missing); harmless once GCC is repaired.
 Write-Host "[*] Linking synthway.dll..."
-Invoke-Native $cxx -fno-use-linker-plugin -shared -static -o build/lib/synthway.dll @objects $rtmidiLib $miniaudioLib "-Wl,--out-implib,build/lib/libsynthway.a" -lwinmm -lole32 -lm
+Invoke-Native $cxx -fno-use-linker-plugin -shared -static -o build/lib/synthway.dll @objects $rtmidiLib $miniaudioLib $vorbisLib $oggLib "-Wl,--out-implib,build/lib/libsynthway.a" -lwinmm -lole32 -lm
 
 Write-Host "[*] Compiling CLI example..."
 Invoke-Native $cc -O2 -Wall -std=c11 -DSYNTHWAY_USE_SHARED -Iinclude -c examples/cli_main.c -o "$objDir/cli_main.o"

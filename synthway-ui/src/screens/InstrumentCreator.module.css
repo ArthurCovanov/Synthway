@@ -83,7 +83,11 @@
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   align-content: start;
   gap: 12px;
-  padding: 2px 4px 4px 2px;
+  padding: 8px 4px 8px 2px;
+}
+
+.grid[data-dragging='true'] {
+  user-select: none;
 }
 
 .card {
@@ -97,6 +101,7 @@
   border: 1px solid var(--line);
   background: rgba(17, 16, 51, 0.6);
   cursor: pointer;
+  user-select: none;
   outline-offset: 3px;
   transition:
     border-color 0.15s,
@@ -120,11 +125,109 @@
   box-shadow: var(--glow-violet);
 }
 
+.cardDragging,
+.cardDragging:hover {
+  opacity: 0.45;
+  transform: scale(0.98);
+  cursor: grabbing;
+}
+
+.card.cardDropTarget {
+  border-color: rgba(95, 120, 255, 0.45);
+}
+
+.dropBar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--neon-blue);
+  box-shadow: 0 0 8px var(--neon-blue), 0 0 16px rgba(95, 120, 255, 0.7);
+  border-radius: 2px;
+  pointer-events: none;
+  z-index: 10;
+  animation: dropBarGlow 1.2s ease-in-out infinite alternate;
+}
+
+.dropBar::before,
+.dropBar::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--neon-blue);
+  box-shadow: 0 0 6px var(--neon-blue);
+}
+
+.dropBar::before {
+  left: -2px;
+}
+
+.dropBar::after {
+  right: -2px;
+}
+
+.dropBarBefore {
+  top: -7px;
+}
+
+.dropBarAfter {
+  bottom: -7px;
+}
+
+@keyframes dropBarGlow {
+  from {
+    box-shadow: 0 0 6px var(--neon-blue), 0 0 12px rgba(95, 120, 255, 0.5);
+  }
+  to {
+    box-shadow: 0 0 10px var(--neon-blue), 0 0 20px rgba(95, 120, 255, 0.85);
+  }
+}
+
 .cardTop {
   display: flex;
   align-items: center;
   justify-content: space-between;
   min-height: 24px;
+}
+
+.cardTopLeft {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.dragHandle {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 22px;
+  margin: 0 -2px 0 -4px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-3);
+  cursor: grab;
+  transition: color 0.15s, background 0.15s;
+}
+
+.dragHandle:hover {
+  color: var(--text-0);
+  background: var(--bg-5);
+}
+
+.dragHandle:active {
+  cursor: grabbing;
+}
+
+.dragHandle:disabled {
+  opacity: 0.2;
+  cursor: default;
 }
 
 .cardGlyph {
@@ -272,6 +375,20 @@
   flex: none;
   margin-top: 2px;
   color: var(--neon-pink-soft);
+}
+
+.lockNote > span {
+  flex: 1;
+}
+
+/* Unlocks the instrument right where the note says it is locked */
+.lockNoteAction {
+  flex: none;
+  align-self: center;
+}
+
+.lockNoteAction svg {
+  margin-top: 0;
 }
 
 .nameInput:focus {

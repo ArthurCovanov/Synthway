@@ -171,14 +171,14 @@ const shadowChordEnvelope: Envelope = {
 
 export const PRESET_INSTRUMENTS: Instrument[] = [
   {
-    id: 'neon-lead',
-    name: 'Neon Lead',
-    description: 'Dent de scie tranchante, taillée pour les mélodies.',
+    id: 'hologram-sine',
+    name: 'Hologram Sine',
+    description: 'Sinusoïde pure et cristalline, sans une harmonique de trop.',
     category: 'lead',
-    hue: 'pink',
-    volume: 0.3,
-    partials: single(WAVEFORM.Sawtooth, { attack: 0.01, decay: 0.25, sustain: 0.7, release: 0.35 }),
-    filter: { lowCutoff: 20, cutoff: 6500, resonance: 0.35 },
+    hue: 'magenta',
+    volume: 0.35,
+    partials: single(WAVEFORM.Sine, { attack: 0.03, decay: 0.2, sustain: 0.85, release: 0.5 }),
+    filter: { lowCutoff: 20, cutoff: 12000, resonance: 0.05 },
   },
   {
     id: 'rain-city-bass',
@@ -191,6 +191,16 @@ export const PRESET_INSTRUMENTS: Instrument[] = [
     filter: { lowCutoff: 20, cutoff: 900, resonance: 0.45 },
   },
   {
+    id: 'siren-fx',
+    name: 'Siren FX',
+    description: 'Carré strident pour les alarmes et les effets.',
+    category: 'fx',
+    hue: 'pink',
+    volume: 0.2,
+    partials: single(WAVEFORM.Square, { attack: 0.05, decay: 0.1, sustain: 1, release: 0.8 }),
+    filter: { lowCutoff: 20, cutoff: 8000, resonance: 0.7 },
+  },
+  {
     id: 'haze-pad',
     name: 'Haze Pad',
     description: 'Nappe triangulaire lente, comme une brume au néon.',
@@ -199,16 +209,6 @@ export const PRESET_INSTRUMENTS: Instrument[] = [
     volume: 0.25,
     partials: single(WAVEFORM.Triangle, { attack: 0.9, decay: 0.6, sustain: 0.8, release: 1.6 }),
     filter: { lowCutoff: 20, cutoff: 3200, resonance: 0.15 },
-  },
-  {
-    id: 'hologram-sine',
-    name: 'Hologram Sine',
-    description: 'Sinusoïde pure et cristalline, sans une harmonique de trop.',
-    category: 'lead',
-    hue: 'magenta',
-    volume: 0.35,
-    partials: single(WAVEFORM.Sine, { attack: 0.03, decay: 0.2, sustain: 0.85, release: 0.5 }),
-    filter: { lowCutoff: 20, cutoff: 12000, resonance: 0.05 },
   },
   {
     id: 'chrome-pluck',
@@ -221,14 +221,14 @@ export const PRESET_INSTRUMENTS: Instrument[] = [
     filter: { lowCutoff: 20, cutoff: 4200, resonance: 0.55 },
   },
   {
-    id: 'siren-fx',
-    name: 'Siren FX',
-    description: 'Carré strident pour les alarmes et les effets.',
-    category: 'fx',
+    id: 'neon-lead',
+    name: 'Neon Lead',
+    description: 'Dent de scie tranchante, taillée pour les mélodies.',
+    category: 'lead',
     hue: 'pink',
-    volume: 0.2,
-    partials: single(WAVEFORM.Square, { attack: 0.05, decay: 0.1, sustain: 1, release: 0.8 }),
-    filter: { lowCutoff: 20, cutoff: 8000, resonance: 0.7 },
+    volume: 0.3,
+    partials: single(WAVEFORM.Sawtooth, { attack: 0.01, decay: 0.25, sustain: 0.7, release: 0.35 }),
+    filter: { lowCutoff: 20, cutoff: 6500, resonance: 0.35 },
   },
   {
     id: 'glass-organ',
@@ -390,8 +390,14 @@ export function duplicateInstrument(source: Instrument): Instrument {
   };
 }
 
+/**
+ * What plays a track whose instrument is missing from the library (deleted, or from a file that did not
+ * bring it): Hologram Sine as it comes with Synthway, even when the library no longer has it
+ */
+export const FALLBACK_INSTRUMENT: Instrument = PRESET_INSTRUMENTS.find((preset) => preset.id === 'hologram-sine')!;
+
 /** Instruments saved before partials existed had one waveform and one envelope: they become one partial */
-type SavedInstrument = Omit<Instrument, 'partials'> & {
+export type SavedInstrument = Omit<Instrument, 'partials'> & {
   partials?: TimbrePartial[];
   waveform?: Waveform;
   envelope?: Envelope;
@@ -400,19 +406,24 @@ type SavedInstrument = Omit<Instrument, 'partials'> & {
 /** Presets that came with partials: added once to libraries saved before them */
 const ADDITIVE_PRESET_IDS = ['glass-organ', 'plucked-string', 'neon-bell'];
 
-export function migrateInstruments(saved: unknown): Instrument[] {
-  if (!Array.isArray(saved) || saved.length === 0) {
-    return PRESET_INSTRUMENTS.map((instrument) => ({ ...instrument }));
-  }
-  const list = saved as SavedInstrument[];
-  const migrated: Instrument[] = list.map(({ waveform, envelope, partials: savedPartials, ...instrument }) => ({
+/** One instrument saved by an older version of the UI, in the current shape */
+export function migrateInstrument({ waveform, envelope, partials: savedPartials, ...instrument }: SavedInstrument): Instrument {
+  return {
     ...instrument,
     filter: { ...(instrument.filter ?? { cutoff: 12000, resonance: 0 }), lowCutoff: instrument.filter?.lowCutoff ?? 20 },
     hue: HUES.includes(instrument.hue) ? instrument.hue : 'violet',
     partials: Array.isArray(savedPartials)
       ? savedPartials
       : single(waveform ?? WAVEFORM.Sine, envelope ?? { attack: 0.005, decay: 0, sustain: 1, release: 0.01 }),
-  }));
+  };
+}
+
+export function migrateInstruments(saved: unknown): Instrument[] {
+  if (!Array.isArray(saved) || saved.length === 0) {
+    return PRESET_INSTRUMENTS.map((instrument) => ({ ...instrument }));
+  }
+  const list = saved as SavedInstrument[];
+  const migrated: Instrument[] = list.map(migrateInstrument);
   if (list.some((instrument) => !Array.isArray(instrument.partials))) {
     const ids = new Set(migrated.map((instrument) => instrument.id));
     migrated.push(

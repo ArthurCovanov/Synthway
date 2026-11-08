@@ -69,7 +69,12 @@ export function App() {
                 setSelectedId={setSelectedInstrumentId}
               />
             )}
-            {screen === 'composer' && <Composer instruments={instruments} />}
+            {screen === 'composer' && (
+              <Composer
+                instruments={instruments}
+                onAddInstruments={(added) => setInstruments((list) => [...list, ...added])}
+              />
+            )}
             {screen === 'analyzer' && (
               <Analyzer
                 onSaveInstrument={(instrument) => {

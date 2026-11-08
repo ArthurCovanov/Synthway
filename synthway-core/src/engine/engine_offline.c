@@ -1,4 +1,5 @@
 #include "engine/engine_internal.h"
+#include "io/audio_writer.h"
 #include "io/wav_file.h"
 #include <stdlib.h>
 
@@ -71,6 +72,55 @@ SYNTHWAY_API synthway_result_t synthway_engine_render_to_wav(
     }
 
     sw_wav_file_close(&wav);
+    free(samples);
+    return result;
+}
+
+SYNTHWAY_API synthway_result_t synthway_engine_render_to_writer(
+    synthway_engine_t* engine,
+    synthway_audio_writer_t* writer,
+    uint32_t frame_count,
+    float gain_start,
+    float gain_end
+) {
+    enum { BLOCK_FRAMES = 1024 };
+
+    if (!engine || !writer || !engine->offline) {
+        return SYNTHWAY_INVALID_PARAM;
+    }
+    /* Written so that NaN is refused too */
+    if (!(gain_start >= 0.0f && gain_start <= 1.0f && gain_end >= 0.0f && gain_end <= 1.0f)) {
+        return SYNTHWAY_INVALID_PARAM;
+    }
+    synthway_result_t result = sw_audio_writer_check(writer, engine->channels, engine->sample_rate);
+    if (result != SYNTHWAY_OK) {
+        return result;
+    }
+    sw_audio_writer_begin(writer);
+
+    if (frame_count == 0) {
+        /* No sample, but the notes waiting are handed to the synth: their queue is free again */
+        float none[2];
+        sw_engine_render(engine, none, 0);
+        return SYNTHWAY_OK;
+    }
+
+    float* samples = (float*)malloc(sizeof(float) * BLOCK_FRAMES * engine->channels);
+    if (!samples) {
+        return SYNTHWAY_ERROR;
+    }
+    const float slope = (gain_end - gain_start) / (float)frame_count;
+    for (uint32_t done = 0; done < frame_count; ) {
+        uint32_t frames = frame_count - done < BLOCK_FRAMES ? frame_count - done : BLOCK_FRAMES;
+        sw_engine_render(engine, samples, frames);
+        result = sw_audio_writer_put(
+            writer, samples, frames, gain_start + slope * (float)done, gain_start + slope * (float)(done + frames)
+        );
+        if (result != SYNTHWAY_OK) {
+            break;
+        }
+        done += frames;
+    }
     free(samples);
     return result;
 }

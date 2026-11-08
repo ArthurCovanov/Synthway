@@ -98,7 +98,7 @@ export function Sidebar({ current, onNavigate }: { current: ScreenId; onNavigate
         <span className={styles.dot} data-state={connection === 'online' && !coreLoaded ? 'foreign' : connection} />
         <span className={styles.tip}>{statusLabel}</span>
       </div>
-      <span className={styles.version}>v0.2</span>
+      <span className={styles.version}>v{__SYNTHWAY_VERSION__}</span>
     </nav>
   );
 }

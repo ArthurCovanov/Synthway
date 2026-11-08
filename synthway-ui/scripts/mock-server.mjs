@@ -563,6 +563,47 @@ function silentWav(seconds) {
   return Buffer.concat([header, Buffer.alloc(frames * 2)]);
 }
 
+/**
+ * /api/render/score: a silent file of the right length, said to have rung 0.5 s after the score, and in
+ * the log what the UI asked for. Refused like the real server: a note on a slot without an instrument.
+ */
+function renderScore(res, score) {
+  const notes = score.notes ?? [];
+  const slots = Object.keys(score.instruments ?? {}).map(Number);
+  const orphan = notes.find((note) => !slots.includes(note.slot));
+  if (orphan) return error(res, 422, `Notes on instrument slots without an instrument: [${orphan.slot}]`);
+  const ogg = score.format === 1;
+  const tail = 0.5;
+  const seconds = (score.lead_in ?? 1) + score.duration + tail + (score.tail_margin ?? 1);
+  log(
+    `   render ${ogg ? 'OGG' : 'WAV'} ${score.sample_rate} Hz: ${score.duration.toFixed(3)} s, ${score.lead_in} s before, ` +
+      `${score.tail_margin} s after, slots [${slots.join(', ')}], ${notes.length} notes, ` +
+      `${notes.reduce((count, note) => count + (note.glides?.length ?? 0), 0)} glides`,
+  );
+  for (const note of notes.slice(0, 6)) {
+    log(
+      `     ${note.start.toFixed(3)}-${note.end.toFixed(3)} s slot ${note.slot} ${note.frequency.toFixed(2)} Hz vol ${note.volume}` +
+        (note.glides?.length ? ` glides ${note.glides.map((g) => `${g.frequency.toFixed(1)}/${g.seconds.toFixed(3)}`).join(' ')}` : ''),
+    );
+  }
+  // Automation ramps (param: 0 gain, 1 pan, 2 low cutoff, 3 high cutoff, 4 resonance, 5 reverb, 6 detune; side: 0 both, 1 left, 2 right)
+  const ramps = score.automation ?? [];
+  if (ramps.length) log(`   ${ramps.length} automation ramps`);
+  for (const ramp of ramps.slice(0, 12)) {
+    log(`     at ${ramp.at.toFixed(3)} s slot ${ramp.slot} param ${ramp.param} side ${ramp.side ?? 0} -> ${ramp.value} in ${ramp.seconds.toFixed(3)} s`);
+  }
+  const body = ogg ? Buffer.concat([Buffer.from('OggS', 'latin1'), Buffer.alloc(60)]) : silentWav(seconds);
+  const info = { seconds, peak: Math.max(0, ...notes.map((note) => note.volume)), clipped_samples: 0, tail, cut: false };
+  res.writeHead(200, {
+    'Content-Type': ogg ? 'audio/ogg' : 'audio/wav',
+    'Content-Length': body.length,
+    'Content-Disposition': 'attachment',
+    'X-Synthway-Render': JSON.stringify(info),
+    'Access-Control-Expose-Headers': 'X-Synthway-Render',
+  });
+  return res.end(body);
+}
+
 function error(res, status, detail) {
   res.writeHead(status, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ detail }));
@@ -596,6 +637,11 @@ const server = createServer(async (req, res) => {
     if (separationRoute(req, res, url, raw) !== false) return;
     res.writeHead(404);
     return res.end();
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/render/score') {
+    log('HTTP', req.method, req.url);
+    return renderScore(res, await readBody(req));
   }
 
   const body = req.method === 'POST' ? await readBody(req) : undefined;

@@ -188,7 +188,7 @@ Le projet est conçu pour être compilé sans aucun chemin en dur (`no hardcoded
 
 ### Bibliothèques tierces
 
-miniaudio et RtMidi sont compilées à part, en bibliothèques statiques (`build/vendor/<plateforme>/`), puis liées dans `synthway.dll` / `libsynthway.so`. Elles ne sont recompilées que si leurs sources changent, et les objets sont rangés par plateforme (`build/obj/windows`, `build/obj/linux`) : un build WSL ne réutilise jamais des objets Windows. Versions, licences et procédure de mise à jour : [`vendor/README.md`](vendor/README.md).
+miniaudio, RtMidi, libogg et libvorbis (l'encodeur Ogg Vorbis des exports) sont compilées à part, en bibliothèques statiques (`build/vendor/<plateforme>/`), puis liées dans `synthway.dll` / `libsynthway.so`. Elles ne sont recompilées que si leurs sources changent, et les objets sont rangés par plateforme (`build/obj/windows`, `build/obj/linux`) : un build WSL ne réutilise jamais des objets Windows. Versions, licences et procédure de mise à jour : [`vendor/README.md`](vendor/README.md).
 
 Sous Windows, la DLL embarque les runtimes GCC et C++ : elle ne dépend que de DLL système et se charge depuis Python sans MSYS2 dans le `PATH`.
 
@@ -368,6 +368,25 @@ Les quatre valeurs sont atomiques : on peut les changer pendant qu'une note joue
 
 Les notes passent au thread audio par une file de 1024 événements, lue au début de chaque bloc (hors ligne : à chaque appel de `synthway_engine_render`). `note_on`, `note_glide`, `note_off` et `all_notes_off` renvoient `SYNTHWAY_ERROR` quand elle est pleine, ce qui n'arrive que si le thread audio ne tourne pas. Un instrument réglé juste avant un `note_on` est toujours vu par cette note. Mémoire : la réverbération de chaque instrument occupe environ 540 Ko, soit 8,6 Mo par moteur, alloués à sa création ; seules les réverbérations qui sonnent sont calculées.
 
+### Automation : des réglages d'instrument qui varient dans le temps
+
+| Fonction | Rôle |
+|---|---|
+| `synthway_engine_automate(engine, slot, param, side, value, seconds)` | Mène le réglage `param` de l'instrument `slot`, du côté `side` (`SYNTHWAY_SIDE_BOTH`, `_LEFT`, `_RIGHT`), d'où il est jusqu'à `value` en `seconds` (0 à `SYNTHWAY_MAX_AUTOMATION_SECONDS`, 600 ; 0 : un saut), en ligne droite : en octaves pour les fréquences de coupure (chaque octave prend le même temps), dans l'unité du réglage pour les autres. La rampe part au bloc suivant, de là où est le réglage : la valeur de l'instrument tant qu'il n'a pas été automatisé. Elle remplace la rampe en cours de ce côté ; ensuite le réglage tient `value`. Un saut suivi d'une rampe du même réglage avant le bloc suivant est pris d'abord : la rampe part de sa valeur. Les rampes avancent même quand l'instrument ne joue rien. |
+| `synthway_engine_clear_automation(engine, slot)` | Rend tous les réglages de l'instrument `slot` à l'instrument (gain 1, centre), au bloc suivant, en abandonnant les rampes en cours ; `slot` = `SYNTHWAY_MAX_INSTRUMENTS` : de tous les instruments. |
+
+Les réglages (`synthway_automation_param_t`) et leurs bornes :
+
+| Réglage | Valeurs | Où |
+|---|---|---|
+| `SYNTHWAY_AUTOMATION_GAIN` | 0 à 1 (1 sans automation) | multiplie tout ce que joue l'instrument, après sa réverbération |
+| `SYNTHWAY_AUTOMATION_PAN` | -1 (gauche) à 1 (droite), 0 au centre ; les deux côtés seulement | après le gain : le côté vers lequel va le son garde son niveau, l'autre s'éteint (comme l'écartement de l'unisson) |
+| `SYNTHWAY_AUTOMATION_LOW_CUTOFF`, `_HIGH_CUTOFF` | 20 à 20000 Hz | bornes basse (passe-haut) et haute (passe-bas) du filtre |
+| `SYNTHWAY_AUTOMATION_RESONANCE`, `_REVERB` | 0 à 1 | résonance du filtre, part de réverbération |
+| `SYNTHWAY_AUTOMATION_DETUNE` | 0 à 100 cents ; les deux côtés seulement | désaccord de l'unisson (le nombre de voix reste celui de l'instrument) |
+
+Un réglage qu'une rampe a touché est repris à l'instrument : `set_instrument` ne le change plus, jusqu'à `clear_automation`. La gauche (canaux pairs) et la droite (canaux impairs) peuvent différer : chaque côté a son filtre, sa part de réverbération et son gain ; sur un seul canal, ce sont les réglages de gauche, sans panoramique. Pendant une rampe, le filtre, la réverbération et le désaccord bougent tous les `SYNTHWAY_AUTOMATION_PERIOD` échantillons (32, 0,67 ms à 48 kHz) ; le gain et le panoramique sont lissés à chaque échantillon (environ 1 ms), si bien qu'un saut ne claque pas. Sans automation, le son est inchangé au bit près. Les rampes passent par la même file que les notes, avec les mêmes erreurs.
+
 ### Rendu hors ligne
 
 | Fonction | Rôle |
@@ -377,6 +396,19 @@ Les notes passent au thread audio par une file de 1024 événements, lue au déb
 | `synthway_engine_render_to_wav(engine, path, frame_count)` | Écrit `frame_count` trames dans un fichier WAV 16 bits. Le chemin est passé à `fopen()` : page de code ANSI sous Windows, UTF-8 ailleurs. |
 | `synthway_engine_get_sample_rate(engine)`, `synthway_engine_get_channels(engine)` | Format réellement utilisé par le moteur. |
 
+### Fichiers audio : WAV et Ogg Vorbis
+
+Pour exporter un morceau, le serveur rend la partition morceau par morceau dans un fichier : il lance et relâche les notes entre deux rendus, chacune tombe donc à sa trame exacte. N'alloue et n'écrit que hors du thread audio.
+
+| Fonction | Rôle |
+|---|---|
+| `synthway_audio_writer_open(&writer, path, format, channels, sample_rate, quality)` | Crée le fichier : `SYNTHWAY_AUDIO_FILE_WAV` (PCM 16 bits) ou `SYNTHWAY_AUDIO_FILE_OGG` (Ogg Vorbis à débit variable, libvorbis). 1 ou 2 canaux, 8000 à 192000 Hz. `quality` est celle de Vorbis, de -0,1 à 1 (0,5 : environ 160 kbit/s en stéréo), ignorée en WAV. Chemin passé à `fopen()` comme plus haut. |
+| `synthway_engine_render_to_writer(engine, writer, frame_count, gain_start, gain_end)` | Rend `frame_count` trames d'un moteur hors ligne (même format que le fichier) et les ajoute, avec un gain qui va en ligne droite de `gain_start` à `gain_end` (0 à 1 ; 1 et 0 : un fondu de sortie). 0 trame : ne rend rien, mais passe au moteur les notes en attente, ce qui vide leur file (1024 événements). |
+| `synthway_audio_writer_write(writer, samples, frame_count)` | Ajoute des échantillons flottants entrelacés déjà calculés. |
+| `synthway_audio_writer_get_stats(writer, &stats)` | `synthway_audio_writer_stats_t` : trames écrites, crête avant écrêtage (`peak`, 1 = pleine échelle), échantillons écrêtés, et crête de la dernière écriture seule (`last_peak`, pour savoir quand le son s'est éteint). |
+| `synthway_audio_writer_close(writer)` | Termine le fichier (tailles du WAV, dernières pages Ogg), le ferme et libère `writer`, quoi qu'il arrive. Renvoie une erreur si une écriture avait échoué. |
+
+Une valeur hors de [-1, 1] est écrite à -1 ou 1, comme la carte son la jouerait, et comptée. Le test `synthway_render_test` vérifie qu'une note commence à sa trame exacte, l'écrêtage, et qu'un flux Ogg est valide et aussi long que ce qui a été écrit (position de sa dernière page).
 Les réglages (`set_frequency`, `set_volume`, `set_waveform`, `set_tone_enabled`) et les notes (`note_on`, `note_off`) s'appliquent aussi aux moteurs hors ligne. Un fichier impossible à écrire renvoie `SYNTHWAY_IO_ERROR`.
 
 ### Analyseur

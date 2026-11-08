@@ -152,6 +152,38 @@ typedef struct synthway_instrument {
 } synthway_instrument_t;
 
 /* --------------------------------------------------------------------------
+   Automation: settings of an instrument that vary over time
+   (synthway_engine_automate)
+   -------------------------------------------------------------------------- */
+
+/* A setting a ramp can take, and the values it accepts */
+typedef enum synthway_automation_param {
+    SYNTHWAY_AUTOMATION_GAIN = 0,        /* 0 to 1: multiplies all the instrument plays, after its reverb (not automated: 1) */
+    SYNTHWAY_AUTOMATION_PAN = 1,         /* -1 (left) to 1 (right), after the gain (not automated: 0, the centre, where both sides keep their level); both sides only */
+    SYNTHWAY_AUTOMATION_LOW_CUTOFF = 2,  /* Hz, 20 to 20000: lower edge of the band-pass (its high-pass; 20: none) */
+    SYNTHWAY_AUTOMATION_HIGH_CUTOFF = 3, /* Hz, 20 to 20000: upper edge (its low-pass; 20000: none) */
+    SYNTHWAY_AUTOMATION_RESONANCE = 4,   /* 0 to 1 */
+    SYNTHWAY_AUTOMATION_REVERB = 5,      /* reverb mix, 0 to 1 */
+    SYNTHWAY_AUTOMATION_DETUNE = 6       /* unison detune in cents, 0 to SYNTHWAY_MAX_UNISON_DETUNE_CENTS; both sides only */
+} synthway_automation_param_t;
+
+/* Settings a ramp can take: synthway_automation_param_t's values are 0 to this, excluded */
+#define SYNTHWAY_AUTOMATION_PARAM_COUNT 7
+
+/* Which side of the stereo field a ramp sets */
+typedef enum synthway_side {
+    SYNTHWAY_SIDE_BOTH = 0,
+    SYNTHWAY_SIDE_LEFT = 1,              /* even channels */
+    SYNTHWAY_SIDE_RIGHT = 2              /* odd channels */
+} synthway_side_t;
+
+/* Longest automation ramp, in seconds */
+#define SYNTHWAY_MAX_AUTOMATION_SECONDS 600.0f
+
+/* Samples between two steps of a running ramp (0.67 ms at 48 kHz) */
+#define SYNTHWAY_AUTOMATION_PERIOD 32
+
+/* --------------------------------------------------------------------------
    Audio Device Information
    -------------------------------------------------------------------------- */
 typedef struct synthway_device_info {
@@ -190,6 +222,25 @@ typedef struct synthway_engine_config {
 
 /* Opaque pointer representing the synthesis engine instance */
 typedef struct synthway_engine synthway_engine_t;
+
+/* --------------------------------------------------------------------------
+   Audio Files Written from Offline Rendering
+   -------------------------------------------------------------------------- */
+typedef enum synthway_audio_file_format {
+    SYNTHWAY_AUDIO_FILE_WAV      = 0,   /* 16-bit PCM WAV */
+    SYNTHWAY_AUDIO_FILE_OGG      = 1    /* Ogg Vorbis, variable bit rate (libvorbis) */
+} synthway_audio_file_format_t;
+
+/* What has been written to an audio file so far */
+typedef struct synthway_audio_writer_stats {
+    uint64_t frames;               /* frames written */
+    uint64_t clipped_samples;      /* samples beyond [-1, 1], written as -1 or 1 */
+    float peak;                    /* highest absolute value of the samples, before clipping (1: full scale) */
+    float last_peak;               /* the same, for the samples of the last write or render only */
+} synthway_audio_writer_stats_t;
+
+/* Opaque pointer representing an audio file being written */
+typedef struct synthway_audio_writer synthway_audio_writer_t;
 
 /* --------------------------------------------------------------------------
    Sound Analysis: the note played and the partials of a sound

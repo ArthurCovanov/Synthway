@@ -104,6 +104,95 @@ export interface NoteGlide {
   seconds: number;
 }
 
+/** synthway_automation_param_t: the settings of an instrument slot an automation ramp takes */
+export const AUTOMATION_PARAM = {
+  /** 0 to 1, multiplies the instrument's sound */
+  Gain: 0,
+  /** -1 (left) to 1 (right); both sides only */
+  Pan: 1,
+  /** Hz, 20 to 20000: lower edge of the band-pass (its high-pass) */
+  LowCutoff: 2,
+  /** Hz, 20 to 20000: upper edge of the band-pass (its low-pass) */
+  HighCutoff: 3,
+  Resonance: 4,
+  Reverb: 5,
+  /** Unison detune in cents, 0 to 100; both sides only */
+  Detune: 6,
+} as const;
+export type AutomationParamCode = (typeof AUTOMATION_PARAM)[keyof typeof AUTOMATION_PARAM];
+
+/** synthway_side_t: the side of the stereo field a ramp sets */
+export const SIDE = { Both: 0, Left: 1, Right: 2 } as const;
+export type Side = (typeof SIDE)[keyof typeof SIDE];
+
+/** A ramp of an instrument slot's setting (synthway_engine_automate): from where it is to value in seconds (0: a jump) */
+export interface AutomationRamp {
+  slot: number;
+  param: AutomationParamCode;
+  side: Side;
+  value: number;
+  seconds: number;
+}
+
+/** A ramp of a score to render, starting `at` seconds from its start */
+export interface ScoreRamp extends AutomationRamp {
+  at: number;
+}
+
+/** synthway_audio_file_format_t: the audio files the core writes */
+export const AUDIO_FILE_FORMAT = {
+  /** 16-bit PCM WAV */
+  Wav: 0,
+  /** Ogg Vorbis */
+  Ogg: 1,
+} as const;
+export type AudioFileFormat = (typeof AUDIO_FILE_FORMAT)[keyof typeof AUDIO_FILE_FORMAT];
+
+/** A note of a score to render (/api/render/score), in seconds from its start: struck at start, released at end */
+export interface ScoreNote {
+  start: number;
+  end: number;
+  /** Instrument slot, 1 and up: one of the request's instruments */
+  slot: number;
+  frequency: number;
+  volume: number;
+  glides?: NoteGlide[];
+}
+
+/** A score to render into an audio file, offline (synthway-server's ScoreRenderRequest) */
+export interface ScoreRenderRequest {
+  format: AudioFileFormat;
+  sample_rate: number;
+  channels: number;
+  /** Ogg Vorbis quality, -0.1 to 1 (0.5: about 160 kbit/s) */
+  quality: number;
+  /** Seconds of the score: every note still held is released at its end */
+  duration: number;
+  /** Seconds of silence before the score */
+  lead_in: number;
+  /** Seconds after the sound has died out, faded to silence */
+  tail_margin: number;
+  /** Longest the sound rings after the score before it is faded out (server's default: 30 s) */
+  max_tail?: number;
+  /** The sound of each slot the notes use */
+  instruments: Record<number, InstrumentParams>;
+  notes: ScoreNote[];
+  /** Ramps of the slots' settings, each started at its time */
+  automation?: ScoreRamp[];
+}
+
+/** What a rendered score is made of (the X-Synthway-Render header) */
+export interface ScoreRenderInfo {
+  seconds: number;
+  /** Highest sample before clipping, 1 being full scale */
+  peak: number;
+  clipped_samples: number;
+  /** Seconds the sound rang after the score */
+  tail: number;
+  /** True when it still rang after max_tail, and was faded out */
+  cut: boolean;
+}
+
 /** synthway_instrument_t, as set_instrument takes it: an absent field takes its default */
 export interface InstrumentParams {
   waveform?: Waveform;

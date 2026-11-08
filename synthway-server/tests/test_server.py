@@ -83,6 +83,14 @@ class FakeLib:
         self.calls.append("all_notes_off")
         return 0
 
+    def synthway_engine_automate(self, engine, slot, param, side, value, seconds):
+        self.calls.append(("automate", slot, param, side, value.value, seconds.value))
+        return 0
+
+    def synthway_engine_clear_automation(self, engine, slot):
+        self.calls.append(("clear_automation", slot))
+        return 0
+
     def synthway_engine_start(self, engine):
         self.calls.append("start")
         return self.start_result
@@ -237,6 +245,26 @@ class FakeCore:
     def all_notes_off(self):
         if self.running:
             self.calls.append("all_notes_off")
+
+    def automate(self, slot, param, side, value, seconds):
+        core_bridge.SynthwayCore._check_ramp(slot, param, side, value, seconds)
+        if self.running:
+            self.calls.append(("automate", slot, param, side, value, seconds))
+
+    def clear_automation(self, slot=None):
+        if self.running:
+            self.calls.append(("clear_automation", slot))
+
+    def render_score(self, path, notes, instruments, duration, file_format, sample_rate, channels, quality,
+                     lead_in, tail_margin, max_tail, automation=()):
+        """Writes a stand-in file, and says what it was asked"""
+        self.calls.append(("render_score", len(notes), sorted(instruments), duration, int(file_format), lead_in, tail_margin))
+        if automation:
+            ramps = [(r.at, r.slot, int(r.param), int(r.side), r.value, r.seconds) for r in automation]
+            self.calls.append(("render_automation", ramps))
+        with open(path, "wb") as file:
+            file.write(b"OggS fake" if int(file_format) == 1 else b"RIFF fake")
+        return {"seconds": lead_in + duration + 0.5 + tail_margin, "peak": 1.25, "clipped_samples": 12, "tail": 0.5, "cut": False}
 
     def get_sample_rate(self):
         return 48000 if self.running else None
@@ -591,6 +619,67 @@ def test_notes_glide(server):
         ("note_glide", 5, 330.0, 0.25),
     ]
     assert "error" in refused  # no frequency
+
+
+def test_bridge_automation():
+    """Ramps go to the core while the engine runs; values the core would refuse raise before reaching it."""
+    from models import AutomationParamEnum, SideEnum
+
+    lib = FakeLib()
+    bridge = bridge_with(lib)
+    bridge.automate(1, AutomationParamEnum.GAIN, SideEnum.BOTH, 0.5, 1.0)  # no engine: nothing
+    bridge.clear_automation(1)
+    bridge._engine = 1
+    bridge.automate(1, AutomationParamEnum.HIGH_CUTOFF, SideEnum.LEFT, 800.0, 2.0)
+    bridge.clear_automation(1)
+    bridge.clear_automation()
+    assert lib.calls == [("automate", 1, 3, 1, 800.0, 2.0), ("clear_automation", 1), ("clear_automation", 16)]
+
+    refused = [
+        (16, 0, 0, 0.5, 0.0),          # no such slot
+        (1, 1, 1, 0.0, 0.0),           # the pan takes both sides
+        (1, 6, 2, 10.0, 0.0),          # so does the detune
+        (1, 0, 0, 1.5, 0.0),           # gain above 1
+        (1, 0, 0, float("nan"), 0.0),
+        (1, 3, 0, 10.0, 0.0),          # cutoff under 20 Hz
+        (1, 6, 0, 101.0, 0.0),         # detune above 100 cents
+        (1, 0, 0, 0.5, 601.0),         # ramp too long
+        (1, 7, 0, 0.5, 0.0),           # no such setting
+        (1, 0, 3, 0.5, 0.0),           # no such side
+    ]
+    for args in refused:
+        with pytest.raises(ValueError):
+            bridge.automate(*args)
+    with pytest.raises(ValueError):
+        bridge.clear_automation(16)
+    assert len(lib.calls) == 3
+
+
+def test_ws_automation(server):
+    client, fake = server
+    with client.websocket_connect("/ws/synth") as ws:
+        ws.send_json({"type": "automate", "ramps": [{"slot": 1, "param": 0, "value": 0.5, "seconds": 1.0}]})
+        ws.receive_json()  # engine stopped: ignored
+        ws.send_json({"type": "note_on", "id": 1, "instrument": 1, "frequency": 440.0, "volume": 0.5})
+        ws.receive_json()
+        ws.send_json({"type": "automate", "ramps": [
+            {"slot": 1, "param": 0, "value": 0.5, "seconds": 1.0},
+            {"slot": 1, "param": 3, "side": 2, "value": 800.0},
+        ]})
+        ws.receive_json()
+        ws.send_json({"type": "clear_automation", "slot": 1})
+        ws.receive_json()
+        ws.send_json({"type": "clear_automation"})
+        ws.receive_json()
+        ws.send_json({"type": "automate", "ramps": [{"slot": 1, "param": 1, "side": 1, "value": 0.0}]})
+        refused = ws.receive_json()
+        ws.send_json({"type": "automate"})
+        missing = ws.receive_json()
+    assert fake.calls == [
+        "start", ("note_on", 1, 1, 440.0, 0.5), ("automate", 1, 0, 0, 0.5, 1.0), ("automate", 1, 3, 2, 800.0, 0.0),
+        ("clear_automation", 1), ("clear_automation", None),
+    ]
+    assert "error" in refused and "error" in missing
 
 
 def test_note_off_mutes_without_stopping(server):
@@ -1101,3 +1190,86 @@ def test_note_envelopes(server):
     for query in ("start=0.6&end=0.2", "end=0.5", "start=0.2&end=0.6&window_ms=5", "start=0.2&end=0.6&reference_hz=6000"):
         assert client.get(f"{url}?{query}").status_code == 422, query
     assert client.get("/api/analyzer/recording/envelopes?start=0&end=1").status_code == 404  # no recording
+
+
+def test_score_render_route(server):
+    """The Composer's export: the file comes back with what it is made of; nothing is played."""
+    import json
+
+    client, fake = server
+    instrument = {"timbre": {"partials": [{"ratio": 1.0, "amplitude": 1.0}]}, "low_cutoff": 20.0, "cutoff": 20000.0}
+    score = {
+        "format": 1,
+        "duration": 2.0,
+        "lead_in": 1.0,
+        "tail_margin": 0.5,
+        "instruments": {"1": instrument, "2": instrument},
+        "notes": [
+            {"start": 0.0, "end": 0.5, "slot": 1, "frequency": 440.0, "volume": 0.3},
+            {"start": 0.5, "end": 1.0, "slot": 2, "frequency": 220.0, "volume": 0.3, "glides": [{"frequency": 330.0, "seconds": 0.2}]},
+        ],
+    }
+    response = client.post("/api/render/score", json=score, headers={"Origin": "http://localhost:5173"})
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "audio/ogg" and response.content == b"OggS fake"
+    assert json.loads(response.headers["x-synthway-render"]) == {"seconds": 4.0, "peak": 1.25, "clipped_samples": 12, "tail": 0.5, "cut": False}
+    assert "X-Synthway-Render" in response.headers["access-control-expose-headers"]
+    assert ("render_score", 2, [1, 2], 2.0, 1, 1.0, 0.5) in fake.calls
+    assert not any(call == "start" or (isinstance(call, tuple) and call[0] == "note_on") for call in fake.calls)
+
+    # A note on a slot without instrument, a note ending before it starts: refused before any rendering
+    for note in ({"start": 0.0, "end": 0.5, "slot": 3, "frequency": 440.0, "volume": 0.3},
+                 {"start": 1.0, "end": 0.5, "slot": 1, "frequency": 440.0, "volume": 0.3}):
+        bad = dict(score, notes=[note])
+        assert client.post("/api/render/score", json=bad).status_code == 422
+    assert sum(1 for call in fake.calls if isinstance(call, tuple) and call[0] == "render_score") == 1
+
+
+def test_score_render_route_with_automation(server):
+    """The ramps of the Composer's automation reach the renderer; those the core would refuse are refused first."""
+    client, fake = server
+    instrument = {"timbre": {"partials": [{"ratio": 1.0, "amplitude": 1.0}]}}
+    score = {
+        "duration": 1.0,
+        "instruments": {"1": instrument},
+        "notes": [{"start": 0.0, "end": 1.0, "slot": 1, "frequency": 440.0, "volume": 0.3}],
+        "automation": [
+            {"at": 0.0, "slot": 1, "param": 0, "value": 1.0},
+            {"at": 0.0, "slot": 1, "param": 0, "value": 0.0, "seconds": 1.0},
+            {"at": 0.25, "slot": 1, "param": 2, "side": 1, "value": 400.0, "seconds": 0.5},
+        ],
+    }
+    assert client.post("/api/render/score", json=score).status_code == 200
+    assert ("render_automation", [(0.0, 1, 0, 0, 1.0, 0.0), (0.0, 1, 0, 0, 0.0, 1.0), (0.25, 1, 2, 1, 400.0, 0.5)]) in fake.calls
+
+    for ramp in ({"at": 0.0, "slot": 1, "param": 1, "side": 2, "value": 0.0},   # the pan takes both sides
+                 {"at": 0.0, "slot": 1, "param": 0, "value": 2.0},              # gain above 1
+                 {"at": 0.0, "slot": 0, "param": 0, "value": 0.5},              # slot 0 is the single note's
+                 {"at": 0.0, "slot": 1, "param": 7, "value": 0.5},              # no such setting
+                 {"at": 0.0, "slot": 1, "param": 0, "value": 0.5, "seconds": 700.0}):
+        assert client.post("/api/render/score", json=dict(score, automation=[ramp])).status_code == 422
+    assert sum(1 for call in fake.calls if isinstance(call, tuple) and call[0] == "render_score") == 1
+
+
+def test_built_interface_served_at_root(tmp_path):
+    """A built interface is served at /, behind the routes declared before it; no index.html, nothing mounted."""
+    from fastapi import FastAPI
+
+    app = FastAPI()
+
+    @app.get("/health")
+    async def health():
+        return {"status": "ok"}
+
+    assert not main.mount_ui(app, tmp_path)
+    (tmp_path / "assets").mkdir()
+    (tmp_path / "index.html").write_text("<div id=\"root\"></div>", encoding="utf-8")
+    (tmp_path / "assets" / "app.js").write_text("console.log(1);", encoding="utf-8")
+    assert main.mount_ui(app, tmp_path)
+
+    client = TestClient(app)
+    assert client.get("/").text == "<div id=\"root\"></div>"
+    assert client.get("/assets/app.js").text == "console.log(1);"
+    assert client.get("/health").json() == {"status": "ok"}
+    assert client.get("/assets/missing.js").status_code == 404
+    assert client.get("/../main.py").status_code == 404

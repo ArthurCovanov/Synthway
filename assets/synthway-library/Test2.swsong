@@ -1,0 +1,167 @@
+{
+  "format": "synthway-composition",
+  "version": 1,
+  "savedAt": "2026-11-08T10:09:27.711Z",
+  "composition": {
+    "bpm": 98,
+    "beatsPerBar": 4,
+    "bars": 4,
+    "tracks": [
+      {
+        "name": "Piste 1",
+        "instrumentId": "neon-lead",
+        "instrumentName": "Neon Lead",
+        "hue": "pink",
+        "basePitch": 12,
+        "muted": false,
+        "hidden": false,
+        "notes": [
+          {
+            "pitch": 24,
+            "start": 0,
+            "length": 16
+          },
+          {
+            "pitch": 20,
+            "start": 2,
+            "length": 2
+          },
+          {
+            "pitch": 19,
+            "start": 4,
+            "length": 2
+          },
+          {
+            "pitch": 20,
+            "start": 6,
+            "length": 2
+          },
+          {
+            "pitch": 18,
+            "start": 8,
+            "length": 2
+          },
+          {
+            "pitch": 20,
+            "start": 10,
+            "length": 2
+          },
+          {
+            "pitch": 19,
+            "start": 12,
+            "length": 2
+          }
+        ]
+      },
+      {
+        "name": "Piste 2",
+        "instrumentId": "rain-city-bass",
+        "instrumentName": "Rain City Bass",
+        "hue": "magenta",
+        "basePitch": 12,
+        "muted": false,
+        "hidden": false,
+        "notes": [
+          {
+            "pitch": 12,
+            "start": 0,
+            "length": 2
+          },
+          {
+            "pitch": 11,
+            "start": 2,
+            "length": 2
+          },
+          {
+            "pitch": 12,
+            "start": 4,
+            "length": 2
+          },
+          {
+            "pitch": 10,
+            "start": 6,
+            "length": 2
+          },
+          {
+            "pitch": 12,
+            "start": 8,
+            "length": 2
+          },
+          {
+            "pitch": 11,
+            "start": 10,
+            "length": 2
+          },
+          {
+            "pitch": 12,
+            "start": 12,
+            "length": 2
+          },
+          {
+            "pitch": 10,
+            "start": 14,
+            "length": 2
+          }
+        ]
+      }
+    ]
+  },
+  "instruments": [
+    {
+      "id": "neon-lead",
+      "name": "Neon Lead",
+      "description": "Dent de scie tranchante, taillée pour les mélodies.",
+      "category": "lead",
+      "hue": "pink",
+      "volume": 0.3,
+      "filter": {
+        "cutoff": 6500,
+        "resonance": 0.35,
+        "lowCutoff": 20
+      },
+      "partials": [
+        {
+          "id": "p1",
+          "ratio": 1,
+          "amplitude": 1,
+          "waveform": 3,
+          "envelope": {
+            "attack": 0.01,
+            "decay": 0.25,
+            "sustain": 0.7,
+            "release": 0.35
+          },
+          "hue": "white"
+        }
+      ]
+    },
+    {
+      "id": "rain-city-bass",
+      "name": "Rain City Bass",
+      "description": "Carré profond et sombre, pour poser le groove.",
+      "category": "bass",
+      "hue": "blue",
+      "volume": 0.35,
+      "filter": {
+        "cutoff": 900,
+        "resonance": 0.45,
+        "lowCutoff": 20
+      },
+      "partials": [
+        {
+          "id": "p1",
+          "ratio": 1,
+          "amplitude": 1,
+          "waveform": 1,
+          "envelope": {
+            "attack": 0.005,
+            "decay": 0.3,
+            "sustain": 0.6,
+            "release": 0.2
+          },
+          "hue": "white"
+        }
+      ]
+    }
+  ]
+}

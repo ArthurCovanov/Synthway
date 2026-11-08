@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(synthway-core VERSION 0.1.0 LANGUAGES C CXX)
+project(synthway-core VERSION 0.3.0 LANGUAGES C CXX)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -66,6 +66,27 @@ else()
     target_link_libraries(rtmidi PUBLIC ALSA::ALSA pthread)
 endif()
 
+# libogg and libvorbis, for Ogg Vorbis files. src/io/xiph holds the
+# ogg/config_types.h that libogg's configure would generate.
+file(GLOB OGG_SOURCES ${SYNTHWAY_VENDOR_DIR}/libogg/src/*.c)
+add_library(ogg STATIC ${OGG_SOURCES})
+target_include_directories(ogg PUBLIC ${SYNTHWAY_VENDOR_DIR}/libogg/include ${SYNTHWAY_SRC_DIR}/io/xiph)
+set_target_properties(ogg PROPERTIES POSITION_INDEPENDENT_CODE ON C_EXTENSIONS ON)
+target_compile_options(ogg PRIVATE $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-w>)
+
+file(GLOB VORBIS_SOURCES ${SYNTHWAY_VENDOR_DIR}/libvorbis/lib/*.c)
+add_library(vorbis STATIC ${VORBIS_SOURCES})
+target_include_directories(vorbis
+    PUBLIC ${SYNTHWAY_VENDOR_DIR}/libvorbis/include
+    PRIVATE ${SYNTHWAY_VENDOR_DIR}/libvorbis/lib
+)
+target_link_libraries(vorbis PUBLIC ogg)
+if(UNIX)
+    target_link_libraries(vorbis PUBLIC m)
+endif()
+set_target_properties(vorbis PROPERTIES POSITION_INDEPENDENT_CODE ON C_EXTENSIONS ON)
+target_compile_options(vorbis PRIVATE $<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-w>)
+
 # ------------------------------------------------------------------------------
 # Synthway library
 # ------------------------------------------------------------------------------
@@ -91,6 +112,7 @@ set(SYNTHWAY_SOURCES
     ${SYNTHWAY_SRC_DIR}/io/audio_input.c
     ${SYNTHWAY_SRC_DIR}/io/audio_file.c
     ${SYNTHWAY_SRC_DIR}/io/wav_file.c
+    ${SYNTHWAY_SRC_DIR}/io/audio_writer.c
     ${SYNTHWAY_SRC_DIR}/io/audio_devices.c
     ${SYNTHWAY_SRC_DIR}/io/midi_ports.c
 )
@@ -105,7 +127,7 @@ target_include_directories(synthway
     PRIVATE
         ${SYNTHWAY_SRC_DIR}
 )
-target_link_libraries(synthway PRIVATE miniaudio rtmidi)
+target_link_libraries(synthway PRIVATE miniaudio rtmidi vorbis ogg)
 
 # Internal sw_* functions stay private: only SYNTHWAY_API is exported
 set_target_properties(synthway PROPERTIES C_VISIBILITY_PRESET hidden)

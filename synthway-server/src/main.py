@@ -13,6 +13,7 @@ Environment:
                        often taken by other dev tools). Not read by uvicorn itself.
     SYNTHWAY_CORE_LIB  path to synthway.dll / libsynthway.so (default: found in synthway-core/build)
     SYNTHWAY_DEMUCS, SYNTHWAY_DEMUCS_DIR  the Decomposer's Demucs (see separation.py)
+    SYNTHWAY_UI_DIR    built interface served at / (default: synthway-ui/dist, when built)
 """
 
 import asyncio
@@ -32,6 +33,7 @@ try:
     import anyio  # FastAPI's own async layer
     from fastapi import Body, FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
     from fastapi.middleware.cors import CORSMiddleware
+    from fastapi.staticfiles import StaticFiles
     import uvicorn
     HAS_FASTAPI = True
 except ImportError:
@@ -45,6 +47,7 @@ try:  # run from src/ (uvicorn main:app, python main.py)
     )
     from models import (
         Analysis,
+        AudioFileFormatEnum,
         ClipResponse,
         ClipWaveform,
         DeviceListResponse,
@@ -54,6 +57,7 @@ try:  # run from src/ (uvicorn main:app, python main.py)
         Envelope,
         Instrument,
         NoteSpan,
+        ScoreRenderRequest,
         Timbre,
         ToneControlRequest,
         Unison,
@@ -69,6 +73,7 @@ except ImportError:  # installed package (synthway-server command)
     )
     from .models import (
         Analysis,
+        AudioFileFormatEnum,
         ClipResponse,
         ClipWaveform,
         DeviceListResponse,
@@ -78,6 +83,7 @@ except ImportError:  # installed package (synthway-server command)
         Envelope,
         Instrument,
         NoteSpan,
+        ScoreRenderRequest,
         Timbre,
         ToneControlRequest,
         Unison,
@@ -216,7 +222,7 @@ if HAS_FASTAPI:
     app = FastAPI(
         title="Synthway Server API",
         description="REST & WebSocket API orchestrating the Synthway audio engine",
-        version="0.1.0",
+        version="0.3.0",
     )
 
     # The UI calls the API directly, from its own origin (the Vite dev server).
@@ -229,6 +235,8 @@ if HAS_FASTAPI:
         allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
+        # What a rendered score is made of, read by the page next to the file
+        expose_headers=["X-Synthway-Render"],
     )
 
     async def accept_local(websocket: WebSocket) -> bool:
@@ -331,6 +339,54 @@ if HAS_FASTAPI:
             "enabled": core.is_tone_enabled(),
         }
 
+    @app.post("/api/render/score")
+    async def render_score(score: ScoreRenderRequest):
+        """
+        Renders a score (the Composer's notes, with the instruments of their slots) into an audio file,
+        offline: nothing is played. Answers the file (WAV or Ogg Vorbis), and in the X-Synthway-Render header,
+        as JSON, how long it is ("seconds"), its peak before clipping (1: full scale), how many samples were
+        clipped, how long the sound rang after the score ("tail") and whether it was faded out ("cut").
+        """
+        if not core:
+            raise HTTPException(status_code=503, detail="Synthway core library not loaded")
+        ogg = score.format == AudioFileFormatEnum.OGG
+        handle, path = tempfile.mkstemp(prefix="synthway-render-", suffix=".ogg" if ogg else ".wav")
+        os.close(handle)
+        try:
+            result = await asyncio.to_thread(
+                core.render_score,
+                path,
+                score.notes,
+                score.instruments,
+                score.duration,
+                file_format=score.format,
+                sample_rate=score.sample_rate,
+                channels=score.channels,
+                quality=score.quality,
+                lead_in=score.lead_in,
+                tail_margin=score.tail_margin,
+                max_tail=score.max_tail,
+                automation=score.automation,
+            )
+            with open(path, "rb") as file:
+                data = file.read()
+        except ValueError as ex:
+            raise HTTPException(status_code=422, detail=str(ex)) from ex
+        except RuntimeError as ex:
+            logger.error(f"Score rendering failed: {ex}")
+            raise HTTPException(status_code=500, detail=str(ex)) from ex
+        finally:
+            os.remove(path)
+        logger.info(
+            f"Score rendered: {result['seconds']:.2f} s ({'Ogg Vorbis' if ogg else 'WAV'}, {len(data)} bytes), "
+            f"{len(score.notes)} notes, peak {result['peak']:.3f}, {result['clipped_samples']} samples clipped"
+        )
+        headers = {
+            "Content-Disposition": "attachment",
+            "X-Synthway-Render": json.dumps({key: round(value, 4) if isinstance(value, float) else value for key, value in result.items()}),
+        }
+        return Response(content=data, media_type="audio/ogg" if ogg else "audio/wav", headers=headers)
+
     @app.post("/api/synth/envelope", response_model=Envelope)
     async def set_envelope(envelope: Envelope):
         if not core:
@@ -382,7 +438,14 @@ if HAS_FASTAPI:
             (to that frequency in that time, in a straight line in semitones, after the note's glides still to come)
           - {"type": "note_off", "id": 7}
           - {"type": "all_notes_off"} (every note with an id)
-        An invalid message gets {"error": ...} back; the connection stays open.
+        Automation, the settings of an instrument slot varying while the score plays (ignored while the engine is
+        stopped):
+          - {"type": "automate", "ramps": [{"slot": 1, "param": 3, "side": 0, "value": 800.0, "seconds": 2.0}, ...]}
+            (each ramp takes setting param of the slot, on side, from where it is to value in seconds: see
+            AutomationParamEnum and SideEnum; side 0, both, when absent; a ramp replaces the one running)
+          - {"type": "clear_automation", "slot": 1} (gives the slot's settings back to its instrument; no slot: all)
+        An invalid message gets {"error": ...} back; the connection stays open, and the ramps before the invalid
+        one are applied.
         """
         if not await accept_local(websocket):
             return
@@ -423,6 +486,13 @@ if HAS_FASTAPI:
                         core.note_glide(int(msg["id"]), float(msg["frequency"]), float(msg.get("seconds", 0.0)))
                     elif action == "all_notes_off":
                         core.all_notes_off()
+                    elif action == "automate":
+                        for ramp in msg["ramps"]:
+                            core.automate(int(ramp["slot"]), int(ramp["param"]), int(ramp.get("side", 0)),
+                                          float(ramp["value"]), float(ramp.get("seconds", 0.0)))
+                    elif action == "clear_automation":
+                        slot = msg.get("slot")
+                        core.clear_automation(None if slot is None else int(slot))
                     elif action == "set_instrument":
                         fields = {key: value for key, value in msg.items() if key not in ("type", "slot")}
                         core.set_instrument(int(msg.get("slot", 0)), Instrument(**fields))
@@ -1047,6 +1117,23 @@ if HAS_FASTAPI:
         except OSError as ex:
             raise HTTPException(status_code=404, detail="Fichier introuvable") from ex
         return await load_analyzer_clip(data, f"{Path(source_name).stem} · {name}")
+
+    def mount_ui(target: FastAPI, directory: Path) -> bool:
+        """
+        Serves the built interface (`npm run build`) at /, if `directory` holds
+        one: the page then calls this server from its own origin, and no Vite is
+        needed (the launcher, the Windows package). Mounted after every route,
+        which keep precedence. False when there is no index.html.
+        """
+        if not (directory / "index.html").is_file():
+            return False
+        target.mount("/", StaticFiles(directory=directory, html=True), name="ui")
+        return True
+
+    UI_DIR = Path(os.environ.get("SYNTHWAY_UI_DIR")
+                  or Path(__file__).resolve().parent.parent.parent / "synthway-ui" / "dist")
+    if mount_ui(app, UI_DIR):
+        logger.info(f"Serving the interface from {UI_DIR}")
 
 
 def run_standalone_cli():

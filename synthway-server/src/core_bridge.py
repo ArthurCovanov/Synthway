@@ -8,19 +8,19 @@ import math
 import os
 import sys
 import threading
-from typing import List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 try:
     from models import (
-        ANALYSIS_SPECTRUM_POINTS, MAX_INSTRUMENTS, MAX_PARTIALS, MAX_UNISON_DETUNE_CENTS, MAX_UNISON_VOICES, Analysis,
-        AnalysisPartial, ClipTrack, ClipWaveform, DeviceInfo, DeviceTypeEnum, Envelope, HarmonicLevel,
+        ANALYSIS_SPECTRUM_POINTS, AudioFileFormatEnum, MAX_INSTRUMENTS, MAX_PARTIALS, MAX_UNISON_DETUNE_CENTS, MAX_UNISON_VOICES, Analysis,
+        AnalysisPartial, AutomationParamEnum, SideEnum, check_automation, ClipTrack, ClipWaveform, DeviceInfo, DeviceTypeEnum, Envelope, HarmonicLevel,
         HarmonicStateEnum, Instrument, MidiPortInfo, MidiPortTypeEnum, NoteSpan, ShapeFit, Timbre, WaveformEnum,
         WaveformFit, WaveShapeEnum,
     )
 except ImportError:
     from .models import (
-        ANALYSIS_SPECTRUM_POINTS, MAX_INSTRUMENTS, MAX_PARTIALS, MAX_UNISON_DETUNE_CENTS, MAX_UNISON_VOICES, Analysis,
-        AnalysisPartial, ClipTrack, ClipWaveform, DeviceInfo, DeviceTypeEnum, Envelope, HarmonicLevel,
+        ANALYSIS_SPECTRUM_POINTS, AudioFileFormatEnum, MAX_INSTRUMENTS, MAX_PARTIALS, MAX_UNISON_DETUNE_CENTS, MAX_UNISON_VOICES, Analysis,
+        AnalysisPartial, AutomationParamEnum, SideEnum, check_automation, ClipTrack, ClipWaveform, DeviceInfo, DeviceTypeEnum, Envelope, HarmonicLevel,
         HarmonicStateEnum, Instrument, MidiPortInfo, MidiPortTypeEnum, NoteSpan, ShapeFit, Timbre, WaveformEnum,
         WaveformFit, WaveShapeEnum,
     )
@@ -30,6 +30,17 @@ RESULT_INVALID_PARAM = -2
 RESULT_NOT_RUNNING = -6
 RESULT_IO_ERROR = -8
 RESULT_FORMAT_ERROR = -9
+
+# A score rendered into a file (render_score): the sound after the score is listened to by blocks of
+# SCORE_TAIL_BLOCK_S, and has died out once no note sounds and it stays under SCORE_SILENCE_DB; past
+# max_tail it is faded out over SCORE_FADE_S. Its notes are named from SCORE_FIRST_NOTE_ID, and at most
+# SCORE_QUEUE_EVENTS events wait for the engine (its queue holds 1024).
+SCORE_TAIL_BLOCK_S = 0.05
+SCORE_SILENCE_DB = -80.0
+SCORE_FADE_S = 0.5
+SCORE_MAX_TAIL_S = 30.0
+SCORE_FIRST_NOTE_ID = 1
+SCORE_QUEUE_EVENTS = 1000
 
 # SYNTHWAY_ANALYZER_NOISE_GATE_OFF: the noise gate ignores nothing
 NOISE_GATE_OFF = -120.0
@@ -73,6 +84,16 @@ class SynthwayEngineConfigC(ctypes.Structure):
         ("sample_rate", ctypes.c_uint32),
         ("channels", ctypes.c_uint32),
         ("playback_device_index", ctypes.c_int),
+    ]
+
+
+class SynthwayAudioWriterStatsC(ctypes.Structure):
+    """synthway_audio_writer_stats_t"""
+    _fields_ = [
+        ("frames", ctypes.c_uint64),
+        ("clipped_samples", ctypes.c_uint64),
+        ("peak", ctypes.c_float),
+        ("last_peak", ctypes.c_float),
     ]
 
 
@@ -727,6 +748,20 @@ class SynthwayCore:
         self._lib.synthway_engine_render_to_wav.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint32]
         self._lib.synthway_engine_render_to_wav.restype = ctypes.c_int
 
+        # Audio files written from an offline engine (WAV, Ogg Vorbis)
+        self._lib.synthway_audio_writer_open.argtypes = [
+            ctypes.POINTER(ctypes.c_void_p), ctypes.c_char_p, ctypes.c_int, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_float]
+        self._lib.synthway_audio_writer_open.restype = ctypes.c_int
+        self._lib.synthway_audio_writer_write.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_float), ctypes.c_uint32]
+        self._lib.synthway_audio_writer_write.restype = ctypes.c_int
+        self._lib.synthway_engine_render_to_writer.argtypes = [
+            ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint32, ctypes.c_float, ctypes.c_float]
+        self._lib.synthway_engine_render_to_writer.restype = ctypes.c_int
+        self._lib.synthway_audio_writer_get_stats.argtypes = [ctypes.c_void_p, ctypes.POINTER(SynthwayAudioWriterStatsC)]
+        self._lib.synthway_audio_writer_get_stats.restype = ctypes.c_int
+        self._lib.synthway_audio_writer_close.argtypes = [ctypes.c_void_p]
+        self._lib.synthway_audio_writer_close.restype = ctypes.c_int
+
         self._lib.synthway_engine_get_sample_rate.argtypes = [ctypes.c_void_p]
         self._lib.synthway_engine_get_sample_rate.restype = ctypes.c_uint32
 
@@ -798,6 +833,13 @@ class SynthwayCore:
         self._lib.synthway_engine_all_notes_off.restype = ctypes.c_int
         self._lib.synthway_engine_get_sounding_notes.argtypes = [ctypes.c_void_p]
         self._lib.synthway_engine_get_sounding_notes.restype = ctypes.c_uint32
+
+        # Automation
+        self._lib.synthway_engine_automate.argtypes = [
+            ctypes.c_void_p, ctypes.c_uint32, ctypes.c_int, ctypes.c_int, ctypes.c_float, ctypes.c_float]
+        self._lib.synthway_engine_automate.restype = ctypes.c_int
+        self._lib.synthway_engine_clear_automation.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+        self._lib.synthway_engine_clear_automation.restype = ctypes.c_int
 
         # SynthwayTimbreC mirrors the header: a core built with another limit
         # would read the structure at the wrong offsets
@@ -1126,6 +1168,32 @@ class SynthwayCore:
         if self._engine:
             self._check(self._lib.synthway_engine_all_notes_off(self._engine), "Releasing the notes")
 
+    # ---------- Automation: an instrument's settings varying over time ----------
+
+    @staticmethod
+    def _check_ramp(slot: int, param: int, side: int, value: float, seconds: float):
+        if not 0 <= slot < MAX_INSTRUMENTS:
+            raise ValueError(f"Invalid instrument slot {slot} (0 to {MAX_INSTRUMENTS - 1})")
+        check_automation(param, side, value, seconds)
+
+    def automate(self, slot: int, param: int, side: int, value: float, seconds: float):
+        """Takes setting param (AutomationParamEnum) of instrument slot, on side (SideEnum), from where it is to
+        value in seconds, in a straight line (in octaves for the cutoffs): see synthway_engine_automate.
+        Nothing while the engine is stopped: a ramp belongs to the playback that sends it."""
+        self._check_ramp(slot, param, side, value, seconds)
+        if self._engine:
+            res = self._lib.synthway_engine_automate(
+                self._engine, slot, int(param), int(side), ctypes.c_float(value), ctypes.c_float(seconds))
+            self._check(res, "Automating a setting")
+
+    def clear_automation(self, slot: Optional[int] = None):
+        """Gives the settings of instrument slot back to it, or of every instrument when slot is None."""
+        if slot is not None and not 0 <= slot < MAX_INSTRUMENTS:
+            raise ValueError(f"Invalid instrument slot {slot} (0 to {MAX_INSTRUMENTS - 1})")
+        if self._engine:
+            res = self._lib.synthway_engine_clear_automation(self._engine, MAX_INSTRUMENTS if slot is None else slot)
+            self._check(res, "Clearing the automation")
+
     def get_sounding_notes(self) -> int:
         """Notes of note_on still held or fading out"""
         if self._engine:
@@ -1227,6 +1295,176 @@ class SynthwayCore:
             self._check(self._lib.synthway_engine_render_to_wav(engine, native_path, frames), "WAV rendering")
         finally:
             self._lib.synthway_engine_destroy(engine)
+
+    def render_score(
+        self,
+        path: str,
+        notes: Sequence,
+        instruments: Dict[int, Instrument],
+        duration: float,
+        file_format: AudioFileFormatEnum = AudioFileFormatEnum.WAV,
+        sample_rate: int = 48000,
+        channels: int = 2,
+        quality: float = 0.5,
+        lead_in: float = 0.0,
+        tail_margin: float = 0.0,
+        max_tail: float = SCORE_MAX_TAIL_S,
+        automation: Sequence = (),
+    ) -> dict:
+        """Renders a score into an audio file (WAV or Ogg Vorbis), as the engine plays it, without any audio device.
+
+        notes: objects with start and end (seconds from the score's start), slot (an instrument of instruments),
+        frequency, volume and glides (frequency, seconds), as the Composer plays them. Each note is struck at its
+        exact frame and released at its end, or at duration, when every note still held is released.
+        automation: objects with at (seconds from the score's start), slot, param, side, value and seconds: each
+        ramp starts at its exact frame (see automate), before the notes struck at that frame. Ramps from the
+        score's end on are left out; the settings hold where they are while the sound rings after it.
+
+        The file holds lead_in seconds of silence, the score, then its sound until it has died out (notes ended,
+        level under SCORE_SILENCE_DB), at most max_tail seconds after the score (then faded out over
+        SCORE_FADE_S), and tail_margin seconds faded to silence. Returns what was written: seconds, peak (before
+        clipping, 1 being full scale), clipped_samples, tail (seconds the sound rang after the score) and cut
+        (True when it still rang after max_tail).
+        """
+        if not 1 <= channels <= 2:
+            raise ValueError(f"Invalid channel count {channels} (1 or 2)")
+        for slot in instruments:
+            if not 1 <= slot < MAX_INSTRUMENTS:
+                raise ValueError(f"Invalid instrument slot {slot} (1 to {MAX_INSTRUMENTS - 1})")
+        for note in notes:
+            if note.slot not in instruments:
+                raise ValueError(f"A note plays instrument slot {note.slot}, which has no instrument")
+        for ramp in automation:
+            if not 1 <= ramp.slot < MAX_INSTRUMENTS:
+                raise ValueError(f"Invalid instrument slot {ramp.slot} (1 to {MAX_INSTRUMENTS - 1})")
+            self._check_ramp(ramp.slot, ramp.param, ramp.side, ramp.value, ramp.seconds)
+
+        engine = self._lib.synthway_engine_create()
+        if not engine:
+            raise RuntimeError("Failed to allocate audio engine instance")
+        writer = ctypes.c_void_p()
+        try:
+            config = SynthwayEngineConfigC(sample_rate=sample_rate, channels=channels, playback_device_index=-1)
+            self._check(self._lib.synthway_engine_init_offline(engine, ctypes.byref(config)), "Offline engine initialization")
+            # Only the notes of the score sound, not the single note
+            self._lib.synthway_engine_set_tone_enabled(engine, False)
+            for slot, instrument in instruments.items():
+                self._apply_instrument(engine, slot, instrument)
+
+            # The core opens the file with fopen(): ANSI code page on Windows, UTF-8 elsewhere
+            native_path = os.fspath(path).encode("mbcs" if sys.platform.startswith("win") else "utf-8")
+            self._check(
+                self._lib.synthway_audio_writer_open(
+                    ctypes.byref(writer), native_path, int(file_format), channels, sample_rate, ctypes.c_float(quality)),
+                "Opening the audio file",
+            )
+
+            def render(frames: int, gain_start: float = 1.0, gain_end: float = 1.0):
+                res = self._lib.synthway_engine_render_to_writer(
+                    engine, writer, max(0, frames), ctypes.c_float(gain_start), ctypes.c_float(gain_end))
+                self._check(res, "Rendering into the audio file")
+
+            def stats() -> SynthwayAudioWriterStatsC:
+                out = SynthwayAudioWriterStatsC()
+                self._check(self._lib.synthway_audio_writer_get_stats(writer, ctypes.byref(out)), "Reading the audio file's stats")
+                return out
+
+            render(round(lead_in * sample_rate))
+
+            # At the same frame: releases first (a voice freed is a voice the next note can take), then the
+            # ramps (a note struck there starts with its settings), then the strikes
+            RELEASE, RAMP, STRIKE = 0, 1, 2
+            score_frames = round(duration * sample_rate)
+            events = []
+            for index, note in enumerate(notes):
+                start = round(note.start * sample_rate)
+                if start >= score_frames:
+                    continue
+                end = min(max(round(note.end * sample_rate), start), score_frames)
+                events.append((start, STRIKE, index, note))
+                events.append((end, RELEASE, index, note))
+            for index, ramp in enumerate(automation):
+                at = round(ramp.at * sample_rate)
+                if at < score_frames:
+                    events.append((at, RAMP, index, ramp))
+            events.sort(key=lambda event: (event[0], event[1], event[2]))
+
+            position = 0
+            waiting = 0  # events in the engine's queue since the last render
+            for frame, kind, index, item in events:
+                if frame > position:
+                    render(frame - position)
+                    position = frame
+                    waiting = 0
+                strike = kind == STRIKE
+                glides = list(item.glides or ()) if strike else []
+                if waiting + 1 + len(glides) > SCORE_QUEUE_EVENTS:
+                    render(0)  # hands the events waiting to the engine: its queue (1024) is free again
+                    waiting = 0
+                waiting += 1 + len(glides)
+                if kind == RAMP:
+                    self._check(
+                        self._lib.synthway_engine_automate(
+                            engine, item.slot, int(item.param), int(item.side), ctypes.c_float(item.value),
+                            ctypes.c_float(item.seconds)),
+                        "Automating a setting",
+                    )
+                    continue
+                note = item
+                note_id = SCORE_FIRST_NOTE_ID + index
+                if strike:
+                    self._check(
+                        self._lib.synthway_engine_note_on(
+                            engine, note_id, note.slot, ctypes.c_float(note.frequency), ctypes.c_float(note.volume)),
+                        "Starting a note",
+                    )
+                    for glide in glides:
+                        self._check(
+                            self._lib.synthway_engine_note_glide(
+                                engine, note_id, ctypes.c_float(glide.frequency), ctypes.c_float(glide.seconds)),
+                            "Gliding a note",
+                        )
+                else:
+                    self._check(self._lib.synthway_engine_note_off(engine, note_id), "Releasing a note")
+            render(score_frames - position)
+            # The end of the score releases what is still held, as playback does
+            self._check(self._lib.synthway_engine_all_notes_off(engine), "Releasing the notes")
+
+            # Then the sound rings until it has died out: its notes ended, its reverberation quiet
+            block = max(1, round(SCORE_TAIL_BLOCK_S * sample_rate))
+            silence = 10.0 ** (SCORE_SILENCE_DB / 20.0)
+            tail_frames, max_tail_frames, cut = 0, round(max_tail * sample_rate), False
+            while True:
+                if tail_frames >= max_tail_frames:
+                    cut = True
+                    break
+                render(block)
+                tail_frames += block
+                if self._lib.synthway_engine_get_sounding_notes(engine) == 0 and stats().last_peak < silence:
+                    break
+            if cut:
+                fade = round(SCORE_FADE_S * sample_rate)
+                render(fade, 1.0, 0.0)
+                tail_frames += fade
+            # The margin fades to exact silence: whatever is left, nothing ends abruptly
+            render(round(tail_margin * sample_rate), 0.0 if cut else 1.0, 0.0)
+
+            written = stats()
+            result = {
+                "seconds": written.frames / sample_rate,
+                "peak": float(written.peak),
+                "clipped_samples": int(written.clipped_samples),
+                "tail": tail_frames / sample_rate,
+                "cut": cut,
+            }
+        except BaseException:
+            if writer.value:
+                self._lib.synthway_audio_writer_close(writer)
+            raise
+        finally:
+            self._lib.synthway_engine_destroy(engine)
+        self._check(self._lib.synthway_audio_writer_close(writer), "Finishing the audio file")
+        return result
 
     def set_frequency(self, freq: float):
         if self._engine:

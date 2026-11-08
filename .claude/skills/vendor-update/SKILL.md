@@ -1,6 +1,6 @@
 ---
 name: vendor-update
-description: Met à jour une bibliothèque tierce de synthway-core (miniaudio, RtMidi) vers une nouvelle version, ou en ajoute une nouvelle, toujours open-source, libre de droit et en conformité avec ses termes d'utilisation. À utiliser quand l'utilisateur demande de mettre à jour, de changer de version ou d'ajouter une bibliothèque externe au core.
+description: Met à jour une bibliothèque tierce de synthway-core (miniaudio, RtMidi, libogg, libvorbis) vers une nouvelle version, ou en ajoute une nouvelle, toujours open-source, libre de droit et en conformité avec ses termes d'utilisation. À utiliser quand l'utilisateur demande de mettre à jour, de changer de version ou d'ajouter une bibliothèque externe au core.
 ---
 
 # Mettre à jour une bibliothèque tierce
@@ -12,16 +12,18 @@ Les bibliothèques tierces sont dans `synthway-core/vendor/<nom>/` : **uniquemen
 1. Trouve la dernière **version publiée**, jamais une branche :
    - miniaudio : https://github.com/mackron/miniaudio/releases
    - RtMidi : https://github.com/thestk/rtmidi/releases
+   - libogg et libvorbis : https://xiph.org/downloads/ (archives dans https://downloads.xiph.org/releases/ogg/ et https://downloads.xiph.org/releases/vorbis/)
 
    Lis les notes de version : changement d'API, de licence, fichiers ajoutés ou renommés.
 2. Annonce à l'utilisateur la version visée et ce qui change, et attends son accord avant de télécharger.
 3. Télécharge depuis l'**étiquette de version** (pas `master`), dans un dossier temporaire hors du dépôt :
    - miniaudio : `https://raw.githubusercontent.com/mackron/miniaudio/<version>/miniaudio.h`
    - RtMidi : `https://github.com/thestk/rtmidi/archive/refs/tags/<version>.tar.gz`, dont tu reprends `RtMidi.h`, `RtMidi.cpp`, `rtmidi_c.h`, `rtmidi_c.cpp` et `LICENSE`.
+   - libogg et libvorbis : `https://downloads.xiph.org/releases/ogg/libogg-<version>.tar.gz` et `https://downloads.xiph.org/releases/vorbis/libvorbis-<version>.tar.gz`. Compare leur SHA-256 avec le fichier `SHA256SUMS` du même dossier. Reprends les fichiers listés dans `vendor/README.md`. Sous Windows, `curl` peut échouer derrière le proxy (`schannel: failed to receive handshake`) : ajoute `--ssl-no-revoke` et réessaie.
 4. Remplace les fichiers de `vendor/<nom>/` par les nouveaux, tels quels.
 5. Mets à jour la ligne de la bibliothèque dans `vendor/README.md` : version, et licence si elle a changé.
 6. Recompile **tout** avec le skill `core-build`, en ajoutant `-Clean` ou `--clean`, sous Windows **et** sous WSL. Vérifie `--list` et `--midi`.
-7. Si la compilation casse dans `src/`, adapte notre code, jamais les fichiers de `vendor/`. Seule la couche `src/io/` utilise les bibliothèques tierces (`audio_output.c`, `audio_devices.c`, `wav_file.c`, `midi_ports.c`, `ma_result.h`, `miniaudio_config.h`) : c'est là que se trouvent les adaptations.
+7. Si la compilation casse dans `src/`, adapte notre code, jamais les fichiers de `vendor/`. Seule la couche `src/io/` utilise les bibliothèques tierces (`audio_output.c`, `audio_devices.c`, `wav_file.c`, `audio_writer.c`, `midi_ports.c`, `ma_result.h`, `miniaudio_config.h`, `xiph/ogg/config_types.h`) : c'est là que se trouvent les adaptations.
 
 ## Ajouter une bibliothèque
 

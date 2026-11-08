@@ -55,10 +55,34 @@ export function bendAt(note: Note, at: number): number {
   return line[line.length - 1].semitones;
 }
 
+/** Settings of a track that can vary over the score (see lib/automation.ts for their ranges) */
+export type AutomationParam = 'volume' | 'pan' | 'lowPass' | 'highPass' | 'resonance' | 'reverb' | 'detune';
+
+/** A point of an automation curve: `at` steps from the score's start (fractions allowed), `value` in the setting's unit */
+export interface AutomationPoint {
+  at: number;
+  value: number;
+}
+
+/**
+ * A setting of a track over the score: straight lines between its points (sorted by `at`; in octaves
+ * for the cutoffs), held at the first point's value before it and at the last one's after it.
+ * With `right`, stereo: `points` is the left side, `right` the right one.
+ */
+export interface AutomationLane {
+  points: AutomationPoint[];
+  right?: AutomationPoint[];
+}
+
 export interface Track {
   id: string;
   name: string;
   instrumentId: string;
+  /**
+   * Name of the instrument when it was chosen or last saved: shown when the library no longer has it.
+   * Absent in compositions saved before it existed.
+   */
+  instrumentName?: string;
   hue: NeonHue;
   /** Reference pitch used when centering this track's piano roll. */
   basePitch?: number;
@@ -67,6 +91,8 @@ export interface Track {
   /** When true, this track's ghost notes are hidden when another track is selected */
   hidden?: boolean;
   notes: Note[];
+  /** Settings that vary over the score; absent, or a setting absent: the instrument's own, all along */
+  automation?: Partial<Record<AutomationParam, AutomationLane>>;
 }
 
 export interface Composition {
@@ -77,6 +103,11 @@ export interface Composition {
 }
 
 export const STEPS_PER_BEAT = 4;
+/**
+ * Most bars a score holds: no musical limit (hours at any tempo), only a guard against a typo
+ * that would have the browser draw millions of pixels of grid, kept in localStorage at each reload
+ */
+export const MAX_BARS = 9999;
 /** C0 under the project's MIDI octave naming convention. */
 export const DEFAULT_BASE_PITCH = 12;
 
@@ -84,11 +115,12 @@ function notes(list: [pitch: number, start: number, length: number][]): Note[] {
   return list.map(([pitch, start, length]) => ({ id: newId(), pitch, start, length }));
 }
 
-export function createTrack(index: number, instrumentId: string, hue: NeonHue): Track {
+export function createTrack(index: number, instrument: { id: string; name: string }, hue: NeonHue): Track {
   return {
     id: newId(),
     name: `Piste ${index}`,
-    instrumentId,
+    instrumentId: instrument.id,
+    instrumentName: instrument.name,
     hue,
     basePitch: DEFAULT_BASE_PITCH,
     muted: false,
@@ -97,6 +129,14 @@ export function createTrack(index: number, instrumentId: string, hue: NeonHue): 
     notes: [],
   };
 }
+
+/** A new score: one empty track, played by `instrument` */
+export function emptyComposition(instrument: { id: string; name: string }, hue: NeonHue): Composition {
+  return { bpm: 98, beatsPerBar: 4, bars: 4, tracks: [createTrack(1, instrument, hue)] };
+}
+
+/** Where the tracks of the score offered at the first launch are centred: G2, around the bass */
+const DEFAULT_SONG_BASE_PITCH = 43;
 
 export function defaultComposition(): Composition {
   return {
@@ -109,7 +149,7 @@ export function defaultComposition(): Composition {
         name: 'Mélodie',
         instrumentId: 'neon-lead',
         hue: 'pink',
-        basePitch: DEFAULT_BASE_PITCH,
+        basePitch: DEFAULT_SONG_BASE_PITCH,
         muted: false,
         solo: false,
         hidden: false,
@@ -125,7 +165,7 @@ export function defaultComposition(): Composition {
         name: 'Basse',
         instrumentId: 'rain-city-bass',
         hue: 'blue',
-        basePitch: DEFAULT_BASE_PITCH,
+        basePitch: DEFAULT_SONG_BASE_PITCH,
         muted: false,
         solo: false,
         hidden: false,
@@ -139,7 +179,7 @@ export function defaultComposition(): Composition {
         name: 'Nappe',
         instrumentId: 'haze-pad',
         hue: 'violet',
-        basePitch: DEFAULT_BASE_PITCH,
+        basePitch: DEFAULT_SONG_BASE_PITCH,
         muted: false,
         solo: false,
         hidden: false,

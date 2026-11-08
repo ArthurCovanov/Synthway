@@ -257,6 +257,52 @@ SYNTHWAY_API synthway_result_t synthway_engine_all_notes_off(synthway_engine_t* 
 SYNTHWAY_API uint32_t synthway_engine_get_sounding_notes(const synthway_engine_t* engine);
 
 /* --------------------------------------------------------------------------
+   Automation: an instrument's settings varying over time
+   --------------------------------------------------------------------------
+   A score can make some settings of an instrument slot vary while it plays
+   (synthway_automation_param_t): a setting that a ramp has set is taken
+   over from the instrument (set_instrument no longer changes it) until
+   synthway_engine_clear_automation gives it back. Left and right can differ:
+   left is played on even channels, right on odd ones. With a single channel,
+   the left side's settings apply and the pan is ignored. */
+
+/**
+ * Takes setting param of instrument slot, on side (both, left or right),
+ * from where it is to value in seconds (0 to SYNTHWAY_MAX_AUTOMATION_SECONDS;
+ * 0: a jump), in a straight line: in octaves for the cutoffs (each octave
+ * takes the same time), in the setting's unit for the others. The ramp starts
+ * at the next audio block (offline: the next render call), from where the
+ * setting is then: the instrument's own value when it was not automated yet.
+ * It replaces the ramp running on that side; after it, the setting holds
+ * value. A jump followed by a ramp of the same setting before the next block
+ * is taken first, so that the ramp starts from its value. Runs whether the
+ * instrument plays or not.
+ * A running ramp moves the filter, the reverb mix and the detune every
+ * SYNTHWAY_AUTOMATION_PERIOD samples; the gain and the pan are smoothed over
+ * about a millisecond, so that a jump does not click.
+ * Returns SYNTHWAY_INVALID_PARAM for a value out of the range of param, or a
+ * side other than both for the pan and the detune. Same timing and errors as
+ * synthway_engine_note_on.
+ */
+SYNTHWAY_API synthway_result_t synthway_engine_automate(
+    synthway_engine_t* engine,
+    uint32_t slot,
+    synthway_automation_param_t param,
+    synthway_side_t side,
+    float value,
+    float seconds
+);
+
+/**
+ * Gives every setting of instrument slot back to the instrument (gain 1, pan
+ * centre) at the next audio block, dropping the ramps running; slot
+ * SYNTHWAY_MAX_INSTRUMENTS: of every instrument. The gain and the pan come
+ * back within about a millisecond, the other settings at once.
+ * Same timing and errors as synthway_engine_note_on.
+ */
+SYNTHWAY_API synthway_result_t synthway_engine_clear_automation(synthway_engine_t* engine, uint32_t slot);
+
+/* --------------------------------------------------------------------------
    Offline Rendering (no audio device)
    -------------------------------------------------------------------------- */
 /**
@@ -292,6 +338,69 @@ SYNTHWAY_API synthway_result_t synthway_engine_render_to_wav(
     const char* path,
     uint32_t frame_count
 );
+
+/* --------------------------------------------------------------------------
+   Audio Files: what an offline engine renders, written as WAV or Ogg Vorbis
+   (a score is rendered piece by piece, its notes started and released
+   between two renders). Allocates and writes files: never from the audio
+   thread.
+   -------------------------------------------------------------------------- */
+/**
+ * Creates (or overwrites) the audio file at path, for frames of channels
+ * (1 or 2) channels at sample_rate (8000 to 192000 Hz), and gives its writer
+ * in *out_writer. quality is Ogg Vorbis's, from -0.1 (smallest) to 1 (best),
+ * 0.5 being about 160 kbit/s in stereo; it is ignored for WAV.
+ * The path goes to fopen(): ANSI code page on Windows, UTF-8 elsewhere.
+ * Returns SYNTHWAY_IO_ERROR when the file cannot be created,
+ * SYNTHWAY_INVALID_PARAM for a value out of range.
+ */
+SYNTHWAY_API synthway_result_t synthway_audio_writer_open(
+    synthway_audio_writer_t** out_writer,
+    const char* path,
+    synthway_audio_file_format_t format,
+    uint32_t channels,
+    uint32_t sample_rate,
+    float quality
+);
+
+/**
+ * Appends frame_count frames of interleaved float samples. Values beyond
+ * [-1, 1] are written as -1 or 1, as a sound card would play them, and counted
+ * in the writer's stats.
+ */
+SYNTHWAY_API synthway_result_t synthway_audio_writer_write(
+    synthway_audio_writer_t* writer,
+    const float* samples,
+    uint32_t frame_count
+);
+
+/**
+ * Renders frame_count frames of an offline engine (same channels and sample
+ * rate as writer) and appends them to writer, as synthway_audio_writer_write
+ * would, their gain going in a straight line from gain_start to gain_end
+ * (0 to 1; 1 and 1: as rendered, 1 and 0: a fade out). frame_count 0 renders
+ * nothing but hands the notes waiting to the engine, which frees their queue.
+ */
+SYNTHWAY_API synthway_result_t synthway_engine_render_to_writer(
+    synthway_engine_t* engine,
+    synthway_audio_writer_t* writer,
+    uint32_t frame_count,
+    float gain_start,
+    float gain_end
+);
+
+/** What has been written so far, into *out_stats */
+SYNTHWAY_API synthway_result_t synthway_audio_writer_get_stats(
+    const synthway_audio_writer_t* writer,
+    synthway_audio_writer_stats_t* out_stats
+);
+
+/**
+ * Finishes the file (WAV sizes, last Ogg pages), closes it and frees writer,
+ * whatever the result: writer must not be used again. Returns an error when
+ * the file could not be finished, or when a write had failed before.
+ */
+SYNTHWAY_API synthway_result_t synthway_audio_writer_close(synthway_audio_writer_t* writer);
 
 #ifdef __cplusplus
 }

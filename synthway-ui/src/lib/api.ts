@@ -1,6 +1,7 @@
 import type {
   Analysis,
   AnalyzerMessage,
+  AutomationRamp,
   ClipInfo,
   ClipWaveformPart,
   DeviceListResponse,
@@ -11,6 +12,8 @@ import type {
   InstrumentParams,
   NoteGlide,
   NoteSpan,
+  ScoreRenderInfo,
+  ScoreRenderRequest,
   SeparationModel,
   SeparationStatus,
   SynthStateMessage,
@@ -22,8 +25,9 @@ import type {
 // The browser calls synthway-server directly, at the address given to Vite
 // (see vite.config.ts): the server accepts pages served by this machine (its
 // CORS rule). The dev server only serves the page, so no request goes through
-// WSL when the server runs on Windows.
-const serverAddress = new URL(__SYNTHWAY_SERVER_URL__);
+// WSL when the server runs on Windows. No address (a build, by default): the
+// page is served by synthway-server itself, and calls its own origin.
+const serverAddress = new URL(__SYNTHWAY_SERVER_URL__ || window.location.origin);
 export const SERVER_PORT = serverAddress.port || (serverAddress.protocol === 'https:' ? '443' : '80');
 
 /** SYNTHWAY_ANALYZER_NOISE_GATE_OFF: the analyzer's noise gate ignores nothing */
@@ -189,7 +193,23 @@ export const api = {
   /** Loads a stem into the Analyzer, in place of its file */
   stemToAnalyzer: (name: string) =>
     postExplained<ClipInfo>(`/api/separation/stems/${encodeURIComponent(name)}/analyzer`, undefined, 30000),
+  /** Renders a score into an audio file, offline (nothing is played): the file, and what it is made of */
+  renderScore: async (score: ScoreRenderRequest): Promise<{ file: Blob; info: ScoreRenderInfo }> => {
+    const res = await fetch(serverUrl('/api/render/score'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(score),
+      signal: AbortSignal.timeout(RENDER_TIMEOUT_MS),
+    });
+    if (!res.ok) throw await refusal(res);
+    const info = JSON.parse(res.headers.get('X-Synthway-Render') ?? 'null') as ScoreRenderInfo | null;
+    if (!info) throw new Error('le serveur n’a pas dit ce qu’il a rendu (en-tête X-Synthway-Render absent)');
+    return { file: await res.blob(), info };
+  },
 };
+
+/** Longest a score render may take: the server renders much faster than real time, even an hour */
+const RENDER_TIMEOUT_MS = 10 * 60 * 1000;
 
 /** The piece loaded into the Decomposer, as it was sent */
 export const SEPARATION_SOURCE_URL = serverUrl('/api/separation/source');
@@ -413,6 +433,16 @@ export class SynthSocket {
 
   setInstrument(slot: number, params: InstrumentParams): void {
     this.send({ type: 'set_instrument', slot, ...params });
+  }
+
+  /** Ramps of instrument slots' settings, in order (ignored by the server while the engine is stopped) */
+  automate(ramps: AutomationRamp[]): void {
+    if (ramps.length) this.send({ type: 'automate', ramps });
+  }
+
+  /** Gives a slot's settings back to its instrument; no slot: every slot's */
+  clearAutomation(slot?: number): void {
+    this.send(slot === undefined ? { type: 'clear_automation' } : { type: 'clear_automation', slot });
   }
 
   private send(payload: object): void {

@@ -1,7 +1,7 @@
 #include "synthway/synthway.h"
 
 SYNTHWAY_API const char* synthway_get_version(void) {
-    return "0.1.0";
+    return "0.3.0";
 }
 
 SYNTHWAY_API const char* synthway_result_to_string(synthway_result_t result) {

@@ -10,6 +10,7 @@ import {
 } from 'react';
 import {
   DEFAULT_MAX_PARTIALS,
+  type AutomationRamp,
   type DeviceListResponse,
   type EngineStatus,
   type InstrumentParams,
@@ -71,6 +72,10 @@ interface SynthServerValue {
   releaseNote: (id: number) => void;
   releaseAllNotes: () => void;
   setInstrument: (slot: number, params: InstrumentParams) => void;
+  /** Automation: ramps of instrument slots' settings (synthway_engine_automate), in order */
+  automate: (ramps: AutomationRamp[]) => void;
+  /** Gives a slot's settings back to its instrument; no slot: every slot's */
+  clearAutomation: (slot?: number) => void;
 }
 
 const POLL_MS = 4000;
@@ -255,6 +260,14 @@ export function SynthServerProvider({ children }: { children: ReactNode }) {
     socketRef.current?.setInstrument(slot, params);
   }, []);
 
+  const automate = useCallback((ramps: AutomationRamp[]) => {
+    socketRef.current?.automate(ramps);
+  }, []);
+
+  const clearAutomation = useCallback((slot?: number) => {
+    socketRef.current?.clearAutomation(slot);
+  }, []);
+
   const canPlay = connection === 'online' && coreLoaded && socketOpen && engine.running;
 
   const value = useMemo<SynthServerValue>(
@@ -280,6 +293,8 @@ export function SynthServerProvider({ children }: { children: ReactNode }) {
       releaseNote,
       releaseAllNotes,
       setInstrument,
+      automate,
+      clearAutomation,
     }),
     [
       connection,
@@ -303,6 +318,8 @@ export function SynthServerProvider({ children }: { children: ReactNode }) {
       releaseNote,
       releaseAllNotes,
       setInstrument,
+      automate,
+      clearAutomation,
     ],
   );
 

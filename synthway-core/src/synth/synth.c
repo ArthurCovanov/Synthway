@@ -14,6 +14,10 @@
 
 #define SW_VOICE_COUNT (1 + SYNTHWAY_MAX_NOTES)
 
+/* Under this distance from its target, a smoothed gain takes it exactly, so
+   that a bus back at gain 1 passes through untouched again */
+#define SW_GAIN_SNAP 0.000001f
+
 static void sw_voice_drop_glides(sw_voice* voice) {
     voice->glide_head = 0;
     voice->glide_count = 0;
@@ -53,6 +57,8 @@ void sw_synth_init(sw_synth* synth, float frequency_hz, float volume) {
         memset(bus->high_pass, 0, sizeof(bus->high_pass));
         memset(bus->low_pass, 0, sizeof(bus->low_pass));
         bus->active = false;
+        memset(bus->automation, 0, sizeof(bus->automation));
+        bus->gain[0] = bus->gain[1] = 1.0f;
         sw_reverb_init(&bus->reverb); /* leaves the delay lines alone: they are cleared when it turns on */
     }
 }
@@ -132,6 +138,156 @@ void sw_synth_all_notes_off(sw_synth* synth) {
     for (uint32_t v = 1; v < SW_VOICE_COUNT; ++v) {
         synth->voices[v].gate = false;
     }
+}
+
+/* ---------------------------------------------------------------------------
+   Automation
+   --------------------------------------------------------------------------- */
+
+/* The cutoffs move in octaves: in a straight line on log2 of the frequency */
+static bool sw_automation_in_octaves(uint32_t param) {
+    return param == SYNTHWAY_AUTOMATION_LOW_CUTOFF || param == SYNTHWAY_AUTOMATION_HIGH_CUTOFF;
+}
+
+static double sw_automation_to_line(uint32_t param, float value) {
+    return sw_automation_in_octaves(param) ? log2((double)value) : (double)value;
+}
+
+void sw_synth_automate(sw_synth* synth, uint32_t instrument, uint32_t param, uint32_t side, float value, float seconds) {
+    if (instrument >= SYNTHWAY_MAX_INSTRUMENTS || param >= SYNTHWAY_AUTOMATION_PARAM_COUNT) {
+        return;
+    }
+    for (uint32_t s = 0; s < 2; ++s) {
+        if (side == SYNTHWAY_SIDE_BOTH || side == s + 1) {
+            sw_automation* lane = &synth->buses[instrument].automation[param][s];
+            if (lane->pending && lane->pending_seconds <= 0.0f) {
+                /* A jump waiting is taken at once, so that the ramp after it starts from its value */
+                lane->active = true;
+                lane->left = 0;
+                lane->held = lane->pending_value;
+                lane->position = lane->target = sw_automation_to_line(param, lane->pending_value);
+            }
+            lane->pending = true;
+            lane->pending_value = value;
+            lane->pending_seconds = seconds;
+        }
+    }
+}
+
+void sw_synth_clear_automation(sw_synth* synth, uint32_t instrument) {
+    for (uint32_t i = 0; i < SYNTHWAY_MAX_INSTRUMENTS; ++i) {
+        if (instrument == SYNTHWAY_MAX_INSTRUMENTS || instrument == i) {
+            memset(synth->buses[i].automation, 0, sizeof(synth->buses[i].automation));
+        }
+    }
+}
+
+/* The settings a bus plays a stretch of a block with */
+typedef struct sw_bus_settings {
+    float low_cutoff_hz[2];          /* left, right */
+    float high_cutoff_hz[2];
+    float resonance[2];
+    float reverb_mix[2];
+    float gain[2];                   /* the pan included */
+    float detune_cents;
+} sw_bus_settings;
+
+/* The instrument's own value of a setting, or the neutral one of those it does not have */
+static float sw_instrument_setting(const sw_instrument_sound* sound, uint32_t param) {
+    switch (param) {
+        case SYNTHWAY_AUTOMATION_LOW_CUTOFF: return sound->filter_low_cutoff_hz;
+        case SYNTHWAY_AUTOMATION_HIGH_CUTOFF: return sound->filter_high_cutoff_hz;
+        case SYNTHWAY_AUTOMATION_RESONANCE: return sound->filter_resonance;
+        case SYNTHWAY_AUTOMATION_REVERB: return sound->reverb_mix;
+        case SYNTHWAY_AUTOMATION_DETUNE: return sound->unison_detune_cents;
+        case SYNTHWAY_AUTOMATION_PAN: return 0.0f;
+        default: return 1.0f; /* gain */
+    }
+}
+
+/* Starts the ramps asked since the previous block, from where their setting is */
+static void sw_bus_start_ramps(sw_instrument_bus* bus, const sw_instrument_sound* sound, float rate) {
+    for (uint32_t p = 0; p < SYNTHWAY_AUTOMATION_PARAM_COUNT; ++p) {
+        for (uint32_t s = 0; s < 2; ++s) {
+            sw_automation* lane = &bus->automation[p][s];
+            if (!lane->pending) {
+                continue;
+            }
+            const double from = lane->active ? lane->position : sw_automation_to_line(p, sw_instrument_setting(sound, p));
+            const double to = sw_automation_to_line(p, lane->pending_value);
+            const double samples = floor((double)lane->pending_seconds * (double)rate + 0.5);
+            lane->active = true;
+            lane->pending = false;
+            lane->held = lane->pending_value;
+            lane->target = to;
+            if (samples < 1.0) {
+                lane->position = to;
+                lane->left = 0;
+            } else {
+                lane->position = from;
+                lane->step = (to - from) / samples;
+                lane->left = (uint32_t)samples;
+            }
+        }
+    }
+}
+
+static bool sw_bus_ramping(const sw_instrument_bus* bus) {
+    for (uint32_t p = 0; p < SYNTHWAY_AUTOMATION_PARAM_COUNT; ++p) {
+        if (bus->automation[p][0].left > 0 || bus->automation[p][1].left > 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Moves the running ramps frame_count samples on */
+static void sw_bus_advance(sw_instrument_bus* bus, uint32_t frame_count) {
+    for (uint32_t p = 0; p < SYNTHWAY_AUTOMATION_PARAM_COUNT; ++p) {
+        for (uint32_t s = 0; s < 2; ++s) {
+            sw_automation* lane = &bus->automation[p][s];
+            if (lane->left == 0) {
+                continue;
+            }
+            if (frame_count >= lane->left) {
+                lane->position = lane->target;
+                lane->left = 0;
+            } else {
+                lane->position += lane->step * (double)frame_count;
+                lane->left -= frame_count;
+            }
+        }
+    }
+}
+
+static float sw_bus_setting(const sw_instrument_bus* bus, const sw_instrument_sound* sound, uint32_t param, uint32_t side) {
+    const sw_automation* lane = &bus->automation[param][side];
+    if (!lane->active) {
+        return sw_instrument_setting(sound, param);
+    }
+    if (lane->left == 0) {
+        return lane->held;
+    }
+    return (float)(sw_automation_in_octaves(param) ? exp2(lane->position) : lane->position);
+}
+
+/* The settings as they are now: the instrument's, where no automation took them over */
+static void sw_bus_settings_now(const sw_instrument_bus* bus, const sw_instrument_sound* sound, uint32_t channels, sw_bus_settings* out) {
+    for (uint32_t side = 0; side < 2; ++side) {
+        out->low_cutoff_hz[side] = sw_bus_setting(bus, sound, SYNTHWAY_AUTOMATION_LOW_CUTOFF, side);
+        out->high_cutoff_hz[side] = sw_bus_setting(bus, sound, SYNTHWAY_AUTOMATION_HIGH_CUTOFF, side);
+        out->resonance[side] = sw_bus_setting(bus, sound, SYNTHWAY_AUTOMATION_RESONANCE, side);
+        out->reverb_mix[side] = sw_bus_setting(bus, sound, SYNTHWAY_AUTOMATION_REVERB, side);
+        out->gain[side] = sw_bus_setting(bus, sound, SYNTHWAY_AUTOMATION_GAIN, side);
+    }
+    /* Balance: the side the sound goes to keeps its level, the other fades
+       out (as with the unison's spread); a single channel ignores it */
+    const float pan = sw_bus_setting(bus, sound, SYNTHWAY_AUTOMATION_PAN, 0);
+    if (channels >= 2) {
+        out->gain[0] *= fminf(1.0f, 1.0f - pan);
+        out->gain[1] *= fminf(1.0f, 1.0f + pan);
+    }
+    out->detune_cents = sw_bus_setting(bus, sound, SYNTHWAY_AUTOMATION_DETUNE, 0);
 }
 
 uint32_t sw_synth_sounding_notes(const sw_synth* synth) {
@@ -406,67 +562,123 @@ static float sw_filter_process(float input, sw_filter_state* state,
     return output;
 }
 
-/* The band-pass, on the sum of an instrument's notes */
+typedef struct sw_biquad {
+    float b0, b1, b2, a1, a2;
+} sw_biquad;
+
+/* Resonant RBJ sections */
+static sw_biquad sw_high_pass_for(float cutoff_hz, float q, float rate) {
+    const float cutoff = fminf(cutoff_hz, rate * 0.49f);
+    const float omega = 6.28318530718f * cutoff / rate;
+    const float cosine = cosf(omega), alpha = sinf(omega) / (2.0f * q);
+    const float a0 = 1.0f + alpha;
+    sw_biquad section;
+    section.b0 = ((1.0f + cosine) * 0.5f) / a0;
+    section.b1 = -(1.0f + cosine) / a0;
+    section.b2 = section.b0;
+    section.a1 = (-2.0f * cosine) / a0;
+    section.a2 = (1.0f - alpha) / a0;
+    return section;
+}
+
+static sw_biquad sw_low_pass_for(float cutoff_hz, float q, float rate) {
+    const float cutoff = fminf(cutoff_hz, rate * 0.49f);
+    const float omega = 6.28318530718f * cutoff / rate;
+    const float cosine = cosf(omega), alpha = sinf(omega) / (2.0f * q);
+    const float a0 = 1.0f + alpha;
+    sw_biquad section;
+    section.b0 = ((1.0f - cosine) * 0.5f) / a0;
+    section.b1 = (1.0f - cosine) / a0;
+    section.b2 = section.b0;
+    section.a1 = (-2.0f * cosine) / a0;
+    section.a2 = (1.0f - alpha) / a0;
+    return section;
+}
+
+/* The band-pass, on the sum of an instrument's notes: a high-pass and a
+   low-pass section, set apart for the left and right side */
 static void sw_bus_filter(
     sw_instrument_bus* bus,
-    const sw_instrument_sound* sound,
+    const sw_bus_settings* settings,
     float rate,
     uint32_t channels,
     float* block,
     uint32_t frame_count
 ) {
-    /* Bypass the fully open band exactly, preserving the engine's default sound. */
-    if (sound->filter_low_cutoff_hz <= 20.0f && sound->filter_high_cutoff_hz >= 20000.0f
-        && sound->filter_resonance == 0.0f) {
-        memset(&bus->high_pass, 0, sizeof(bus->high_pass));
-        memset(&bus->low_pass, 0, sizeof(bus->low_pass));
-        return;
-    }
-
-    /* Resonant RBJ high-pass and low-pass sections form a band-pass. */
-    const float q = 0.70710678f + sound->filter_resonance * 9.29289322f;
-    const bool high_pass_enabled = sound->filter_low_cutoff_hz > 20.0f;
-    const bool low_pass_enabled = sound->filter_high_cutoff_hz < 20000.0f;
-    float hp_b0 = 1.0f, hp_b1 = 0.0f, hp_b2 = 0.0f, hp_a1 = 0.0f, hp_a2 = 0.0f;
-    float lp_b0 = 1.0f, lp_b1 = 0.0f, lp_b2 = 0.0f, lp_a1 = 0.0f, lp_a2 = 0.0f;
-    if (high_pass_enabled) {
-        float cutoff = fminf(sound->filter_low_cutoff_hz, rate * 0.49f);
-        const float omega = 6.28318530718f * cutoff / rate;
-        const float cosine = cosf(omega), alpha = sinf(omega) / (2.0f * q);
-        const float a0 = 1.0f + alpha;
-        hp_b0 = ((1.0f + cosine) * 0.5f) / a0;
-        hp_b1 = -(1.0f + cosine) / a0;
-        hp_b2 = hp_b0;
-        hp_a1 = (-2.0f * cosine) / a0;
-        hp_a2 = (1.0f - alpha) / a0;
-    } else {
-        memset(&bus->high_pass, 0, sizeof(bus->high_pass));
-    }
-    if (low_pass_enabled) {
-        float cutoff = fminf(sound->filter_high_cutoff_hz, rate * 0.49f);
-        const float omega = 6.28318530718f * cutoff / rate;
-        const float cosine = cosf(omega), alpha = sinf(omega) / (2.0f * q);
-        const float a0 = 1.0f + alpha;
-        lp_b0 = ((1.0f - cosine) * 0.5f) / a0;
-        lp_b1 = (1.0f - cosine) / a0;
-        lp_b2 = lp_b0;
-        lp_a1 = (-2.0f * cosine) / a0;
-        lp_a2 = (1.0f - alpha) / a0;
-    } else {
-        memset(&bus->low_pass, 0, sizeof(bus->low_pass));
-    }
     /* Left (channel 0) and right (channel 1) apart, since a spread unison makes
        them differ; the other channels repeat them (even: left, odd: right) */
     const uint32_t sides = channels < 2 ? channels : 2;
+    bool high_pass_enabled[2] = { false, false }, low_pass_enabled[2] = { false, false };
+    sw_biquad high_pass[2], low_pass[2];
+    bool filtering = false;
+    for (uint32_t side = 0; side < sides; ++side) {
+        const float low_cutoff = settings->low_cutoff_hz[side];
+        const float high_cutoff = settings->high_cutoff_hz[side];
+        const float resonance = settings->resonance[side];
+        /* Bypass the fully open band exactly, preserving the engine's default sound */
+        if (low_cutoff <= 20.0f && high_cutoff >= 20000.0f && resonance == 0.0f) {
+            memset(&bus->high_pass[side], 0, sizeof(bus->high_pass[side]));
+            memset(&bus->low_pass[side], 0, sizeof(bus->low_pass[side]));
+            continue;
+        }
+        filtering = true;
+        const float q = 0.70710678f + resonance * 9.29289322f;
+        high_pass_enabled[side] = low_cutoff > 20.0f;
+        low_pass_enabled[side] = high_cutoff < 20000.0f;
+        /* Both sides share their sections when they have the same settings */
+        const bool same = side == 1 && resonance == settings->resonance[0];
+        if (high_pass_enabled[side]) {
+            high_pass[side] = same && high_pass_enabled[0] && low_cutoff == settings->low_cutoff_hz[0]
+                ? high_pass[0] : sw_high_pass_for(low_cutoff, q, rate);
+        } else {
+            memset(&bus->high_pass[side], 0, sizeof(bus->high_pass[side]));
+        }
+        if (low_pass_enabled[side]) {
+            low_pass[side] = same && low_pass_enabled[0] && high_cutoff == settings->high_cutoff_hz[0]
+                ? low_pass[0] : sw_low_pass_for(high_cutoff, q, rate);
+        } else {
+            memset(&bus->low_pass[side], 0, sizeof(bus->low_pass[side]));
+        }
+    }
+    if (!filtering) {
+        return;
+    }
+
     for (uint32_t frame = 0; frame < frame_count; ++frame) {
         float* frame_out = block + (size_t)frame * channels;
         float output[2];
         for (uint32_t side = 0; side < sides; ++side) {
             output[side] = frame_out[side];
-            if (high_pass_enabled) output[side] = sw_filter_process(output[side], &bus->high_pass[side], hp_b0, hp_b1, hp_b2, hp_a1, hp_a2);
-            if (low_pass_enabled) output[side] = sw_filter_process(output[side], &bus->low_pass[side], lp_b0, lp_b1, lp_b2, lp_a1, lp_a2);
+            if (high_pass_enabled[side]) {
+                const sw_biquad* f = &high_pass[side];
+                output[side] = sw_filter_process(output[side], &bus->high_pass[side], f->b0, f->b1, f->b2, f->a1, f->a2);
+            }
+            if (low_pass_enabled[side]) {
+                const sw_biquad* f = &low_pass[side];
+                output[side] = sw_filter_process(output[side], &bus->low_pass[side], f->b0, f->b1, f->b2, f->a1, f->a2);
+            }
         }
         for (uint32_t ch = 0; ch < channels; ++ch) frame_out[ch] = output[ch & (sides - 1)];
+    }
+}
+
+/* The gain and pan of the automation, smoothed at each sample; nothing
+   while both sides stay at 1 */
+static void sw_bus_gain(sw_instrument_bus* bus, const float target[2], uint32_t channels, float* block, uint32_t frame_count) {
+    if (bus->gain[0] == 1.0f && bus->gain[1] == 1.0f && target[0] == 1.0f && target[1] == 1.0f) {
+        return;
+    }
+    for (uint32_t frame = 0; frame < frame_count; ++frame) {
+        for (uint32_t side = 0; side < 2; ++side) {
+            bus->gain[side] += (target[side] - bus->gain[side]) * SW_SMOOTHING;
+            if (fabsf(target[side] - bus->gain[side]) < SW_GAIN_SNAP) {
+                bus->gain[side] = target[side];
+            }
+        }
+        float* frame_out = block + (size_t)frame * channels;
+        for (uint32_t ch = 0; ch < channels; ++ch) {
+            frame_out[ch] *= bus->gain[channels == 1 ? 0 : (ch & 1)];
+        }
     }
 }
 
@@ -524,6 +736,10 @@ void sw_synth_render(
         }
     }
 
+    for (uint32_t i = 0; i < SYNTHWAY_MAX_INSTRUMENTS; ++i) {
+        sw_bus_start_ramps(&synth->buses[i], &params->instruments[i], rate);
+    }
+
     /* Each instrument's notes are summed apart, filtered and reverberated,
        then added to the others, in chunks that fit the mix buffer */
     memset(out, 0, sizeof(float) * (size_t)frame_count * channels);
@@ -537,19 +753,40 @@ void sw_synth_render(
 
         for (uint32_t i = 0; i < SYNTHWAY_MAX_INSTRUMENTS; ++i) {
             sw_instrument_bus* bus = &synth->buses[i];
-            if (!used[i] && !bus->reverb.active) {
-                continue; /* nothing playing, nothing left ringing */
-            }
             const sw_instrument_sound* sound = &params->instruments[i];
-            memset(synth->mix, 0, sizeof(float) * samples);
-            for (uint32_t v = 0; v < SW_VOICE_COUNT; ++v) {
-                sw_voice* voice = &synth->voices[v];
-                if (playing[v] && voice->instrument == i) {
-                    sw_voice_render(voice, sound, synth->steps[i], rate, channels, synth->mix, frames);
-                }
+            if (!used[i] && !bus->reverb.active) {
+                /* Nothing playing, nothing left ringing: the automation goes on all the same */
+                sw_bus_advance(bus, frames);
+                sw_bus_settings settings;
+                sw_bus_settings_now(bus, sound, channels, &settings);
+                bus->gain[0] = settings.gain[0];
+                bus->gain[1] = settings.gain[1];
+                continue;
             }
-            sw_bus_filter(bus, sound, rate, channels, synth->mix, frames);
-            sw_reverb_process(&bus->reverb, sound->reverb_mix, sample_rate, channels, synth->mix, frames);
+            memset(synth->mix, 0, sizeof(float) * samples);
+            /* In one go, or in steps of SYNTHWAY_AUTOMATION_PERIOD while a ramp runs */
+            for (uint32_t at = 0; at < frames; ) {
+                uint32_t count = frames - at;
+                if (count > SYNTHWAY_AUTOMATION_PERIOD && sw_bus_ramping(bus)) {
+                    count = SYNTHWAY_AUTOMATION_PERIOD;
+                }
+                sw_bus_settings settings;
+                sw_bus_settings_now(bus, sound, channels, &settings);
+                sw_instrument_sound played = *sound;
+                played.unison_detune_cents = settings.detune_cents;
+                float* part = synth->mix + (size_t)at * channels;
+                for (uint32_t v = 0; v < SW_VOICE_COUNT; ++v) {
+                    sw_voice* voice = &synth->voices[v];
+                    if (playing[v] && voice->instrument == i) {
+                        sw_voice_render(voice, &played, synth->steps[i], rate, channels, part, count);
+                    }
+                }
+                sw_bus_filter(bus, &settings, rate, channels, part, count);
+                sw_reverb_process(&bus->reverb, settings.reverb_mix[0], settings.reverb_mix[1], sample_rate, channels, part, count);
+                sw_bus_gain(bus, settings.gain, channels, part, count);
+                sw_bus_advance(bus, count);
+                at += count;
+            }
             for (size_t s = 0; s < samples; ++s) {
                 block[s] += synth->mix[s];
             }

@@ -1,12 +1,14 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+# 77: first version that reads `license` as an SPDX expression (PEP 639)
+requires = ["setuptools>=77.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "synthway-server"
-version = "0.1.0"
+version = "0.3.0"
 description = "FastAPI & WebSocket backend orchestrator for Synthway audio engine"
 readme = "README.md"
+license = "Apache-2.0"
 authors = [{ name = "Synthway Team" }]
 requires-python = ">=3.9"
 dependencies = [

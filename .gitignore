@@ -47,8 +47,9 @@ downloads/
 eggs/
 .eggs/
 lib/
-# ...but not the UI's sources, which "lib/" would hide too
+# ...but not the sources that "lib/" would hide too: the UI's, and libvorbis' (the core needs them to build)
 !synthway-ui/src/lib/
+!synthway-core/vendor/libvorbis/lib/
 lib64/
 parts/
 sdist/

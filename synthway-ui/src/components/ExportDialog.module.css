@@ -1,0 +1,213 @@
+/* The Composer's audio export: a modal dialog over the screen */
+
+.dialog {
+  width: min(520px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-l);
+  background: linear-gradient(180deg, rgba(17, 16, 51, 0.98), rgba(10, 10, 36, 0.99));
+  color: var(--text-1);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.3),
+    0 0 40px rgba(163, 28, 255, 0.18),
+    0 30px 60px rgba(0, 0, 0, 0.6);
+}
+
+.dialog::backdrop {
+  background: rgba(0, 0, 8, 0.6);
+  backdrop-filter: blur(3px);
+}
+
+.dialog[open] {
+  animation: appear 0.18s var(--ease);
+}
+
+@keyframes appear {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.99);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dialog[open] {
+    animation: none;
+  }
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px 20px 18px;
+}
+
+.head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.headIcon {
+  flex: none;
+  margin-top: 2px;
+  color: var(--neon-pink-soft);
+}
+
+.headText {
+  flex: 1;
+  min-width: 0;
+}
+
+.title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-0);
+}
+
+.subtitle {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.close {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  margin: -4px -6px 0 0;
+  border: none;
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.close:hover:not(:disabled) {
+  color: var(--text-0);
+  background: var(--bg-4);
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.label {
+  padding-top: 7px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+}
+
+.inline {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+  color: var(--text-1);
+}
+
+.seconds {
+  width: 76px;
+  font-family: var(--font-mono);
+}
+
+.hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-2);
+}
+
+.summary {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 12px;
+  border-radius: var(--radius-m);
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--bg-3) 70%, transparent);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-2);
+}
+
+.summary p {
+  margin: 0;
+}
+
+.summary strong {
+  font-weight: 500;
+  color: var(--text-0);
+}
+
+.warning,
+.error {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.warning {
+  color: var(--warn);
+}
+
+.warning svg,
+.error svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.error {
+  margin: 0;
+  padding: 9px 11px;
+  border-radius: var(--radius-m);
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
+  background: color-mix(in srgb, var(--danger) 9%, transparent);
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--text-0);
+  overflow-wrap: anywhere;
+}
+
+.error svg {
+  color: var(--danger);
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

@@ -1170,6 +1170,266 @@ static void test_glide_limits(void) {
     synthway_engine_destroy(engine);
 }
 
+/* ---------------------------------------------------------------------------
+   Automation
+   --------------------------------------------------------------------------- */
+
+/* One channel of interleaved frames, in a buffer of its own */
+static float* channel_of(const float* x, uint32_t frames, uint32_t channels, uint32_t channel) {
+    float* out = (float*)malloc(sizeof(float) * frames);
+    if (!out) {
+        fprintf(stderr, "[!] Out of memory\n");
+        exit(2);
+    }
+    for (uint32_t i = 0; i < frames; ++i) {
+        out[i] = x[(size_t)i * channels + channel];
+    }
+    return out;
+}
+
+/* Amplitude at hz over the 25 ms from seconds on (whole periods of 440, 1000 and 3000 Hz) */
+static double amplitude_at(const float* x, double seconds, double hz) {
+    return measure_amplitude(x + (uint32_t)(seconds * SAMPLE_RATE + 0.5), SAMPLE_RATE / 40, hz);
+}
+
+/* Offline engine with the single note silent and instrument on slot 1,
+   playing a note at frequency, volume 0.5, from the first render */
+static synthway_engine_t* automation_engine(uint32_t channels, const synthway_instrument_t* instrument, float frequency) {
+    synthway_engine_t* engine = offline_engine(channels);
+    synthway_engine_set_tone_enabled(engine, false);
+    synthway_engine_set_instrument(engine, 1, instrument);
+    synthway_engine_note_on(engine, 1, 1, frequency, 0.5f);
+    return engine;
+}
+
+static void test_automation_gain_ramp(void) {
+    const synthway_instrument_t sine = sine_instrument(0.005f, 0.0f, 1.0f, 0.01f);
+    synthway_engine_t* engine = automation_engine(1, &sine, 440.0f);
+    free(render(engine, WARMUP_FRAMES));
+    const synthway_result_t result = synthway_engine_automate(engine, 1, SYNTHWAY_AUTOMATION_GAIN, SYNTHWAY_SIDE_BOTH, 0.0f, 1.0f);
+    float* x = render(engine, SAMPLE_RATE + WARMUP_FRAMES);
+    /* Windows centred on 0.25, 0.5 and 0.75 s: the gain there, 1 - t, times the volume */
+    double worst = 0.0;
+    for (int k = 1; k <= 3; ++k) {
+        const double t = 0.25 * k;
+        const double error = fabs(amplitude_at(x, t - 1.0 / 80.0, 440.0) - 0.5 * (1.0 - t));
+        if (error > worst) worst = error;
+    }
+    const double after = measure_peak(x + SAMPLE_RATE + WARMUP_FRAMES / 2, WARMUP_FRAMES / 2, 1);
+
+    /* Back to full gain at once: smoothed, no step larger than the sine's own */
+    synthway_engine_automate(engine, 1, SYNTHWAY_AUTOMATION_GAIN, SYNTHWAY_SIDE_BOTH, 1.0f, 0.0f);
+    float* y = render(engine, WARMUP_FRAMES + SAMPLE_RATE / 40);
+    double largest_step = 0.0;
+    for (uint32_t i = 1; i < WARMUP_FRAMES; ++i) {
+        const double step = fabs((double)y[i] - (double)y[i - 1]);
+        if (step > largest_step) largest_step = step;
+    }
+    const double back = amplitude_at(y, (double)WARMUP_FRAMES / SAMPLE_RATE, 440.0);
+
+    char detail[192];
+    snprintf(detail, sizeof(detail), "1 -> 0 in 1 s: worst error %.4f at 0.25, 0.5, 0.75 s, then peak %.6f; jump back to %.4f, largest step %.4f",
+             worst, after, back, largest_step);
+    check(result == SYNTHWAY_OK && worst < 0.006 && after == 0.0 && fabs(back - 0.5) < 0.005 && largest_step < 0.035,
+          "automation: the gain follows its ramp, then jumps back without a click", detail);
+    free(x);
+    free(y);
+    synthway_engine_destroy(engine);
+}
+
+static void test_automation_jump_then_ramp(void) {
+    /* A jump to 0 then a ramp back to 1 in 1 s, both before the next block: the ramp starts from 0 */
+    const synthway_instrument_t sine = sine_instrument(0.005f, 0.0f, 1.0f, 0.01f);
+    synthway_engine_t* engine = automation_engine(1, &sine, 440.0f);
+    free(render(engine, WARMUP_FRAMES));
+    synthway_engine_automate(engine, 1, SYNTHWAY_AUTOMATION_GAIN, SYNTHWAY_SIDE_BOTH, 0.0f, 0.0f);
+    synthway_engine_automate(engine, 1, SYNTHWAY_AUTOMATION_GAIN, SYNTHWAY_SIDE_BOTH, 1.0f, 1.0f);
+    float* x = render(engine, SAMPLE_RATE / 2);
+    const double quarter = amplitude_at(x, 0.25 - 1.0 / 80.0, 440.0);
+    free(x);
+    synthway_engine_destroy(engine);
+
+    char detail[96];
+    snprintf(detail, sizeof(detail), "0.25 s into the ramp: %.4f (0.125 expected)", quarter);
+    check(fabs(quarter - 0.125) < 0.004, "automation: a ramp right after a jump starts from it", detail);
+}
+
+static void test_automation_sides_and_pan(void) {
+    const synthway_instrument_t sine = sine_instrument(0.005f, 0.0f, 1.0f, 0.01f);
+    synthway_engine_t* engine = automation_engine(2, &sine, 440.0f);
+    const uint32_t frames = WARMUP_FRAMES + SAMPLE_RATE / 40;
+    const double from = (double)WARMUP_FRAMES / SAMPLE_RATE;
+    double levels[3][2];
+    synthway_result_t results[3] = { SYNTHWAY_ERROR, SYNTHWAY_ERROR, SYNTHWAY_ERROR };
+
+    results[0] = synthway_engine_automate(engine, 1, SYNTHWAY_AUTOMATION_GAIN, SYNTHWAY_SIDE_LEFT, 0.25f, 0.0f);
+    for (int k = 0; k < 3; ++k) {
+        if (k == 1) {
+            /* Hard left, the gain given back */
+            synthway_engine_clear_automation(engine, 1);
+            results[1] = synthway_engine_automate(engine, 1, SYNTHWAY_AUTOMATION_PAN, SYNTHWAY_SIDE_BOTH, -1.0f, 0.0f);
+        } else if (k == 2) {
+            results[2] = synthway_engine_automate(engine, 1, SYNTHWAY_AUTOMATION_PAN, SYNTHWAY_SIDE_BOTH, 0.5f, 0.0f);
+        }
+        float* x = render(engine, frames);
+        for (uint32_t side = 0; side < 2; ++side) {
+            float* channel = channel_of(x, frames, 2, side);
+            levels[k][side] = amplitude_at(channel, from, 440.0);
+            free(channel);
+        }
+        free(x);
+    }
+
+    char detail[224];
+    snprintf(detail, sizeof(detail), "left gain 0.25: %.4f | %.4f; pan -1: %.4f | %.6f; pan 0.5: %.4f | %.4f (left | right)",
+             levels[0][0], levels[0][1], levels[1][0], levels[1][1], levels[2][0], levels[2][1]);
+    check(results[0] == SYNTHWAY_OK && results[1] == SYNTHWAY_OK && results[2] == SYNTHWAY_OK
+              && fabs(levels[0][0] - 0.125) < 0.003 && fabs(levels[0][1] - 0.5) < 0.005
+              && fabs(levels[1][0] - 0.5) < 0.005 && levels[1][1] == 0.0
+              && fabs(levels[2][0] - 0.25) < 0.003 && fabs(levels[2][1] - 0.5) < 0.005,
+          "automation: left and right apart, then the pan", detail);
+    synthway_engine_destroy(engine);
+}
+
+static void test_automation_filter_in_octaves(void) {
+    const synthway_instrument_t open = sine_instrument(0.005f, 0.0f, 1.0f, 0.01f);
+    synthway_engine_t* engine = automation_engine(1, &open, 1000.0f);
+    free(render(engine, WARMUP_FRAMES));
+    synthway_engine_automate(engine, 1, SYNTHWAY_AUTOMATION_HIGH_CUTOFF, SYNTHWAY_SIDE_BOTH, 100.0f, 0.0f);
+    float* x = render(engine, WARMUP_FRAMES + SAMPLE_RATE / 40);
+    const double closed = amplitude_at(x, (double)WARMUP_FRAMES / SAMPLE_RATE, 1000.0);
+
+    /* 100 Hz to 10 kHz in 1 s, in octaves: the cutoff passes 1 kHz at 0.5 s,
+       where a 1 kHz sine keeps 0.707 of its level (it would be at 5 kHz in hertz) */
+    const synthway_result_t result = synthway_engine_automate(engine, 1, SYNTHWAY_AUTOMATION_HIGH_CUTOFF, SYNTHWAY_SIDE_BOTH, 10000.0f, 1.0f);
+    float* y = render(engine, SAMPLE_RATE);
+    const double middle = amplitude_at(y, 0.5 - 1.0 / 80.0, 1000.0);
+    const double late = amplitude_at(y, 0.95, 1000.0);
+
+    char detail[160];
+    snprintf(detail, sizeof(detail), "1 kHz under a 100 Hz low-pass %.4f; sweep to 10 kHz: %.4f at 0.5 s (0.354 expected), %.4f at 0.95 s",
+             closed, middle, late);
+    check(result == SYNTHWAY_OK && closed < 0.01 && middle > 0.33 && middle < 0.38 && late > 0.48,
+          "automation: the cutoff sweeps in octaves", detail);
+    free(x);
+    free(y);
+    synthway_engine_destroy(engine);
+}
+
+static void test_automation_takes_over_the_instrument(void) {
+    synthway_instrument_t muffled = sine_instrument(0.005f, 0.0f, 1.0f, 0.01f);
+    muffled.filter_high_cutoff_hz = 300.0f;
+    synthway_engine_t* engine = automation_engine(1, &muffled, 3000.0f);
+    const uint32_t frames = WARMUP_FRAMES + SAMPLE_RATE / 40;
+    const double from = (double)WARMUP_FRAMES / SAMPLE_RATE;
+    double levels[4];
+    for (int k = 0; k < 4; ++k) {
+        if (k == 0) {
+            synthway_engine_automate(engine, 1, SYNTHWAY_AUTOMATION_HIGH_CUTOFF, SYNTHWAY_SIDE_BOTH, 20000.0f, 0.0f);
+        } else if (k == 1) {
+            synthway_engine_set_instrument(engine, 1, &muffled); /* still 300 Hz: no effect */
+        } else if (k == 2) {
+            synthway_engine_clear_automation(engine, 1);
+        } else {
+            synthway_engine_automate(engine, 1, SYNTHWAY_AUTOMATION_HIGH_CUTOFF, SYNTHWAY_SIDE_BOTH, 20000.0f, 0.0f);
+            synthway_engine_clear_automation(engine, SYNTHWAY_MAX_INSTRUMENTS); /* every instrument, in the same block */
+        }
+        float* x = render(engine, frames);
+        levels[k] = amplitude_at(x, from, 3000.0);
+        free(x);
+    }
+
+    char detail[192];
+    snprintf(detail, sizeof(detail), "3000 Hz, low-pass of the instrument at 300 Hz: automated to 20 kHz %.4f, instrument set again %.4f, cleared %.4f, cleared for all %.4f",
+             levels[0], levels[1], levels[2], levels[3]);
+    check(fabs(levels[0] - 0.5) < 0.005 && fabs(levels[1] - 0.5) < 0.005 && levels[2] < 0.01 && levels[3] < 0.01,
+          "automation: takes the setting over from the instrument until cleared", detail);
+    synthway_engine_destroy(engine);
+}
+
+static void test_automation_reverb_side_and_detune(void) {
+    /* Reverb on the left only: only the left rings on after the note */
+    const synthway_instrument_t sine = sine_instrument(0.005f, 0.0f, 1.0f, 0.01f);
+    synthway_engine_t* engine = automation_engine(2, &sine, 440.0f);
+    const synthway_result_t reverb = synthway_engine_automate(engine, 1, SYNTHWAY_AUTOMATION_REVERB, SYNTHWAY_SIDE_LEFT, 0.6f, 0.0f);
+    free(render(engine, SAMPLE_RATE / 4));
+    synthway_engine_all_notes_off(engine);
+    float* x = render(engine, SAMPLE_RATE / 2);
+    float* left = channel_of(x, SAMPLE_RATE / 2, 2, 0);
+    float* right = channel_of(x, SAMPLE_RATE / 2, 2, 1);
+    const double tail_left = measure_rms(left + SAMPLE_RATE / 10, SAMPLE_RATE / 5, 1);
+    const double tail_right = measure_rms(right + SAMPLE_RATE / 10, SAMPLE_RATE / 5, 1);
+    free(x);
+    free(left);
+    free(right);
+    synthway_engine_destroy(engine);
+
+    /* Three voices at the instrument's 0 cents, detuned to 50: only the middle
+       one stays at 440 Hz, at 1 / sqrt(3) of the partial (over 3 s, so that
+       the others, 13 Hz away, hardly leak into its bin) */
+    synthway_instrument_t unison = sine;
+    unison.unison_voices = 3;
+    engine = automation_engine(1, &unison, 440.0f);
+    const synthway_result_t detune = synthway_engine_automate(engine, 1, SYNTHWAY_AUTOMATION_DETUNE, SYNTHWAY_SIDE_BOTH, 50.0f, 0.0f);
+    float* y = render(engine, SAMPLE_RATE / 4 + 3 * SAMPLE_RATE);
+    const double middle_voice = measure_amplitude(y + SAMPLE_RATE / 4, 3 * SAMPLE_RATE, 440.0);
+    free(y);
+    synthway_engine_destroy(engine);
+
+    char detail[192];
+    snprintf(detail, sizeof(detail), "tail 0.1 to 0.3 s after the note: left %.4f, right %.6f; detuned to 50 cents: 440 Hz at %.4f (0.2887 expected)",
+             tail_left, tail_right, middle_voice);
+    check(reverb == SYNTHWAY_OK && detune == SYNTHWAY_OK && tail_left > 0.01 && tail_right == 0.0
+              && fabs(middle_voice - 0.2887) < 0.006,
+          "automation: reverb on one side, detune of the unison", detail);
+}
+
+static void test_automation_runs_in_silence_and_validation(void) {
+    const synthway_instrument_t sine = sine_instrument(0.005f, 0.0f, 1.0f, 0.01f);
+    synthway_engine_t* engine = offline_engine(1);
+    synthway_engine_set_tone_enabled(engine, false);
+    synthway_engine_set_instrument(engine, 1, &sine);
+    synthway_engine_automate(engine, 1, SYNTHWAY_AUTOMATION_GAIN, SYNTHWAY_SIDE_BOTH, 0.0f, 0.5f);
+    free(render(engine, SAMPLE_RATE / 4)); /* no note: the ramp runs all the same */
+    synthway_engine_note_on(engine, 1, 1, 440.0f, 0.5f);
+    float* x = render(engine, SAMPLE_RATE / 8);
+    /* 0.30 to 0.325 s into the ramp: the gain goes from 0.4 to 0.35 */
+    const double late_note = amplitude_at(x, 0.05, 440.0);
+    free(x);
+
+    const synthway_side_t both = SYNTHWAY_SIDE_BOTH;
+    const int refused =
+        synthway_engine_automate(engine, 1, SYNTHWAY_AUTOMATION_GAIN, both, 1.5f, 0.0f) == SYNTHWAY_INVALID_PARAM
+        && synthway_engine_automate(engine, 1, SYNTHWAY_AUTOMATION_GAIN, both, -0.1f, 0.0f) == SYNTHWAY_INVALID_PARAM
+        && synthway_engine_automate(engine, 1, SYNTHWAY_AUTOMATION_GAIN, both, NAN, 0.0f) == SYNTHWAY_INVALID_PARAM
+        && synthway_engine_automate(engine, 1, SYNTHWAY_AUTOMATION_PAN, SYNTHWAY_SIDE_LEFT, 0.0f, 0.0f) == SYNTHWAY_INVALID_PARAM
+        && synthway_engine_automate(engine, 1, SYNTHWAY_AUTOMATION_DETUNE, SYNTHWAY_SIDE_RIGHT, 10.0f, 0.0f) == SYNTHWAY_INVALID_PARAM
+        && synthway_engine_automate(engine, 1, SYNTHWAY_AUTOMATION_DETUNE, both, SYNTHWAY_MAX_UNISON_DETUNE_CENTS + 1.0f, 0.0f) == SYNTHWAY_INVALID_PARAM
+        && synthway_engine_automate(engine, 1, SYNTHWAY_AUTOMATION_LOW_CUTOFF, both, 10.0f, 0.0f) == SYNTHWAY_INVALID_PARAM
+        && synthway_engine_automate(engine, 1, SYNTHWAY_AUTOMATION_HIGH_CUTOFF, both, 30000.0f, 0.0f) == SYNTHWAY_INVALID_PARAM
+        && synthway_engine_automate(engine, 1, SYNTHWAY_AUTOMATION_GAIN, both, 0.5f, -1.0f) == SYNTHWAY_INVALID_PARAM
+        && synthway_engine_automate(engine, 1, SYNTHWAY_AUTOMATION_GAIN, both, 0.5f, SYNTHWAY_MAX_AUTOMATION_SECONDS + 1.0f) == SYNTHWAY_INVALID_PARAM
+        && synthway_engine_automate(engine, SYNTHWAY_MAX_INSTRUMENTS, SYNTHWAY_AUTOMATION_GAIN, both, 0.5f, 0.0f) == SYNTHWAY_INVALID_PARAM
+        && synthway_engine_automate(engine, 1, (synthway_automation_param_t)SYNTHWAY_AUTOMATION_PARAM_COUNT, both, 0.5f, 0.0f) == SYNTHWAY_INVALID_PARAM
+        && synthway_engine_automate(engine, 1, SYNTHWAY_AUTOMATION_GAIN, (synthway_side_t)3, 0.5f, 0.0f) == SYNTHWAY_INVALID_PARAM
+        && synthway_engine_automate(NULL, 1, SYNTHWAY_AUTOMATION_GAIN, both, 0.5f, 0.0f) == SYNTHWAY_INVALID_PARAM
+        && synthway_engine_clear_automation(engine, SYNTHWAY_MAX_INSTRUMENTS + 1) == SYNTHWAY_INVALID_PARAM
+        && synthway_engine_clear_automation(NULL, 1) == SYNTHWAY_INVALID_PARAM;
+    const int accepted =
+        synthway_engine_automate(engine, 1, SYNTHWAY_AUTOMATION_DETUNE, both, SYNTHWAY_MAX_UNISON_DETUNE_CENTS, 0.0f) == SYNTHWAY_OK
+        && synthway_engine_automate(engine, 1, SYNTHWAY_AUTOMATION_PAN, both, 1.0f, 0.0f) == SYNTHWAY_OK
+        && synthway_engine_automate(engine, 1, SYNTHWAY_AUTOMATION_LOW_CUTOFF, SYNTHWAY_SIDE_RIGHT, 20000.0f, SYNTHWAY_MAX_AUTOMATION_SECONDS) == SYNTHWAY_OK
+        && synthway_engine_automate(engine, 0, SYNTHWAY_AUTOMATION_RESONANCE, SYNTHWAY_SIDE_LEFT, 1.0f, 0.0f) == SYNTHWAY_OK
+        && synthway_engine_clear_automation(engine, SYNTHWAY_MAX_INSTRUMENTS) == SYNTHWAY_OK;
+    synthway_engine_destroy(engine);
+
+    char detail[128];
+    snprintf(detail, sizeof(detail), "note started 0.25 s into a 0.5 s fade: %.4f (0.1875 expected); refused %d, accepted %d",
+             late_note, refused, accepted);
+    check(fabs(late_note - 0.1875) < 0.006 && refused && accepted,
+          "automation: ramps run without notes, invalid values refused", detail);
+}
+
 static void test_wav_export(const char* path) {
     const uint32_t frames = SAMPLE_RATE / 2;
     synthway_engine_t* engine = offline_engine(2);
@@ -1215,6 +1475,195 @@ static void test_wav_export(const char* path) {
 }
 
 /* Default WAV path in the system temp directory, never in the current one */
+/* ---------- Audio writer: what the Composer's export uses ---------- */
+
+/* base without its extension, then suffix: "x/render_test.wav" + "_score.wav" */
+static void sibling_path(char* out, size_t size, const char* base, const char* suffix) {
+    const char* dot = strrchr(base, '.');
+    const int stem = dot ? (int)(dot - base) : (int)strlen(base);
+    snprintf(out, size, "%.*s%s", stem, base, suffix);
+}
+
+static unsigned char* read_file(const char* path, long* out_size) {
+    FILE* file = fopen(path, "rb");
+    unsigned char* bytes = NULL;
+    *out_size = 0;
+    if (!file) return NULL;
+    fseek(file, 0, SEEK_END);
+    long size = ftell(file);
+    fseek(file, 0, SEEK_SET);
+    bytes = (unsigned char*)malloc((size_t)(size > 0 ? size : 1));
+    if (bytes && fread(bytes, 1, (size_t)size, file) == (size_t)size) *out_size = size;
+    fclose(file);
+    return bytes;
+}
+
+/* Mono 16-bit samples of a WAV file, as floats; *out_count 0 when unreadable */
+static float* read_mono_wav(const char* path, uint32_t* out_count) {
+    long size = 0;
+    unsigned char* bytes = read_file(path, &size);
+    long data = -1;
+    for (long i = 12; bytes && i + 8 <= size; ++i) {
+        if (memcmp(bytes + i, "data", 4) == 0) {
+            data = i + 8;
+            break;
+        }
+    }
+    const uint32_t count = data < 0 ? 0 : (uint32_t)((size - data) / 2);
+    float* samples = (float*)malloc(sizeof(float) * (count ? count : 1));
+    for (uint32_t i = 0; i < count; ++i) {
+        samples[i] = (float)(int16_t)(bytes[data + 2 * i] | (bytes[data + 2 * i + 1] << 8)) / 32768.0f;
+    }
+    free(bytes);
+    *out_count = count;
+    return samples;
+}
+
+/* A score rendered piece by piece, its note started between two renders, as the server's export does:
+   silence before, the note from its exact frame, a fade out at the end */
+static void test_writer_score_wav(const char* wav_path) {
+    char path[1100];
+    sibling_path(path, sizeof(path), wav_path, "_score.wav");
+    const uint32_t lead = SAMPLE_RATE / 10, held = SAMPLE_RATE / 2, fade = SAMPLE_RATE / 10;
+
+    synthway_engine_t* engine = poly_engine();
+    const synthway_instrument_t sine = sine_instrument(0.005f, 0.0f, 1.0f, 0.01f);
+    synthway_engine_set_instrument(engine, 1, &sine);
+    synthway_audio_writer_t* writer = NULL;
+    synthway_result_t res = synthway_audio_writer_open(&writer, path, SYNTHWAY_AUDIO_FILE_WAV, 1, SAMPLE_RATE, 0.0f);
+    if (res == SYNTHWAY_OK) res = synthway_engine_render_to_writer(engine, writer, lead, 1.0f, 1.0f);
+    synthway_audio_writer_stats_t after_lead;
+    memset(&after_lead, 0, sizeof(after_lead));
+    if (writer) synthway_audio_writer_get_stats(writer, &after_lead);
+    synthway_engine_note_on(engine, 1, 1, 440.0f, 0.4f);
+    if (res == SYNTHWAY_OK) res = synthway_engine_render_to_writer(engine, writer, held, 1.0f, 1.0f);
+    if (res == SYNTHWAY_OK) res = synthway_engine_render_to_writer(engine, writer, fade, 1.0f, 0.0f);
+    synthway_audio_writer_stats_t stats;
+    memset(&stats, 0, sizeof(stats));
+    if (writer) synthway_audio_writer_get_stats(writer, &stats);
+    const synthway_result_t closed = writer ? synthway_audio_writer_close(writer) : SYNTHWAY_ERROR;
+    synthway_engine_destroy(engine);
+
+    uint32_t count = 0;
+    float* x = read_mono_wav(path, &count);
+    uint32_t first = count;
+    for (uint32_t i = 0; i < count; ++i) {
+        if (x[i] != 0.0f) {
+            first = i;
+            break;
+        }
+    }
+    const double freq = count >= lead + held ? measure_frequency(x + lead + WARMUP_FRAMES, held - WARMUP_FRAMES, 1) : 0.0;
+    const double held_peak = count >= lead + held ? measure_peak(x + lead + WARMUP_FRAMES, held - WARMUP_FRAMES, 1) : 0.0;
+    const double end_peak = count >= 64 ? measure_peak(x + count - 64, 64, 1) : 1.0;
+    char detail[320];
+    snprintf(detail, sizeof(detail),
+             "%s/%s, %u frames, first sound at frame %u, %.2f Hz, peak %.3f (stats %.3f, last %.3f, %llu clipped), lead peak %.3f, end %.4f",
+             synthway_result_to_string(res), synthway_result_to_string(closed), count, first, freq, held_peak,
+             stats.peak, stats.last_peak, (unsigned long long)stats.clipped_samples, after_lead.peak, end_peak);
+    check(res == SYNTHWAY_OK && closed == SYNTHWAY_OK && count == lead + held + fade && stats.frames == count
+              && first >= lead && first <= lead + 2 && fabs(freq - 440.0) < 0.5 && fabs(held_peak - 0.4) < 0.005
+              && fabs(stats.peak - 0.4) < 0.005 && stats.clipped_samples == 0 && after_lead.peak == 0.0f
+              && stats.last_peak <= stats.peak && end_peak < 0.01,
+          "writer: a score rendered in pieces into a WAV file", detail);
+    free(x);
+    remove(path);
+}
+
+static void test_writer_clipping_and_guards(const char* wav_path) {
+    char path[1100];
+    sibling_path(path, sizeof(path), wav_path, "_clip.wav");
+    synthway_audio_writer_t* writer = NULL;
+    const synthway_result_t opened = synthway_audio_writer_open(&writer, path, SYNTHWAY_AUDIO_FILE_WAV, 1, SAMPLE_RATE, 0.0f);
+    const float samples[4] = { 1.5f, -2.0f, 0.5f, -0.25f };
+    synthway_result_t wrote = writer ? synthway_audio_writer_write(writer, samples, 4) : SYNTHWAY_ERROR;
+    const float quiet[2] = { 0.1f, -0.2f };
+    if (wrote == SYNTHWAY_OK) wrote = synthway_audio_writer_write(writer, quiet, 2);
+    synthway_audio_writer_stats_t stats;
+    memset(&stats, 0, sizeof(stats));
+    if (writer) synthway_audio_writer_get_stats(writer, &stats);
+
+    /* An engine at another rate or channel count does not write into it, nor gains beyond [0, 1] */
+    synthway_engine_t* stereo = offline_engine(2);
+    const synthway_result_t other_channels = synthway_engine_render_to_writer(stereo, writer, 10, 1.0f, 1.0f);
+    synthway_engine_t* mono = poly_engine();
+    const synthway_result_t loud = synthway_engine_render_to_writer(mono, writer, 10, 1.0f, 2.0f);
+    const synthway_result_t closed = writer ? synthway_audio_writer_close(writer) : SYNTHWAY_ERROR;
+    synthway_engine_destroy(stereo);
+    synthway_engine_destroy(mono);
+
+    uint32_t count = 0;
+    float* x = read_mono_wav(path, &count);
+    const int clipped_back = count == 6 && x[0] > 0.999f && x[1] < -0.999f && fabsf(x[2] - 0.5f) < 0.001f;
+    free(x);
+    remove(path);
+
+    synthway_audio_writer_t* refused = NULL;
+    const int bad = synthway_audio_writer_open(&refused, path, SYNTHWAY_AUDIO_FILE_WAV, 3, SAMPLE_RATE, 0.0f) == SYNTHWAY_INVALID_PARAM
+                    && synthway_audio_writer_open(&refused, path, SYNTHWAY_AUDIO_FILE_OGG, 2, SAMPLE_RATE, 1.5f) == SYNTHWAY_INVALID_PARAM
+                    && synthway_audio_writer_open(&refused, path, SYNTHWAY_AUDIO_FILE_WAV, 2, 4000, 0.0f) == SYNTHWAY_INVALID_PARAM
+                    && synthway_audio_writer_open(&refused, "no/such/folder/x.ogg", SYNTHWAY_AUDIO_FILE_OGG, 2, SAMPLE_RATE, 0.5f) == SYNTHWAY_IO_ERROR
+                    && refused == NULL;
+
+    char detail[256];
+    snprintf(detail, sizeof(detail), "%s/%s/%s, peak %.2f, last %.2f, %llu clipped, other channels %s, gain 2 %s, read back %s, bad values %s",
+             synthway_result_to_string(opened), synthway_result_to_string(wrote), synthway_result_to_string(closed),
+             stats.peak, stats.last_peak, (unsigned long long)stats.clipped_samples,
+             synthway_result_to_string(other_channels), synthway_result_to_string(loud),
+             clipped_back ? "ok" : "wrong", bad ? "refused" : "accepted");
+    check(opened == SYNTHWAY_OK && wrote == SYNTHWAY_OK && closed == SYNTHWAY_OK && stats.frames == 6 && stats.peak == 2.0f
+              && fabsf(stats.last_peak - 0.2f) < 1e-6f && stats.clipped_samples == 2 && other_channels == SYNTHWAY_INVALID_PARAM
+              && loud == SYNTHWAY_INVALID_PARAM && clipped_back && bad,
+          "writer: clipping counted, mismatched engines and bad values refused", detail);
+}
+
+/* Ogg Vorbis: a valid stream (Vorbis headers, last page marked end of stream) whose last granule
+   position, the number of frames, is the number written */
+static void test_writer_ogg(const char* wav_path) {
+    char path[1100];
+    sibling_path(path, sizeof(path), wav_path, "_score.ogg");
+    const uint32_t frames = SAMPLE_RATE + 123; /* not a whole number of blocks */
+
+    synthway_engine_t* engine = offline_engine(2);
+    synthway_engine_set_tone_enabled(engine, false);
+    const synthway_instrument_t sine = sine_instrument(0.005f, 0.0f, 1.0f, 0.01f);
+    synthway_engine_set_instrument(engine, 1, &sine);
+    synthway_audio_writer_t* writer = NULL;
+    synthway_result_t res = synthway_audio_writer_open(&writer, path, SYNTHWAY_AUDIO_FILE_OGG, 2, SAMPLE_RATE, 0.5f);
+    synthway_engine_note_on(engine, 1, 1, 440.0f, 0.4f);
+    if (res == SYNTHWAY_OK) res = synthway_engine_render_to_writer(engine, writer, frames, 1.0f, 1.0f);
+    const synthway_result_t closed = writer ? synthway_audio_writer_close(writer) : SYNTHWAY_ERROR;
+    synthway_engine_destroy(engine);
+
+    long size = 0;
+    unsigned char* bytes = read_file(path, &size);
+    int pages = 0, ended = 0, vorbis = 0;
+    long long granule = -1;
+    for (long at = 0; bytes && at + 27 <= size && memcmp(bytes + at, "OggS", 4) == 0; ) {
+        const int segments = bytes[at + 26];
+        if (at + 27 + segments > size) break;
+        long body = 0;
+        for (int s = 0; s < segments; ++s) body += bytes[at + 27 + s];
+        if (pages == 0 && body >= 7 && memcmp(bytes + at + 27 + segments, "\x01vorbis", 7) == 0) vorbis = 1;
+        granule = 0;
+        for (int b = 7; b >= 0; --b) granule = (granule << 8) | bytes[at + 6 + b];
+        ended = (bytes[at + 5] & 0x04) != 0;
+        pages++;
+        at += 27 + segments + body;
+    }
+    free(bytes);
+    remove(path);
+
+    char detail[256];
+    snprintf(detail, sizeof(detail), "%s/%s, %ld bytes, %d pages, Vorbis %s, last granule %lld for %u frames, end of stream %s",
+             synthway_result_to_string(res), synthway_result_to_string(closed), size, pages, vorbis ? "yes" : "no",
+             granule, frames, ended ? "yes" : "no");
+    /* At least the identification header's page, the other headers' page, and one of sound */
+    check(res == SYNTHWAY_OK && closed == SYNTHWAY_OK && vorbis && ended && pages >= 3 && granule == (long long)frames
+              && size > 4000 && size < 100000,
+          "writer: an Ogg Vorbis stream as long as what was written", detail);
+}
+
 static const char* default_wav_path(char* buffer, size_t size) {
     const char* dir = getenv("TMPDIR");
     if (!dir) dir = getenv("TEMP");
@@ -1263,7 +1712,17 @@ int main(int argc, char* argv[]) {
     test_glide_follows_semitones();
     test_glide_jump_and_release();
     test_glide_limits();
+    test_automation_gain_ramp();
+    test_automation_jump_then_ramp();
+    test_automation_sides_and_pan();
+    test_automation_filter_in_octaves();
+    test_automation_takes_over_the_instrument();
+    test_automation_reverb_side_and_detune();
+    test_automation_runs_in_silence_and_validation();
     test_wav_export(wav_path);
+    test_writer_score_wav(wav_path);
+    test_writer_clipping_and_guards(wav_path);
+    test_writer_ogg(wav_path);
 
     printf("%s: %d failure(s)\n", failures ? "FAILED" : "OK", failures);
     return failures ? 1 : 0;

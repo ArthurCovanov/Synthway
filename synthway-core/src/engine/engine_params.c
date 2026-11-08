@@ -140,6 +140,12 @@ void sw_engine_params_take_notes(sw_engine_params* params, sw_synth* synth) {
             case SW_NOTE_EVENT_GLIDE:
                 sw_synth_note_glide(synth, event->note_id, event->frequency_hz, event->seconds);
                 break;
+            case SW_NOTE_EVENT_AUTOMATE:
+                sw_synth_automate(synth, event->instrument, event->param, event->side, event->value, event->seconds);
+                break;
+            case SW_NOTE_EVENT_CLEAR_AUTOMATION:
+                sw_synth_clear_automation(synth, event->instrument);
+                break;
         }
     }
     /* The slots read are free again (release: after they were read) */
@@ -507,6 +513,59 @@ SYNTHWAY_API synthway_result_t synthway_engine_all_notes_off(synthway_engine_t* 
         return SYNTHWAY_INVALID_PARAM;
     }
     const sw_note_event event = { SW_NOTE_EVENT_ALL_OFF, 0, 0, 0.0f, 0.0f, 0.0f };
+    return sw_note_queue_push(&engine->params.notes, &event) ? SYNTHWAY_OK : SYNTHWAY_ERROR;
+}
+
+/* ---------------------------------------------------------------------------
+   Automation
+   --------------------------------------------------------------------------- */
+
+/* The values a ramp of param accepts */
+static bool sw_valid_automation(synthway_automation_param_t param, synthway_side_t side, float value) {
+    if ((unsigned)side > SYNTHWAY_SIDE_RIGHT) { /* negative values wrap above */
+        return false;
+    }
+    switch (param) {
+        case SYNTHWAY_AUTOMATION_GAIN:
+        case SYNTHWAY_AUTOMATION_RESONANCE:
+        case SYNTHWAY_AUTOMATION_REVERB:
+            return value >= 0.0f && value <= 1.0f; /* also false for NaN */
+        case SYNTHWAY_AUTOMATION_PAN:
+            return side == SYNTHWAY_SIDE_BOTH && value >= -1.0f && value <= 1.0f;
+        case SYNTHWAY_AUTOMATION_LOW_CUTOFF:
+        case SYNTHWAY_AUTOMATION_HIGH_CUTOFF:
+            return value >= 20.0f && value <= 20000.0f;
+        case SYNTHWAY_AUTOMATION_DETUNE:
+            return side == SYNTHWAY_SIDE_BOTH && value >= 0.0f && value <= SYNTHWAY_MAX_UNISON_DETUNE_CENTS;
+        default:
+            return false;
+    }
+}
+
+SYNTHWAY_API synthway_result_t synthway_engine_automate(
+    synthway_engine_t* engine,
+    uint32_t slot,
+    synthway_automation_param_t param,
+    synthway_side_t side,
+    float value,
+    float seconds
+) {
+    if (!engine || slot >= SYNTHWAY_MAX_INSTRUMENTS
+        || !sw_valid_automation(param, side, value)
+        || !(seconds >= 0.0f && seconds <= SYNTHWAY_MAX_AUTOMATION_SECONDS)) {
+        return SYNTHWAY_INVALID_PARAM;
+    }
+    const sw_note_event event = {
+        SW_NOTE_EVENT_AUTOMATE, 0, slot, 0.0f, 0.0f, seconds, (uint32_t)param, (uint32_t)side, value
+    };
+    return sw_note_queue_push(&engine->params.notes, &event) ? SYNTHWAY_OK : SYNTHWAY_ERROR;
+}
+
+SYNTHWAY_API synthway_result_t synthway_engine_clear_automation(synthway_engine_t* engine, uint32_t slot) {
+    if (!engine || slot > SYNTHWAY_MAX_INSTRUMENTS) {
+        return SYNTHWAY_INVALID_PARAM;
+    }
+    const sw_note_event event = { SW_NOTE_EVENT_CLEAR_AUTOMATION, 0, slot, 0.0f, 0.0f, 0.0f, 0, 0, 0.0f };
     return sw_note_queue_push(&engine->params.notes, &event) ? SYNTHWAY_OK : SYNTHWAY_ERROR;
 }
 

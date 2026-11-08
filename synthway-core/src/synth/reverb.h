@@ -41,8 +41,8 @@ typedef struct sw_reverb_channel {
 typedef struct sw_reverb {
     sw_reverb_channel channels[2];   /* left, right */
     uint32_t sample_rate;            /* the delays are sized for */
-    float dry;                       /* gains, smoothed towards those of the mix */
-    float wet;
+    float dry[2];                    /* gains of the left and right side, smoothed towards those of their mix */
+    float wet[2];
     bool active;                     /* false: the input passes through untouched */
 } sw_reverb;
 
@@ -53,12 +53,14 @@ void sw_reverb_init(sw_reverb* reverb);
    fed the mean of channels 0 and 1 (left and right, which differ only with a
    spread unison), and each channel keeps its own dry sound; with two channels
    or more, even channels get the left reverb, odd channels the right one, and
-   a single channel gets their mean. mix in [0, 1] is the
-   share of reverb, as an equal-power crossfade. At mix 0 the frames are left
-   untouched, once the previous mix has faded out. */
+   a single channel gets their mean. mix_left and mix_right in [0, 1] are the
+   share of reverb of each side (even and odd channels; a single channel
+   takes mix_left), as an equal-power crossfade. At mix 0 on both sides the
+   frames are left untouched, once the previous mix has faded out. */
 void sw_reverb_process(
     sw_reverb* reverb,
-    float mix,
+    float mix_left,
+    float mix_right,
     uint32_t sample_rate,
     uint32_t channels,
     float* frames,

@@ -10,11 +10,15 @@ ifeq ($(origin CXX),default)
     CXX = c++
 endif
 CFLAGS ?= -O2 -Wall -Wextra -std=c11 -fPIC
-INCLUDES = -Iinclude -Isrc -Ivendor/miniaudio -Ivendor/rtmidi
+# libogg and libvorbis; src/io/xiph holds the ogg/config_types.h that libogg's configure would generate
+XIPH_INCLUDES = -Ivendor/libogg/include -Isrc/io/xiph -Ivendor/libvorbis/include
+INCLUDES = -Iinclude -Isrc -Ivendor/miniaudio -Ivendor/rtmidi $(XIPH_INCLUDES)
 
 # Third-party code is compiled without warnings: it is not ours to fix
 VENDOR_CFLAGS = -O2 -w -std=c11 -fPIC
 VENDOR_CXXFLAGS = -O2 -w -std=c++17 -fPIC
+# libogg and libvorbis are older C: GNU extensions on
+XIPH_CFLAGS = -O2 -w -std=gnu11 -fPIC
 
 BUILD_DIR = build
 BIN_DIR = $(BUILD_DIR)/bin
@@ -78,7 +82,7 @@ SRCS = src/synthway.c \
        src/interpreter/interpreter.c \
        src/analyzer/analyzer.c \
        src/analysis/analysis.c src/analysis/notes.c src/analysis/waveform.c src/analysis/pitch.c src/analysis/spectrum.c src/analysis/fft.c \
-       src/io/audio_output.c src/io/audio_input.c src/io/audio_file.c src/io/wav_file.c \
+       src/io/audio_output.c src/io/audio_input.c src/io/audio_file.c src/io/wav_file.c src/io/audio_writer.c \
        src/io/audio_devices.c src/io/midi_ports.c
 OBJS = $(patsubst src/%.c,$(OBJ_DIR)/%.o,$(SRCS))
 HEADERS = $(wildcard include/synthway/*.h src/*.h src/*/*.h)
@@ -93,13 +97,39 @@ ANALYSIS_TEST_OBJ = $(OBJ_DIR)/analysis_test.o
 MINIAUDIO_LIB = $(VENDOR_DIR)/libminiaudio.a
 RTMIDI_LIB = $(VENDOR_DIR)/librtmidi.a
 RTMIDI_HEADERS = vendor/rtmidi/RtMidi.h vendor/rtmidi/rtmidi_c.h
+OGG_LIB = $(VENDOR_DIR)/libogg.a
+OGG_OBJS = $(patsubst vendor/libogg/src/%.c,$(VENDOR_DIR)/libogg/%.o,$(wildcard vendor/libogg/src/*.c))
+OGG_HEADERS = $(wildcard vendor/libogg/include/ogg/*.h) src/io/xiph/ogg/config_types.h
+VORBIS_LIB = $(VENDOR_DIR)/libvorbis.a
+VORBIS_OBJS = $(patsubst vendor/libvorbis/lib/%.c,$(VENDOR_DIR)/libvorbis/%.o,$(wildcard vendor/libvorbis/lib/*.c))
+VORBIS_HEADERS = $(wildcard vendor/libvorbis/include/vorbis/*.h vendor/libvorbis/lib/*.h vendor/libvorbis/lib/*/*.h vendor/libvorbis/lib/*/*/*.h) $(OGG_HEADERS)
 
 .PHONY: all lib cli vendor test clean run help
 
 all: lib cli $(TARGET_TEST) $(TARGET_ANALYSIS_TEST)
 
 # Compile third-party static libraries
-vendor: $(MINIAUDIO_LIB) $(RTMIDI_LIB)
+vendor: $(MINIAUDIO_LIB) $(RTMIDI_LIB) $(OGG_LIB) $(VORBIS_LIB)
+
+$(OGG_LIB): $(OGG_OBJS)
+	@echo "[AR] $@"
+	@rm -f $@
+	$(AR) rcs $@ $^
+
+$(VENDOR_DIR)/libogg/%.o: vendor/libogg/src/%.c $(OGG_HEADERS)
+	@echo "[CC] $<"
+	@$(MKDIR_P) $(dir $@)
+	$(CC) $(XIPH_CFLAGS) $(XIPH_INCLUDES) -c $< -o $@
+
+$(VORBIS_LIB): $(VORBIS_OBJS)
+	@echo "[AR] $@"
+	@rm -f $@
+	$(AR) rcs $@ $^
+
+$(VENDOR_DIR)/libvorbis/%.o: vendor/libvorbis/lib/%.c $(VORBIS_HEADERS)
+	@echo "[CC] $<"
+	@$(MKDIR_P) $(dir $@)
+	$(CC) $(XIPH_CFLAGS) $(XIPH_INCLUDES) -Ivendor/libvorbis/lib -c $< -o $@
 
 $(MINIAUDIO_LIB): $(VENDOR_DIR)/miniaudio_impl.o
 	@echo "[AR] $@"
@@ -122,9 +152,9 @@ $(VENDOR_DIR)/%.o: vendor/rtmidi/%.cpp $(RTMIDI_HEADERS) | $(VENDOR_DIR)
 # Compile shared library (linked with the C++ driver because RtMidi is C++)
 lib: $(TARGET_LIB)
 
-$(TARGET_LIB): $(OBJS) $(RTMIDI_LIB) $(MINIAUDIO_LIB) | $(LIB_DIR)
+$(TARGET_LIB): $(OBJS) $(RTMIDI_LIB) $(MINIAUDIO_LIB) $(VORBIS_LIB) $(OGG_LIB) | $(LIB_DIR)
 	@echo "[LINK] $@"
-	$(CXX) $(LDFLAGS_SHARED) -o $@ $(OBJS) $(RTMIDI_LIB) $(MINIAUDIO_LIB) $(LIBS)
+	$(CXX) $(LDFLAGS_SHARED) -o $@ $(OBJS) $(RTMIDI_LIB) $(MINIAUDIO_LIB) $(VORBIS_LIB) $(OGG_LIB) $(LIBS)
 
 # Compile CLI application
 cli: $(TARGET_CLI)
@@ -195,7 +225,7 @@ run: cli
 help:
 	@echo "Synthway Core Build System"
 	@echo "  make          - Build shared library and CLI"
-	@echo "  make vendor   - Build the third-party static libraries (miniaudio, RtMidi)"
+	@echo "  make vendor   - Build the third-party static libraries (miniaudio, RtMidi, libogg, libvorbis)"
 	@echo "  make lib      - Build the synthway shared library"
 	@echo "  make cli      - Build synthway_cli executable"
 	@echo "  make test     - Build and run the offline render and analysis tests (no sound)"

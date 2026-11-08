@@ -4,7 +4,7 @@ Supports both Pydantic (when installed for FastAPI) and standard Python dataclas
 """
 
 from enum import IntEnum
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 try:
     from pydantic import BaseModel, Field, model_validator
@@ -43,6 +43,30 @@ class HarmonicStateEnum(IntEnum):
     SHARED = 2  # also a harmonic of another note heard with it: left out of the fit
 
 
+class AudioFileFormatEnum(IntEnum):
+    """Audio files the core writes (synthway_audio_file_format_t)"""
+    WAV = 0  # 16-bit PCM
+    OGG = 1  # Ogg Vorbis
+
+
+class AutomationParamEnum(IntEnum):
+    """Settings of an instrument a ramp can take (synthway_automation_param_t)"""
+    GAIN = 0         # 0 to 1, multiplies the instrument's sound
+    PAN = 1          # -1 (left) to 1 (right); both sides only
+    LOW_CUTOFF = 2   # Hz, 20 to 20000: lower edge of the band-pass (its high-pass)
+    HIGH_CUTOFF = 3  # Hz, 20 to 20000: upper edge (its low-pass)
+    RESONANCE = 4    # 0 to 1
+    REVERB = 5       # reverb mix, 0 to 1
+    DETUNE = 6       # unison detune in cents, 0 to MAX_UNISON_DETUNE_CENTS; both sides only
+
+
+class SideEnum(IntEnum):
+    """Side of the stereo field a ramp sets (synthway_side_t)"""
+    BOTH = 0
+    LEFT = 1
+    RIGHT = 2
+
+
 class DeviceTypeEnum(IntEnum):
     PLAYBACK = 0
     CAPTURE = 1
@@ -65,6 +89,45 @@ MAX_UNISON_DETUNE_CENTS = 100.0
 # slots, and notes that sound at once besides the single-note API's
 MAX_INSTRUMENTS = 16
 MAX_NOTES = 32
+
+# SYNTHWAY_MAX_GLIDES and SYNTHWAY_MAX_GLIDE_SECONDS of synthway-core: glides a note holds waiting, longest glide
+MAX_GLIDES = 64
+MAX_GLIDE_SECONDS = 600.0
+
+# SYNTHWAY_MAX_AUTOMATION_SECONDS of synthway-core: longest automation ramp
+MAX_AUTOMATION_SECONDS = 600.0
+
+
+def automation_range(param: AutomationParamEnum) -> Tuple[float, float]:
+    """Values a ramp of param accepts, as synthway_engine_automate checks them"""
+    if param == AutomationParamEnum.PAN:
+        return -1.0, 1.0
+    if param in (AutomationParamEnum.LOW_CUTOFF, AutomationParamEnum.HIGH_CUTOFF):
+        return 20.0, 20000.0
+    if param == AutomationParamEnum.DETUNE:
+        return 0.0, MAX_UNISON_DETUNE_CENTS
+    return 0.0, 1.0
+
+
+def check_automation(param: int, side: int, value: float, seconds: float) -> None:
+    """Raises ValueError for a ramp the core would refuse"""
+    param, side = AutomationParamEnum(param), SideEnum(side)
+    low, high = automation_range(param)
+    if not low <= value <= high:  # also false for NaN
+        raise ValueError(f"Invalid value {value:g} for {param.name.lower()} ({low:g} to {high:g})")
+    if param in (AutomationParamEnum.PAN, AutomationParamEnum.DETUNE) and side != SideEnum.BOTH:
+        raise ValueError(f"{param.name.lower()} takes both sides at once, not one")
+    if not 0.0 <= seconds <= MAX_AUTOMATION_SECONDS:
+        raise ValueError(f"Invalid ramp length {seconds:g} s (0 to {MAX_AUTOMATION_SECONDS:g})")
+
+
+# A score rendered to a file (/api/render/score): longest score and most notes and automation ramps accepted,
+# longest silence before or after it, longest time its sound is let ring after it before being faded out
+MAX_SCORE_SECONDS = 3600.0
+MAX_SCORE_NOTES = 100000
+MAX_SCORE_RAMPS = 100000
+MAX_SCORE_SILENCE_SECONDS = 10.0
+MAX_SCORE_TAIL_SECONDS = 60.0
 
 # SYNTHWAY_ANALYSIS_SPECTRUM_POINTS of synthway-core. The bridge checks the size
 # of the whole analysis structure (synthway_analysis_get_size) when it loads the library.
@@ -171,6 +234,74 @@ if HAS_PYDANTIC:
         def _band_in_order(self):
             if not self.low_cutoff < self.cutoff:
                 raise ValueError(f"The band's lower bound ({self.low_cutoff:g} Hz) must be under its upper one ({self.cutoff:g} Hz)")
+            return self
+
+    class ScoreGlide(BaseModel):
+        """A glide of a score note: to frequency in seconds, after the glides before it (synthway_engine_note_glide)"""
+        frequency: float = Field(gt=0.0, le=24000.0)
+        seconds: float = Field(ge=0.0, le=MAX_GLIDE_SECONDS)
+
+    class ScoreNote(BaseModel):
+        """A note of a score, in seconds from its start: struck at start on instrument slot, released at end"""
+        start: float = Field(ge=0.0, le=MAX_SCORE_SECONDS)
+        end: float = Field(ge=0.0, le=MAX_SCORE_SECONDS)
+        slot: int = Field(ge=1, lt=MAX_INSTRUMENTS, description="Instrument slot, 1 and up (0 is the single note's)")
+        frequency: float = Field(gt=0.0, le=24000.0)
+        volume: float = Field(ge=0.0, le=1.0)
+        glides: List[ScoreGlide] = Field(default_factory=list, max_length=MAX_GLIDES)
+
+        @model_validator(mode="after")
+        def _ends_after_start(self):
+            if self.end < self.start:
+                raise ValueError(f"A note ends ({self.end:g} s) before it starts ({self.start:g} s)")
+            return self
+
+    class ScoreRamp(BaseModel):
+        """An automation ramp of a score: at seconds from its start, setting param of instrument slot goes, on
+        side, from where it is to value in seconds (synthway_engine_automate)"""
+        at: float = Field(ge=0.0, le=MAX_SCORE_SECONDS)
+        slot: int = Field(ge=1, lt=MAX_INSTRUMENTS)
+        param: AutomationParamEnum
+        side: SideEnum = SideEnum.BOTH
+        value: float
+        seconds: float = Field(default=0.0, ge=0.0, le=MAX_AUTOMATION_SECONDS)
+
+        @model_validator(mode="after")
+        def _accepted_by_the_core(self):
+            check_automation(self.param, self.side, self.value, self.seconds)
+            return self
+
+    class ScoreRenderRequest(BaseModel):
+        """A score to render into an audio file, as the Composer plays it"""
+        format: AudioFileFormatEnum = Field(default=AudioFileFormatEnum.WAV, description="0: WAV 16 bits, 1: Ogg Vorbis")
+        sample_rate: int = Field(default=48000, ge=8000, le=192000)
+        channels: int = Field(default=2, ge=1, le=2)
+        quality: float = Field(default=0.5, ge=-0.1, le=1.0, description="Ogg Vorbis quality (0.5: about 160 kbit/s)")
+        duration: float = Field(gt=0.0, le=MAX_SCORE_SECONDS, description="Seconds of the score: every note is released at its end")
+        lead_in: float = Field(default=1.0, ge=0.0, le=MAX_SCORE_SILENCE_SECONDS, description="Seconds of silence before the score")
+        tail_margin: float = Field(
+            default=1.0, ge=0.0, le=MAX_SCORE_SILENCE_SECONDS,
+            description="Seconds after the sound has died out, faded to silence",
+        )
+        max_tail: float = Field(
+            default=30.0, ge=0.0, le=MAX_SCORE_TAIL_SECONDS,
+            description="Longest the sound rings after the score before it is faded out",
+        )
+        instruments: Dict[int, Instrument] = Field(default_factory=dict, description="Sound of each slot the notes use")
+        notes: List[ScoreNote] = Field(default_factory=list, max_length=MAX_SCORE_NOTES)
+        automation: List[ScoreRamp] = Field(
+            default_factory=list, max_length=MAX_SCORE_RAMPS,
+            description="Ramps of the instruments' settings, each at its time (the ramps of a setting replace each other)",
+        )
+
+        @model_validator(mode="after")
+        def _slots_known(self):
+            for slot in self.instruments:
+                if not 1 <= slot < MAX_INSTRUMENTS:
+                    raise ValueError(f"Invalid instrument slot {slot} (1 to {MAX_INSTRUMENTS - 1})")
+            missing = sorted({note.slot for note in self.notes} - set(self.instruments))
+            if missing:
+                raise ValueError(f"Notes on instrument slots without an instrument: {missing}")
             return self
 
     class EngineStatusResponse(BaseModel):
@@ -350,6 +481,43 @@ else:
         resonance: float = 0.0
         reverb: float = 0.0
         unison: Unison = field(default_factory=Unison)
+
+    @dataclass
+    class ScoreGlide:
+        frequency: float = 440.0
+        seconds: float = 0.0
+
+    @dataclass
+    class ScoreNote:
+        start: float = 0.0
+        end: float = 0.0
+        slot: int = 1
+        frequency: float = 440.0
+        volume: float = 0.3
+        glides: List[ScoreGlide] = field(default_factory=list)
+
+    @dataclass
+    class ScoreRamp:
+        at: float = 0.0
+        slot: int = 1
+        param: AutomationParamEnum = AutomationParamEnum.GAIN
+        side: SideEnum = SideEnum.BOTH
+        value: float = 1.0
+        seconds: float = 0.0
+
+    @dataclass
+    class ScoreRenderRequest:
+        duration: float = 1.0
+        format: AudioFileFormatEnum = AudioFileFormatEnum.WAV
+        sample_rate: int = 48000
+        channels: int = 2
+        quality: float = 0.5
+        lead_in: float = 1.0
+        tail_margin: float = 1.0
+        max_tail: float = 30.0
+        instruments: Dict[int, Instrument] = field(default_factory=dict)
+        notes: List[ScoreNote] = field(default_factory=list)
+        automation: List[ScoreRamp] = field(default_factory=list)
 
     @dataclass
     class EngineStatusResponse:

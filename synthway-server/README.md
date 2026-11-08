@@ -89,6 +89,9 @@ pip install -r requirements.txt
   | `SYNTHWAY_CORE_LIB` | Chemin de `synthway.dll` / `libsynthway.so` | Recherché dans `synthway-core/build` |
   | `SYNTHWAY_DEMUCS` | `0` désactive le Decomposer (la séparation par Demucs) | Activé s'il est installé |
   | `SYNTHWAY_DEMUCS_DIR` | Dossier `synthway-demucs` | À côté de `synthway-server` |
+  | `SYNTHWAY_UI_DIR` | Interface construite, servie sur `/` | `synthway-ui/dist`, s'il existe |
+
+- **L'interface servie par le serveur** : quand `synthway-ui/dist` existe (`npm run build`), le serveur la sert sur `/`, après toutes ses routes : [http://127.0.0.1:18741](http://127.0.0.1:18741) ouvre Synthway sans Vite. La page appelle alors le serveur qui la sert. C'est ainsi que tournent le lanceur `synthway.py` et le zip Windows (voir le [guide de développement](../docs/developpement.md#le-lanceur--tout-en-une-fois)). Pour travailler sur l'interface, `npm run dev` reste le plus pratique (rechargement à chaud).
 
 - **Mode test autonome (sans dépendances web)** :
   ```bash
@@ -113,6 +116,26 @@ Aucun test ne produit de son :
 
 Le pont expose aussi ce rendu : `SynthwayCore.render()` (échantillons en mémoire) et `SynthwayCore.render_to_wav()` (fichier WAV), sur un moteur séparé du moteur temps réel.
 
+### Rendu d'une partition (`/api/render/score`)
+
+C'est l'export audio du Composer. Le corps (`ScoreRenderRequest`) décrit la partition telle que la lecture la joue :
+
+```json
+{
+  "format": 1, "sample_rate": 48000, "channels": 2, "quality": 0.6,
+  "duration": 9.8, "lead_in": 1.0, "tail_margin": 1.0,
+  "instruments": {"1": {"timbre": {...}, "low_cutoff": 20, "cutoff": 6500, "resonance": 0.35}},
+  "notes": [{"start": 0.0, "end": 0.31, "slot": 1, "frequency": 440.0, "volume": 0.3,
+             "glides": [{"frequency": 493.9, "seconds": 0.15}]}]
+}
+```
+
+- `format` : 0 WAV 16 bits, 1 Ogg Vorbis (`quality` de -0,1 à 1). `instruments` : le son de chaque emplacement (1 à 15) qu'utilisent les notes, comme `set_instrument` ; une note sur un emplacement sans instrument est refusée (422).
+- `automation` (facultatif) : les rampes des réglages des emplacements, chacune lancée à sa trame exacte, avant les notes qui partent à la même trame : `{"at": 0.5, "slot": 1, "param": 3, "side": 0, "value": 800.0, "seconds": 2.0}` (`param` et `side` comme pour le message `automate` du WebSocket, bornes du core : une rampe que le core refuserait est refusée, 422). Les rampes qui partent après `duration` sont laissées de côté ; après la partition, les réglages restent où ils sont pendant que le son s'éteint.
+- Les notes, en secondes depuis le début, sont lancées à leur trame exacte (`note_on` puis leurs glissés) et relâchées à `end`. À `duration`, tout ce qui est encore tenu est relâché, comme à la fin de la lecture.
+- Le fichier contient `lead_in` secondes de silence, la partition, puis le son jusqu'à ce qu'il se soit éteint (plus aucune note, niveau sous -80 dBFS, mesuré par blocs de 50 ms), au plus `max_tail` secondes (30 par défaut, puis fondu de 0,5 s), et enfin `tail_margin` secondes qui finissent en fondu jusqu'au silence exact.
+- L'en-tête `X-Synthway-Render` (exposé au navigateur par la règle CORS) donne en JSON ce qui a été écrit : `seconds`, `peak` (crête avant écrêtage, 1 = pleine échelle), `clipped_samples`, `tail` (durée du son après la partition) et `cut` (vrai si le son a été coupé en fondu).
+
 ---
 
 ## 🔈 Comportement du moteur
@@ -122,6 +145,7 @@ Le pont expose aussi ce rendu : `SynthwayCore.render()` (échantillons en mémoi
 - **La note unique :** un `note_on` sans `id` joue la note unique du moteur, sur l'instrument 0 (celui de `set_param` et de `/api/synth/*`), et `note_off` sans `id` coupe le son sans arrêter le moteur.
 - **Polyphonie :** un `note_on` avec un `id` joue une note de plus, avec ses propres enveloppes, sur l'un des 16 instruments du moteur (`instrument`, 0 par défaut), réglés par `set_instrument` : jusqu'à 32 notes à la fois, en plus de la note unique. `note_off` avec le même `id` la relâche, `all_notes_off` les relâche toutes. Le serveur garde les instruments 1 à 15 et les applique à chaque démarrage du moteur, comme l'instrument 0. Le clavier de l'UI et la lecture du Composer jouent ainsi : chaque note a sa vraie attaque, même pendant qu'une autre est tenue.
 - **Glissés :** `note_glide` fait glisser une note (avec `id`) vers une fréquence en un temps donné, en ligne droite en demi-tons (`synthway_engine_note_glide`). Les glissés d'une note s'enchaînent ; un glissé vers la même fréquence la tient. Le core les suit à l'échantillon près : passés dans le `note_on` (`"glides"`), ils partent avec la note.
+- **Automation :** `automate` mène des réglages d'un emplacement (volume, panoramique, filtre, résonance, réverbération, désaccord de l'unisson), d'un côté ou des deux, vers une valeur en un temps donné (`synthway_engine_automate`) ; `clear_automation` les rend à l'instrument. Ignorés tant que le moteur est arrêté : une rampe appartient à la lecture qui l'envoie. Le Composer les envoie pendant la lecture et les efface à la pause.
 - **Enveloppe :** `note_on` lance l'attaque et `note_off` le relâchement de l'enveloppe ADSR. Un `note_on` sans `id` sur la note unique déjà ouverte change la hauteur sans relancer l'attaque (legato) ; avec un `id` qui sonne encore, la note repart de son niveau courant avec une nouvelle attaque. Le serveur garde l'enveloppe et l'applique à chaque démarrage du moteur : on peut la régler avant de démarrer l'audio.
 - **Analyzer :** deux analyseurs du core (`synthway_analyzer_t`), indépendants du moteur et créés au premier usage : l'un pour le micro, l'autre pour le fichier chargé, pour qu'un long décodage ne bloque pas l'analyse en direct. Le micro est ouvert par le core, seulement quand une page envoie `start` sur `/ws/analyzer`, et fermé à `stop` ou quand la page se déconnecte. Une seule page l'écoute à la fois. Rien n'est joué. Le micro n'est enregistré que si la page envoie `record` : le core garde l'enregistrement en mémoire, sans limite de durée, et ses échantillons ne passent par le serveur que lorsqu'on le télécharge en WAV. Le serveur l'alimente en appelant l'analyse en direct toutes les 50 ms. Sinon, seuls les résultats de l'analyse sortent du core. Un fichier importé arrive entier dans le corps de la requête, et le core le décode en mémoire (WAV, FLAC, MP3 ; 256 Mo et 10 minutes au plus).
 - **Timbre (synthèse additive) :** un timbre remplace la forme d'onde et l'enveloppe par une liste de partiels, chacun avec son rapport à la note jouée, son amplitude, sa forme d'onde et son enveloppe. Comme l'enveloppe, le serveur le garde et l'applique à chaque démarrage du moteur. 64 partiels au plus (`max_partials` dans `/api/engine/status`, `MAX_PARTIALS` dans `models.py`, vérifié contre le core au chargement de la bibliothèque). Le serveur ne prévient ni des partiels au-delà de la moitié de la fréquence d'échantillonnage ni de la saturation : l'UI s'en charge.
@@ -148,6 +172,7 @@ Le pont expose aussi ce rendu : `SynthwayCore.render()` (échantillons en mémoi
 | `POST` | `/api/synth/envelope` | Règle l'enveloppe `{"attack", "decay", "sustain", "release"}` : durées de 0 à 10 s, maintien de 0 à 1 (sinon 422) |
 | `POST` | `/api/synth/timbre` | Fait jouer les notes par des partiels : `{"partials": [{"ratio", "amplitude", "waveform", "envelope"}, ...]}`, rapport dans ]0, 1000], amplitude de 0 à 1, 64 partiels au plus (sinon 422). L'enveloppe d'un partiel accepte en plus `curve` : 0 (par défaut) linéaire, 1 exponentielle, où `decay` et `release` sont les temps pour perdre 60 dB |
 | `DELETE` | `/api/synth/timbre` | Revient à l'oscillateur unique (forme d'onde et enveloppe) |
+| `POST` | `/api/render/score` | Rend une partition dans un fichier audio, hors ligne (rien n'est joué), sur un moteur à part : voir « Rendu d'une partition » plus bas. Répond le fichier (`audio/wav` ou `audio/ogg`) |
 | `POST` | `/api/analyzer/clip?name=…` | Charge un fichier audio, envoyé tel quel dans le corps de la requête, à la place du précédent. Renvoie sa durée, sa fréquence d'échantillonnage, ses crêtes globales (`overview`) et gauche/droite (`overview_left`, `overview_right` : 1000 chacune) et la note tout du long (`track` : fréquence, netteté et niveau toutes les 20 ms, 1000 points au plus). 400 si vide, 413 si trop gros ou trop long, 415 si ce n'est ni du WAV, ni du FLAC, ni du MP3 |
 | `GET` | `/api/analyzer/clip` | Le dernier fichier chargé, comme ci-dessus, ou `null` |
 | `GET` | `/api/analyzer/clip.wav` | Le fichier chargé décodé en WAV pour le navigateur ; accepte les requêtes HTTP `Range` pour permettre la lecture à une position choisie |
@@ -210,6 +235,12 @@ Idéal pour l'interface graphique afin de limiter l'overhead HTTP :
   { "type": "note_on", "id": 7, "instrument": 1, "frequency": 220.0, "volume": 0.3,
     "glides": [ { "frequency": 440.0, "seconds": 1.0 }, { "frequency": 440.0, "seconds": 0.5 } ] }
   { "type": "note_glide", "id": 7, "frequency": 330.0, "seconds": 0.25 }
+  ```
+- **Automation** : des rampes, appliquées dans l'ordre (une rampe remplace celle en cours du même réglage et du même côté ; `side` absent : les deux côtés ; `seconds` absent : un saut), puis l'effacement d'un emplacement, ou de tous sans `slot`. `param` : 0 gain (0 à 1), 1 panoramique (-1 à 1, deux côtés), 2 borne basse et 3 borne haute du filtre (20 à 20000 Hz), 4 résonance, 5 réverbération (0 à 1), 6 désaccord (0 à 100 cents, deux côtés). `side` : 0 les deux, 1 gauche, 2 droite. Une rampe invalide répond `{"error"}` ; celles d'avant dans le message sont appliquées.
+  ```json
+  { "type": "automate", "ramps": [ { "slot": 1, "param": 0, "value": 1.0, "seconds": 0 },
+                                   { "slot": 1, "param": 3, "side": 1, "value": 800.0, "seconds": 2.0 } ] }
+  { "type": "clear_automation", "slot": 1 }
   ```
 - **Retour du serveur** :
   À chaque modification, le serveur renvoie l'état synchronisé du moteur audio à tous les clients connectés.

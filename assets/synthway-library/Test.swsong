@@ -1,0 +1,859 @@
+{
+  "format": "synthway-composition",
+  "version": 1,
+  "savedAt": "2026-11-08T09:39:05.219Z",
+  "composition": {
+    "bpm": 98,
+    "beatsPerBar": 4,
+    "bars": 16,
+    "tracks": [
+      {
+        "name": "Shadow Supersaw",
+        "instrumentId": "e4f68fab-5c52-4c0d-8d3b-81905a95817b",
+        "instrumentName": "Chasing Shadows ext v2.1.2.2.1.1.2.1 · other · D4",
+        "hue": "blue",
+        "basePitch": 36,
+        "muted": false,
+        "hidden": false,
+        "notes": [
+          {
+            "pitch": 60,
+            "start": 0,
+            "length": 12,
+            "bend": [
+              {
+                "at": 4,
+                "semitones": -7
+              },
+              {
+                "at": 8,
+                "semitones": -7
+              },
+              {
+                "at": 8.25,
+                "semitones": -1
+              }
+            ]
+          },
+          {
+            "pitch": 12,
+            "start": 4,
+            "length": 8
+          },
+          {
+            "pitch": 24,
+            "start": 14,
+            "length": 2
+          },
+          {
+            "pitch": 48,
+            "start": 12,
+            "length": 1
+          },
+          {
+            "pitch": 36,
+            "start": 16,
+            "length": 8
+          },
+          {
+            "pitch": 38,
+            "start": 22,
+            "length": 8,
+            "bend": [
+              {
+                "at": 4,
+                "semitones": 7
+              },
+              {
+                "at": 8,
+                "semitones": 0
+              }
+            ]
+          },
+          {
+            "pitch": 48,
+            "start": 32,
+            "length": 2
+          },
+          {
+            "pitch": 50,
+            "start": 34,
+            "length": 2
+          },
+          {
+            "pitch": 49,
+            "start": 36,
+            "length": 2
+          },
+          {
+            "pitch": 50,
+            "start": 38,
+            "length": 2
+          },
+          {
+            "pitch": 46,
+            "start": 40,
+            "length": 2
+          },
+          {
+            "pitch": 49,
+            "start": 42,
+            "length": 2
+          },
+          {
+            "pitch": 48,
+            "start": 44,
+            "length": 2
+          },
+          {
+            "pitch": 48,
+            "start": 46,
+            "length": 2
+          },
+          {
+            "pitch": 49,
+            "start": 50,
+            "length": 2
+          },
+          {
+            "pitch": 50,
+            "start": 52,
+            "length": 2
+          },
+          {
+            "pitch": 49,
+            "start": 54,
+            "length": 2
+          },
+          {
+            "pitch": 50,
+            "start": 56,
+            "length": 2
+          },
+          {
+            "pitch": 46,
+            "start": 58,
+            "length": 2
+          },
+          {
+            "pitch": 49,
+            "start": 60,
+            "length": 2
+          },
+          {
+            "pitch": 48,
+            "start": 62,
+            "length": 2
+          },
+          {
+            "pitch": 48,
+            "start": 64,
+            "length": 2
+          },
+          {
+            "pitch": 48,
+            "start": 66,
+            "length": 2
+          },
+          {
+            "pitch": 48,
+            "start": 48,
+            "length": 2
+          }
+        ]
+      },
+      {
+        "name": "Mélodie",
+        "instrumentId": "neon-lead",
+        "instrumentName": "Neon Lead",
+        "hue": "pink",
+        "basePitch": 67,
+        "muted": false,
+        "hidden": false,
+        "notes": [
+          {
+            "pitch": 72,
+            "start": 2,
+            "length": 2
+          },
+          {
+            "pitch": 76,
+            "start": 4,
+            "length": 2
+          },
+          {
+            "pitch": 77,
+            "start": 8,
+            "length": 4
+          },
+          {
+            "pitch": 76,
+            "start": 12,
+            "length": 2
+          },
+          {
+            "pitch": 72,
+            "start": 14,
+            "length": 2
+          },
+          {
+            "pitch": 74,
+            "start": 16,
+            "length": 2
+          },
+          {
+            "pitch": 77,
+            "start": 18,
+            "length": 2
+          },
+          {
+            "pitch": 81,
+            "start": 20,
+            "length": 4
+          },
+          {
+            "pitch": 79,
+            "start": 24,
+            "length": 6
+          },
+          {
+            "pitch": 67,
+            "start": 0,
+            "length": 1
+          },
+          {
+            "pitch": 67,
+            "start": 1,
+            "length": 2
+          },
+          {
+            "pitch": 62,
+            "start": 2,
+            "length": 2
+          },
+          {
+            "pitch": 60,
+            "start": 2,
+            "length": 2
+          },
+          {
+            "pitch": 60,
+            "start": 4,
+            "length": 2
+          },
+          {
+            "pitch": 69,
+            "start": 4,
+            "length": 2
+          },
+          {
+            "pitch": 67,
+            "start": 7,
+            "length": 2
+          }
+        ]
+      },
+      {
+        "name": "Nappe",
+        "instrumentId": "haze-pad",
+        "instrumentName": "Haze Pad",
+        "hue": "violet",
+        "basePitch": 60,
+        "muted": true,
+        "hidden": false,
+        "notes": [
+          {
+            "pitch": 64,
+            "start": 0,
+            "length": 2
+          },
+          {
+            "pitch": 70,
+            "start": 0,
+            "length": 2
+          },
+          {
+            "pitch": 66,
+            "start": 24,
+            "length": 2
+          },
+          {
+            "pitch": 63,
+            "start": 24,
+            "length": 2
+          },
+          {
+            "pitch": 59,
+            "start": 19,
+            "length": 2
+          },
+          {
+            "pitch": 59,
+            "start": 39,
+            "length": 2
+          },
+          {
+            "pitch": 71,
+            "start": 38,
+            "length": 2
+          }
+        ]
+      },
+      {
+        "name": "Basse",
+        "instrumentId": "rain-city-bass",
+        "instrumentName": "Rain City Bass",
+        "hue": "blue",
+        "basePitch": 36,
+        "muted": true,
+        "hidden": false,
+        "notes": [
+          {
+            "pitch": 45,
+            "start": 0,
+            "length": 4
+          },
+          {
+            "pitch": 45,
+            "start": 6,
+            "length": 2
+          },
+          {
+            "pitch": 41,
+            "start": 8,
+            "length": 4
+          },
+          {
+            "pitch": 41,
+            "start": 14,
+            "length": 2
+          },
+          {
+            "pitch": 43,
+            "start": 16,
+            "length": 4
+          },
+          {
+            "pitch": 43,
+            "start": 22,
+            "length": 2
+          },
+          {
+            "pitch": 40,
+            "start": 24,
+            "length": 8
+          }
+        ]
+      }
+    ]
+  },
+  "instruments": [
+    {
+      "id": "e4f68fab-5c52-4c0d-8d3b-81905a95817b",
+      "name": "Chasing Shadows ext v2.1.2.2.1.1.2.1 · other · D4",
+      "description": "Créé dans l’Analyzer depuis Chasing Shadows ext v2.1.2.2.1.1.2.1 · other : la zone de 95.57 s à 96.20 s : médiane de ses moments, par fenêtres de 170 ms, rapports à D4, harmoniques seulement. 29 partiels mesurés, sinusoïdes, une enveloppe mesurée par partiel (exponentielle).",
+      "category": "lead",
+      "hue": "green",
+      "volume": 0.27,
+      "filter": {
+        "lowCutoff": 20,
+        "cutoff": 20000,
+        "resonance": 0
+      },
+      "octave": 4,
+      "reverb": 0,
+      "partials": [
+        {
+          "id": "p1",
+          "ratio": 1.0053,
+          "amplitude": 0.291,
+          "waveform": 0,
+          "envelope": {
+            "attack": 0.3648,
+            "decay": 0.3785,
+            "sustain": 0,
+            "release": 0.3,
+            "curve": 1
+          },
+          "hue": "pink"
+        },
+        {
+          "id": "p2",
+          "ratio": 2.0059,
+          "amplitude": 0.262,
+          "waveform": 0,
+          "envelope": {
+            "attack": 0.4348,
+            "decay": 0.1767,
+            "sustain": 0,
+            "release": 0.1767,
+            "curve": 1
+          },
+          "hue": "magenta"
+        },
+        {
+          "id": "p3",
+          "ratio": 2.9997,
+          "amplitude": 1,
+          "waveform": 0,
+          "envelope": {
+            "attack": 0.2598,
+            "decay": 0.9779,
+            "sustain": 0.6263,
+            "release": 0.3,
+            "curve": 1
+          },
+          "hue": "violet"
+        },
+        {
+          "id": "p4",
+          "ratio": 3.9958,
+          "amplitude": 0.925,
+          "waveform": 0,
+          "envelope": {
+            "attack": 0.1848,
+            "decay": 1.271,
+            "sustain": 0,
+            "release": 0.3,
+            "curve": 1
+          },
+          "hue": "blue"
+        },
+        {
+          "id": "p5",
+          "ratio": 4.9969,
+          "amplitude": 0.075,
+          "waveform": 0,
+          "envelope": {
+            "attack": 0.0798,
+            "decay": 0.1494,
+            "sustain": 0.3539,
+            "release": 0.3,
+            "curve": 1
+          },
+          "hue": "cyan"
+        },
+        {
+          "id": "p6",
+          "ratio": 5.9989,
+          "amplitude": 0.571,
+          "waveform": 0,
+          "envelope": {
+            "attack": 0.0598,
+            "decay": 0.6308,
+            "sustain": 0,
+            "release": 0.3,
+            "curve": 1
+          },
+          "hue": "green"
+        },
+        {
+          "id": "p7",
+          "ratio": 8.0158,
+          "amplitude": 0.533,
+          "waveform": 0,
+          "envelope": {
+            "attack": 0.1848,
+            "decay": 0.1786,
+            "sustain": 0,
+            "release": 0.1786,
+            "curve": 1
+          },
+          "hue": "yellow"
+        },
+        {
+          "id": "p8",
+          "ratio": 9.0025,
+          "amplitude": 0.448,
+          "waveform": 0,
+          "envelope": {
+            "attack": 0.0598,
+            "decay": 0.6942,
+            "sustain": 0,
+            "release": 0.3,
+            "curve": 1
+          },
+          "hue": "orange"
+        },
+        {
+          "id": "p9",
+          "ratio": 12.0205,
+          "amplitude": 0.567,
+          "waveform": 0,
+          "envelope": {
+            "attack": 0.2098,
+            "decay": 0.3356,
+            "sustain": 0.4391,
+            "release": 0.3,
+            "curve": 1
+          },
+          "hue": "red"
+        },
+        {
+          "id": "p10",
+          "ratio": 12.9055,
+          "amplitude": 0.125,
+          "waveform": 0,
+          "envelope": {
+            "attack": 0.1598,
+            "decay": 0.1832,
+            "sustain": 0,
+            "release": 0.1832,
+            "curve": 1
+          },
+          "hue": "white"
+        },
+        {
+          "id": "p11",
+          "ratio": 15.0223,
+          "amplitude": 0.198,
+          "waveform": 0,
+          "envelope": {
+            "attack": 0.0198,
+            "decay": 0.5848,
+            "sustain": 0,
+            "release": 0.3,
+            "curve": 1
+          },
+          "hue": "pink"
+        },
+        {
+          "id": "p12",
+          "ratio": 16.0503,
+          "amplitude": 0.192,
+          "waveform": 0,
+          "envelope": {
+            "attack": 0.2098,
+            "decay": 0,
+            "sustain": 1,
+            "release": 0.3,
+            "curve": 1
+          },
+          "hue": "magenta"
+        },
+        {
+          "id": "p13",
+          "ratio": 18.0191,
+          "amplitude": 0.183,
+          "waveform": 0,
+          "envelope": {
+            "attack": 0.2748,
+            "decay": 0.1096,
+            "sustain": 0.0353,
+            "release": 0.3,
+            "curve": 1
+          },
+          "hue": "violet"
+        },
+        {
+          "id": "p14",
+          "ratio": 20.0443,
+          "amplitude": 0.133,
+          "waveform": 0,
+          "envelope": {
+            "attack": 0.2648,
+            "decay": 0.2971,
+            "sustain": 0,
+            "release": 0.2971,
+            "curve": 1
+          },
+          "hue": "blue"
+        },
+        {
+          "id": "p15",
+          "ratio": 21.0196,
+          "amplitude": 0.129,
+          "waveform": 0,
+          "envelope": {
+            "attack": 0.0698,
+            "decay": 0.0631,
+            "sustain": 0.5885,
+            "release": 0.3,
+            "curve": 1
+          },
+          "hue": "cyan"
+        },
+        {
+          "id": "p16",
+          "ratio": 24.0428,
+          "amplitude": 0.092,
+          "waveform": 0,
+          "envelope": {
+            "attack": 0.0948,
+            "decay": 0.1144,
+            "sustain": 0,
+            "release": 0.1144,
+            "curve": 1
+          },
+          "hue": "green"
+        },
+        {
+          "id": "p17",
+          "ratio": 27.0329,
+          "amplitude": 0.065,
+          "waveform": 0,
+          "envelope": {
+            "attack": 0.0448,
+            "decay": 0.622,
+            "sustain": 0,
+            "release": 0.3,
+            "curve": 1
+          },
+          "hue": "yellow"
+        },
+        {
+          "id": "p18",
+          "ratio": 28.079,
+          "amplitude": 0.045,
+          "waveform": 0,
+          "envelope": {
+            "attack": 0.0698,
+            "decay": 0,
+            "sustain": 1,
+            "release": 0.3,
+            "curve": 1
+          },
+          "hue": "orange"
+        },
+        {
+          "id": "p19",
+          "ratio": 30.0527,
+          "amplitude": 0.041,
+          "waveform": 0,
+          "envelope": {
+            "attack": 0.0398,
+            "decay": 0.2974,
+            "sustain": 0,
+            "release": 0.2974,
+            "curve": 1
+          },
+          "hue": "red"
+        },
+        {
+          "id": "p20",
+          "ratio": 32.0962,
+          "amplitude": 0.052,
+          "waveform": 0,
+          "envelope": {
+            "attack": 0.0298,
+            "decay": 0.0714,
+            "sustain": 0,
+            "release": 0.0714,
+            "curve": 1
+          },
+          "hue": "white"
+        },
+        {
+          "id": "p21",
+          "ratio": 33.0445,
+          "amplitude": 0.041,
+          "waveform": 0,
+          "envelope": {
+            "attack": 0.0398,
+            "decay": 0.4095,
+            "sustain": 0.2967,
+            "release": 0.3,
+            "curve": 1
+          },
+          "hue": "pink"
+        },
+        {
+          "id": "p22",
+          "ratio": 36.0985,
+          "amplitude": 0.059,
+          "waveform": 0,
+          "envelope": {
+            "attack": 0.0498,
+            "decay": 0.1582,
+            "sustain": 0,
+            "release": 0.1582,
+            "curve": 1
+          },
+          "hue": "magenta"
+        },
+        {
+          "id": "p23",
+          "ratio": 39.0716,
+          "amplitude": 0.03,
+          "waveform": 0,
+          "envelope": {
+            "attack": 0.0198,
+            "decay": 0.0973,
+            "sustain": 0,
+            "release": 0.0973,
+            "curve": 1
+          },
+          "hue": "violet"
+        },
+        {
+          "id": "p24",
+          "ratio": 40.0923,
+          "amplitude": 0.016,
+          "waveform": 0,
+          "envelope": {
+            "attack": 0.0748,
+            "decay": 0.0764,
+            "sustain": 0,
+            "release": 0.0764,
+            "curve": 1
+          },
+          "hue": "blue"
+        },
+        {
+          "id": "p25",
+          "ratio": 42.097,
+          "amplitude": 0.025,
+          "waveform": 0,
+          "envelope": {
+            "attack": 0.2598,
+            "decay": 0.1065,
+            "sustain": 0,
+            "release": 0.1065,
+            "curve": 1
+          },
+          "hue": "cyan"
+        },
+        {
+          "id": "p26",
+          "ratio": 44.1414,
+          "amplitude": 0.02,
+          "waveform": 0,
+          "envelope": {
+            "attack": 0.0448,
+            "decay": 0.0679,
+            "sustain": 0,
+            "release": 0.0679,
+            "curve": 1
+          },
+          "hue": "green"
+        },
+        {
+          "id": "p27",
+          "ratio": 45.0571,
+          "amplitude": 0.024,
+          "waveform": 0,
+          "envelope": {
+            "attack": 0.1048,
+            "decay": 0.045,
+            "sustain": 0,
+            "release": 0.045,
+            "curve": 1
+          },
+          "hue": "yellow"
+        },
+        {
+          "id": "p28",
+          "ratio": 48.0629,
+          "amplitude": 0.026,
+          "waveform": 0,
+          "envelope": {
+            "attack": 0.0748,
+            "decay": 0.0581,
+            "sustain": 0,
+            "release": 0.0581,
+            "curve": 1
+          },
+          "hue": "orange"
+        },
+        {
+          "id": "p29",
+          "ratio": 52.0775,
+          "amplitude": 0.013,
+          "waveform": 0,
+          "envelope": {
+            "attack": 0.0248,
+            "decay": 0.0727,
+            "sustain": 0,
+            "release": 0.0727,
+            "curve": 1
+          },
+          "hue": "red"
+        }
+      ]
+    },
+    {
+      "id": "neon-lead",
+      "name": "Neon Lead",
+      "description": "Dent de scie tranchante, taillée pour les mélodies.",
+      "category": "lead",
+      "hue": "pink",
+      "volume": 0.3,
+      "filter": {
+        "cutoff": 6500,
+        "resonance": 0.35,
+        "lowCutoff": 20
+      },
+      "partials": [
+        {
+          "id": "p1",
+          "ratio": 1,
+          "amplitude": 1,
+          "waveform": 3,
+          "envelope": {
+            "attack": 0.01,
+            "decay": 0.25,
+            "sustain": 0.7,
+            "release": 0.35
+          },
+          "hue": "white"
+        }
+      ]
+    },
+    {
+      "id": "haze-pad",
+      "name": "Haze Pad",
+      "description": "Nappe triangulaire lente, comme une brume au néon.",
+      "category": "pad",
+      "hue": "violet",
+      "volume": 0.25,
+      "filter": {
+        "cutoff": 3200,
+        "resonance": 0.15,
+        "lowCutoff": 20
+      },
+      "partials": [
+        {
+          "id": "p1",
+          "ratio": 1,
+          "amplitude": 1,
+          "waveform": 2,
+          "envelope": {
+            "attack": 0.9,
+            "decay": 0.6,
+            "sustain": 0.8,
+            "release": 1.6
+          },
+          "hue": "white"
+        }
+      ]
+    },
+    {
+      "id": "rain-city-bass",
+      "name": "Rain City Bass",
+      "description": "Carré profond et sombre, pour poser le groove.",
+      "category": "bass",
+      "hue": "blue",
+      "volume": 0.35,
+      "filter": {
+        "cutoff": 900,
+        "resonance": 0.45,
+        "lowCutoff": 20
+      },
+      "partials": [
+        {
+          "id": "p1",
+          "ratio": 1,
+          "amplitude": 1,
+          "waveform": 1,
+          "envelope": {
+            "attack": 0.005,
+            "decay": 0.3,
+            "sustain": 0.6,
+            "release": 0.2
+          },
+          "hue": "white"
+        }
+      ]
+    }
+  ]
+}

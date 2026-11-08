@@ -210,7 +210,7 @@ function AboutCard() {
           <div className={styles.toggles}>
             <dl className={styles.facts}>
               <dt>Interface</dt>
-              <dd>0.1.0</dd>
+              <dd>{__SYNTHWAY_VERSION__}</dd>
               <dt>Core</dt>
               <dd>{coreVersion ?? 'non connecté'}</dd>
             </dl>

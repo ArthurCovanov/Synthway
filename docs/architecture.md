@@ -1,6 +1,6 @@
 # Fonctionnement de Synthway
 
-Ce document explique comment l'UI, le serveur et le core communiquent : qui stocke quoi, ce qui transite d'une couche à l'autre et ce qui se passe quand on joue une note. Pour démarrer le projet, voir le [README](../README.md) ; pour les règles de chaque couche, sa section « Guide pour les Développeurs Humains et Agents IA ».
+Ce document explique comment l'UI, le serveur et le core communiquent : qui stocke quoi, ce qui transite d'une couche à l'autre et ce qui se passe quand on joue une note. Pour démarrer le projet, voir le [guide de développement](developpement.md) ; pour les règles de chaque couche, sa section « Guide pour les Développeurs Humains et Agents IA ».
 
 > **État décrit :** le code au 30/10/2026, Analyzer compris. Les références visent des fonctions plutôt que des numéros de ligne, qui changent trop vite. Si tu modifies un flux décrit ici, mets ce document à jour.
 
@@ -56,7 +56,7 @@ L'UI appelle des URL relatives (`/api`, `/health`, `/ws`) que Vite redirige vers
 | Canal | Messages | Usage |
 | --- | --- | --- |
 | REST (HTTP) | `GET /health`, `GET /api/devices`, `POST /api/engine/start`, `POST /api/engine/stop`, `GET /api/engine/status`, `POST /api/synth/tone`, `POST /api/synth/envelope`, `POST` et `DELETE /api/synth/timbre` | Actions ponctuelles : connexion (vérifiée toutes les 4 s), liste des sorties audio, allumer ou couper le moteur, réglages initiaux |
-| WebSocket `/ws/synth` | `note_on`, `note_off`, `set_param`, `set_instrument`, `note_glide`, `all_notes_off` | Temps réel : les notes (la note unique, ou des notes nommées par `id` sur l'un des 16 instruments, qui peuvent glisser d'une hauteur à l'autre) et les réglages modifiés en direct. Le serveur répond à chaque message avec l'état du moteur |
+| WebSocket `/ws/synth` | `note_on`, `note_off`, `set_param`, `set_instrument`, `note_glide`, `all_notes_off`, `automate`, `clear_automation` | Temps réel : les notes (la note unique, ou des notes nommées par `id` sur l'un des 16 instruments, qui peuvent glisser d'une hauteur à l'autre), les réglages modifiés en direct, et les rampes d'automation du Composer. Le serveur répond à chaque message avec l'état du moteur |
 
 Le WebSocket se reconnecte tout seul, avec un délai qui double de 0,5 à 8 s.
 
@@ -91,6 +91,8 @@ Tout l'état du moteur tient dans la `struct synthway_engine` (`synthway-core/sr
 
 `sw_engine_render` sert aussi au rendu hors ligne (`synthway_engine_render`, `synthway_engine_render_to_wav`, dans `engine_offline.c`) : un moteur sans carte son, qui produit exactement les mêmes échantillons. C'est ce qu'utilisent les tests et le skill `sound-check`.
 
+L'export audio du Composer passe par là aussi : l'UI envoie la partition (instruments par emplacement, notes en secondes avec leurs glissés) à `POST /api/render/score` ; le pont crée un moteur hors ligne à part, lance et relâche les notes entre deux `synthway_engine_render_to_writer`, qui écrit dans un fichier WAV ou Ogg Vorbis (`src/io/audio_writer.c`, libvorbis), puis renvoie le fichier. Rien n'est joué, et le moteur temps réel n'est pas touché. Comme le téléchargement d'un enregistrement, c'est un fichier fini qui passe par le serveur, pas un flux.
+
 ## Qui stocke quoi
 
 | Donnée | Où elle vit | Durée de vie |
@@ -123,6 +125,8 @@ Un instrument est un ensemble de partiels (`TimbrePartial`) : chacun a un rappor
 | Unisson (`unison`) | Voix par partiel (1–8, absent : 1), désaccord (cents) et largeur stéréo (0–1), envoyés avec le timbre par `set_param` ; le core joue chaque partiel par autant d'oscillateurs désaccordés, répartis à gauche et à droite (`sw_synth_render_unison`, `src/synth/synth.c`) : le son devient stéréo dès la synthèse, et le filtre puis la réverbération traitent les deux canaux. À 1 voix, le son est exactement celui d'avant. Gardé par le serveur et réappliqué au démarrage du moteur |
 | Nom, description, catégorie, couleurs | Purement visuels, propres à l'UI |
 | Octave du clavier (`octave`) | Propre à l'UI : l'octave d'où part le clavier de l'Instrument Creator (`KeyboardDock`), la dernière jouée ; seules les fréquences des notes jouées partent au moteur |
+
+**Automation du Composer.** Une piste peut faire varier au cours du morceau le volume, le panoramique, les bornes et la résonance du filtre, la réverbération et le désaccord de l'unisson de son instrument (`Track.automation`, `synthway-ui/src/lib/automation.ts`), en mono ou à gauche et à droite à part. Le core reçoit des rampes par emplacement d'instrument (`synthway_engine_automate`) : « va à telle valeur en tant de secondes », calculées dans le thread audio et passées par la même file que les notes. Pendant la lecture, l'UI envoie la rampe d'un tronçon de courbe quand le curseur y entre (`curveRamps`) ; le core la suit seul jusqu'au point suivant, au même rythme d'horloge que les notes. L'export envoie toutes les rampes du morceau, que le serveur lance chacune à sa trame exacte. Un réglage automatisé est repris à l'instrument jusqu'à `clear_automation`, envoyé à la pause. Le nombre de voix de l'unisson n'est pas automatisable : il change le nombre d'oscillateurs.
 
 Les vues de l'Instrument Creator n'affichent pas le vrai signal. Le spectre (`SpectrumGraph`) dessine les partiels et, en pointillés, les harmoniques qu'une onde non sinusoïdale contient déjà (`waveformHarmonics`). Les enveloppes (`EnvelopesGraph`, `EnvelopeGraph`) sont tracées à partir des réglages par `envelopeLevel` (`synthway-ui/src/lib/instruments.ts`), qui reprend les courbes linéaire et exponentielle de `synthway-core/src/synth/envelope.c`. L'oscilloscope (`WaveScope`) recalcule la somme des partiels en JavaScript avec `sampleWave` (`synthway-ui/src/lib/music.ts`), qui reprend les formules de `synthway-core/src/synth/oscillator.c`.
 

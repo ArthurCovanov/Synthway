@@ -60,8 +60,8 @@ static void sw_reverb_clear(sw_reverb* reverb, uint32_t sample_rate) {
 
 void sw_reverb_init(sw_reverb* reverb) {
     reverb->sample_rate = 0;
-    reverb->dry = 1.0f;
-    reverb->wet = 0.0f;
+    reverb->dry[0] = reverb->dry[1] = 1.0f;
+    reverb->wet[0] = reverb->wet[1] = 0.0f;
     reverb->active = false;
 }
 
@@ -87,32 +87,42 @@ static float sw_reverb_channel_process(sw_reverb_channel* channel, float input) 
 
 void sw_reverb_process(
     sw_reverb* reverb,
-    float mix,
+    float mix_left,
+    float mix_right,
     uint32_t sample_rate,
     uint32_t channels,
     float* frames,
     uint32_t frame_count
 ) {
+    if (channels < 2) {
+        mix_right = mix_left;
+    }
     if (!reverb->active) {
-        if (mix <= 0.0f) {
+        if (mix_left <= 0.0f && mix_right <= 0.0f) {
             return;
         }
         /* Turned on: starts from an empty room */
         sw_reverb_clear(reverb, sample_rate);
-        reverb->dry = 1.0f;
-        reverb->wet = 0.0f;
+        reverb->dry[0] = reverb->dry[1] = 1.0f;
+        reverb->wet[0] = reverb->wet[1] = 0.0f;
         reverb->active = true;
     } else if (reverb->sample_rate != sample_rate) {
         sw_reverb_clear(reverb, sample_rate);
     }
 
-    const float angle = mix * 1.57079633f;
-    const float dry_target = cosf(angle);
-    const float wet_target = sinf(angle) * SW_REVERB_WET_GAIN;
+    const float mix[2] = { mix_left, mix_right };
+    float dry_target[2], wet_target[2];
+    for (uint32_t side = 0; side < 2; ++side) {
+        const float angle = mix[side] * 1.57079633f;
+        dry_target[side] = cosf(angle);
+        wet_target[side] = sinf(angle) * SW_REVERB_WET_GAIN;
+    }
 
     for (uint32_t frame = 0; frame < frame_count; ++frame) {
-        reverb->dry += (dry_target - reverb->dry) * SW_REVERB_SMOOTHING;
-        reverb->wet = sw_reverb_flush(reverb->wet + (wet_target - reverb->wet) * SW_REVERB_SMOOTHING);
+        for (uint32_t side = 0; side < 2; ++side) {
+            reverb->dry[side] += (dry_target[side] - reverb->dry[side]) * SW_REVERB_SMOOTHING;
+            reverb->wet[side] = sw_reverb_flush(reverb->wet[side] + (wet_target[side] - reverb->wet[side]) * SW_REVERB_SMOOTHING);
+        }
 
         float* out = frames + (size_t)frame * channels;
         /* The room is fed the mean of left and right; each channel keeps its own dry sound */
@@ -122,16 +132,22 @@ void sw_reverb_process(
         const float right = sw_reverb_channel_process(&reverb->channels[1], feed);
 
         if (channels == 1) {
-            out[0] = out[0] * reverb->dry + 0.5f * (left + right) * reverb->wet;
+            out[0] = out[0] * reverb->dry[0] + 0.5f * (left + right) * reverb->wet[0];
         } else {
             for (uint32_t ch = 0; ch < channels; ++ch) {
-                out[ch] = out[ch] * reverb->dry + ((ch & 1) ? right : left) * reverb->wet;
+                const uint32_t side = ch & 1;
+                out[ch] = out[ch] * reverb->dry[side] + (side ? right : left) * reverb->wet[side];
             }
         }
     }
 
-    /* Back at mix 0 and faded out: the next blocks pass through untouched */
-    if (mix <= 0.0f && reverb->wet < SW_REVERB_SILENT && 1.0f - reverb->dry < SW_REVERB_SILENT) {
+    /* Back at mix 0 and faded out on both sides: the next blocks pass through untouched */
+    bool silent = true;
+    for (uint32_t side = 0; side < 2; ++side) {
+        silent = silent && mix[side] <= 0.0f
+            && reverb->wet[side] < SW_REVERB_SILENT && 1.0f - reverb->dry[side] < SW_REVERB_SILENT;
+    }
+    if (silent) {
         reverb->active = false;
     }
 }

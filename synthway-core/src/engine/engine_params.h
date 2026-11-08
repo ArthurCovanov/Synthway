@@ -54,7 +54,7 @@ typedef struct sw_instrument_params {
     sw_timbre_exchange timbre;
 } sw_instrument_params;
 
-/* Notes go to the audio thread through a ring of events: writers append
+/* Notes, and automation ramps, go to the audio thread through a ring of events: writers append
    under a spin lock that the audio thread never takes, and publish the new
    head (release); the audio thread reads up to it (acquire) at the start of
    each block, then publishes the tail it has reached. */
@@ -62,7 +62,9 @@ typedef enum sw_note_event_type {
     SW_NOTE_EVENT_ON,
     SW_NOTE_EVENT_OFF,
     SW_NOTE_EVENT_ALL_OFF,
-    SW_NOTE_EVENT_GLIDE
+    SW_NOTE_EVENT_GLIDE,
+    SW_NOTE_EVENT_AUTOMATE,        /* a ramp of an instrument's setting (synthway_engine_automate) */
+    SW_NOTE_EVENT_CLEAR_AUTOMATION
 } sw_note_event_type;
 
 typedef struct sw_note_event {
@@ -71,7 +73,10 @@ typedef struct sw_note_event {
     uint32_t instrument;
     float frequency_hz;
     float volume;
-    float seconds;                 /* of a glide */
+    float seconds;                 /* of a glide or a ramp */
+    uint32_t param;                /* of a ramp: synthway_automation_param_t */
+    uint32_t side;                 /* of a ramp: synthway_side_t */
+    float value;                   /* of a ramp: where it goes */
 } sw_note_event;
 
 /* A power of two, so that the indices can wrap around freely */

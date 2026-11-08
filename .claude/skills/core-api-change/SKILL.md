@@ -27,7 +27,7 @@ Le serveur charge la bibliothèque par `ctypes` (`synthway-server/src/core_bridg
    - `src/io/` : carte son, micro, périphériques, MIDI, fichiers. Seule cette couche inclut miniaudio ou RtMidi.
 
    Valide les paramètres et renvoie `SYNTHWAY_INVALID_PARAM` si besoin.
-3. Si le code tourne dans le thread audio ou partage des données avec lui, respecte les règles temps réel du `README.md` racine : pas d'allocation, pas de verrou, pas d'entrée/sortie. Une valeur écrite par un thread et lue par le thread audio passe par un champ `_Atomic` de `sw_engine_params` (`engine_params.h`) : écriture relâchée dans le setter, lecture dans `sw_engine_params_snapshot`, qui la copie dans `sw_synth_params` pour le synthé.
+3. Si le code tourne dans le thread audio ou partage des données avec lui, respecte les règles temps réel de `docs/developpement.md` (section « Guide pour les Développeurs Humains et Agents IA ») : pas d'allocation, pas de verrou, pas d'entrée/sortie. Une valeur écrite par un thread et lue par le thread audio passe par un champ `_Atomic` de `sw_engine_params` (`engine_params.h`) : écriture relâchée dans le setter, lecture dans `sw_engine_params_snapshot`, qui la copie dans `sw_synth_params` pour le synthé.
 4. Nouveau code d'erreur : ajoute-le aussi dans `synthway_result_to_string` (`src/synthway.c`).
 5. **Nouveau fichier source :** ajoute-le dans les quatre systèmes de build, sinon l'un d'eux cassera. Les chemins sont relatifs à `src/`, dans un dossier de couche (un seul niveau : `src/<couche>/<nom>.c`) :
    - `CMakeLists.txt` : `SYNTHWAY_SOURCES` (`${SYNTHWAY_SRC_DIR}/synth/filter.c`)

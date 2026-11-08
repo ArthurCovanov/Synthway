@@ -14,8 +14,10 @@ Synthway est un synthétiseur audio en trois parties :
 | `synthway-ui/` | Interface de contrôle du serveur | React, TypeScript, Vite | Premier jet |
 | `synthway-demucs/` | Facultatif : séparation de sources de l'onglet Decomposer, lancée par le serveur dans un processus à part | Demucs v4 (Python, PyTorch), environnement uv à lui | Essai local |
 
-- **Vue d'ensemble et démarrage :** `README.md` à la racine.
-- **Règles d'architecture par couche :** section « Guide pour les Développeurs Humains et Agents IA » du `README.md` racine. Lis-la avant de modifier une couche.
+- **Présentation publique (GitLab / GitHub) :** `README.md` à la racine, avec les captures d'écran de `docs/images/`. Garde-le court et vendeur ; le détail technique va dans `docs/developpement.md`.
+- **Lancer Synthway :** `synthway.bat` (double-clic) ou `python3 synthway.py`, depuis les sources ; `packaging/build_windows.py` fabrique le zip Windows prêt à l'emploi, sans rien à installer (voir « Le lanceur » et « Le zip Windows » dans `docs/developpement.md`). Le serveur y sert lui-même l'interface construite (`synthway-ui/dist`), sur le port 18741.
+- **Vue d'ensemble technique et démarrage :** `docs/developpement.md`.
+- **Règles d'architecture par couche :** section « Guide pour les Développeurs Humains et Agents IA » de `docs/developpement.md`. Lis-la avant de modifier une couche.
 - **Détail de chaque partie :** le `README.md` de son dossier.
 
 Principe directeur : le son est produit par le core, dans son thread audio. Le serveur et l'UI n'envoient que des commandes ; aucun flux audio ne passe par Python ni par le réseau.
@@ -39,14 +41,16 @@ Trois contributeurs travaillent dans le même dossier, parfois en même temps : 
 - WSL n'a ni vraie carte son ni MIDI : teste l'audio et le MIDI sous Windows.
 - Le serveur tourne sous Windows, avec le Python de MSYS2 UCRT64 (`C:\msys64\ucrt64\bin\python.exe`, dépendances installées par `pacman`, voir le README du serveur) : dans WSL, le son passe par WSLg et arrive avec environ une demi-seconde de retard. Vite reste dans la Debian.
 - Le navigateur appelle le serveur directement (`http://127.0.0.1:18741`, accepté par sa règle CORS) ; Vite ne sert que la page. Ça marche sans réglage réseau de WSL : le réseau « mirrored » a été essayé et refusait de redémarrer (`0x8007054f`).
+- Le lanceur `synthway.bat` vise un Windows sans WSL. Sur cette machine, Node n'est pas installé sous Windows : le lanceur prend un `synthway-ui/dist` déjà construit (`npm run build` dans la Debian), sinon il demande Node. Ne lance pas le lanceur avec un Node Windows dans ce dossier sans l'accord de l'utilisateur : il réinstallerait `node_modules` pour Windows, et Vite ne marcherait plus dans WSL.
 
 ## Conventions
 
 - **Langues :** code, identifiants et commentaires en anglais ; documentation (README, `docs/`, ce fichier, skills) en français.
+- **Licence du projet :** Apache-2.0, texte dans `LICENSE` à la racine. Le code tiers garde sa propre licence. Une dépendance doit pouvoir être distribuée avec du code Apache-2.0 : pas de GPLv2 seule, par exemple.
 - **API du core :** préfixe `synthway_`, macro `SYNTHWAY_API`, retour `synthway_result_t` quand la fonction peut échouer. L'API reste en C pur, car le serveur la charge par FFI. Toute modification passe par le skill `core-api-change`.
 - **Code tiers, bibliothèques et assets :** Tout élément externe introduit dans le projet (dépendances C/C++, paquets Python ou npm, polices, icônes, échantillons audio, images...) doit impérativement être **open-source**, **libre de droit** (permettant un usage commercial sans redevance : MIT, Apache-2.0, BSD, ISC, zlib, CC0 / Domaine Public...) et **respecter scrupuleusement les termes d'utilisation et de licence** (attribution requise, conservation des notices de copyright et conditions de distribution). Aucune ressource propriétaire, à usage non-commercial restreint (ex. CC-BY-NC) ou sous licence virale incompatible (ex. GPL liée en statique) n'est acceptée. Pour `synthway-core/vendor/`, suivre le skill `vendor-update`. Pour toute dépendance ou asset externe, suivre `third-party-resources`.
   - **Exception, essai local :** les poids pré-entraînés de Demucs (`synthway-demucs/`) n'ont pas de licence claire. L'utilisateur les accepte pour un essai sur sa machine, jamais commités ni distribués. À revoir avant toute version distribuée (voir `synthway-demucs/README.md`).
-- **Son :** ne lance jamais rien qui joue du son sans l'accord de l'utilisateur. Ça vaut pour le CLI du core sans argument ou avec `--tone`/`--waveform`, pour `python main.py` dans le serveur, et pour l'appel de `/api/engine/start` ou l'envoi de `note_on`. `synthway_cli --list`, `--midi`, `--render` et `--analyze` sont sans risque. Pour vérifier un son, rends-le hors ligne et mesure-le (skill `sound-check`) au lieu de le jouer.
+- **Son :** ne lance jamais rien qui joue du son sans l'accord de l'utilisateur. Ça vaut pour le CLI du core sans argument ou avec `--tone`/`--waveform`, pour `python main.py` dans le serveur, et pour l'appel de `/api/engine/start` ou l'envoi de `note_on`. `synthway_cli --list`, `--midi`, `--render` et `--analyze` sont sans risque. Le lanceur (`synthway.py`, `synthway.bat`, le zip) ne joue rien par lui-même : il démarre le vrai serveur sans démarrer le moteur, et ouvre l'interface face à lui ; pour un agent, `--no-browser`, et `--port` si le serveur de l'utilisateur tourne déjà. Pour vérifier un son, rends-le hors ligne et mesure-le (skill `sound-check`) au lieu de le jouer.
 - **Micro :** de même, n'ouvre jamais le micro sans l'accord de l'utilisateur : `synthway_cli --listen`, `synthway_analyzer_open_input`, le message `start` de `/ws/analyzer` du vrai serveur, ou le bouton « Écouter » de l'Analyzer face au vrai serveur. Le serveur factice de l'UI n'ouvre aucun micro. Pour vérifier l'analyse, fais analyser des sons rendus hors ligne (`synthway_analysis_test`, `--analyze`).
 
 ## Skills partagés
@@ -59,6 +63,7 @@ Les skills sont dans `.claude/skills/<nom>/SKILL.md`, le seul dossier que Claude
 | `core-api-change` | Ajouter ou modifier une fonction publique du core, un type public ou un fichier source |
 | `sound-check` | Vérifier le son produit par le moteur sans haut-parleur (rendu hors ligne, mesure de WAV) |
 | `ui-build` | Vérifier, compiler et prévisualiser `synthway-ui` (via WSL, avec un serveur factice muet) |
+| `file-formats` | Modifier le modèle du Composer ou des instruments : mettre à jour les formats de fichier `.swsong` et `.swinst` |
 | `vendor-update` | Mettre à jour une bibliothèque tierce du core (miniaudio, RtMidi) ou en ajouter une |
 | `third-party-resources` | Ajouter ou mettre à jour une dépendance (C/C++, Python, npm) ou un asset (icône, police, son, image) externe |
 | `worklog` | Commencer ou terminer une tâche qui modifie des fichiers |

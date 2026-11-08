@@ -1,0 +1,91 @@
+/* A message after an action (file saved, opened, imported): floats at the bottom right, above the dock */
+
+/* Between the screen's body and its dock, without height: the notice rises from it */
+.anchor {
+  position: relative;
+  z-index: 50;
+  height: 0;
+}
+
+.notice {
+  position: absolute;
+  right: 28px;
+  bottom: 10px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: min(440px, calc(100vw - 56px));
+  padding: 12px 12px 12px 14px;
+  border-radius: var(--radius-m);
+  border: 1px solid color-mix(in srgb, var(--tone) 45%, transparent);
+  background: linear-gradient(180deg, rgba(17, 16, 51, 0.96), rgba(10, 10, 36, 0.97));
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.3),
+    0 0 22px color-mix(in srgb, var(--tone) 18%, transparent),
+    0 18px 40px rgba(0, 0, 0, 0.5);
+  animation: rise 0.22s var(--ease);
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .notice {
+    animation: none;
+  }
+}
+
+.icon {
+  flex: none;
+  margin-top: 1px;
+  color: var(--tone);
+}
+
+.text {
+  flex: 1;
+  min-width: 0;
+}
+
+.title {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text-0);
+  overflow-wrap: anywhere;
+}
+
+.details {
+  margin: 6px 0 0;
+  padding-left: 16px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+
+.details li + li {
+  margin-top: 3px;
+}
+
+.close {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  margin: -3px -3px 0 0;
+  border: none;
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.close:hover {
+  color: var(--text-0);
+  background: var(--bg-4);
+}
