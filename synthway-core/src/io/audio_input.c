@@ -2,6 +2,15 @@
 #include "io/ma_result.h"
 #include <string.h>
 
+void sw_audio_input_write(sw_audio_input* input, const float* samples, uint32_t count) {
+    uint64_t written = atomic_load_explicit(&input->written, memory_order_relaxed);
+    for (uint32_t i = 0; i < count; ++i) {
+        input->ring[(written + i) & (SW_AUDIO_INPUT_RING_FRAMES - 1)] = samples[i];
+    }
+    /* Release: the reader that sees the new count also sees the samples */
+    atomic_store_explicit(&input->written, written + count, memory_order_release);
+}
+
 /* Data callback, called by miniaudio's real-time capture thread: only copies */
 static void sw_audio_input_callback(
     ma_device* device,
@@ -15,14 +24,7 @@ static void sw_audio_input_callback(
     if (!input || !in) {
         return;
     }
-
-    const float* samples = (const float*)in;
-    uint64_t written = atomic_load_explicit(&input->written, memory_order_relaxed);
-    for (ma_uint32 i = 0; i < frame_count; ++i) {
-        input->ring[(written + i) & (SW_AUDIO_INPUT_RING_FRAMES - 1)] = samples[i];
-    }
-    /* Release: the reader that sees the new count also sees the samples */
-    atomic_store_explicit(&input->written, written + frame_count, memory_order_release);
+    sw_audio_input_write(input, (const float*)in, frame_count);
 }
 
 synthway_result_t sw_audio_input_open(sw_audio_input* input, int device_index, uint32_t sample_rate, bool exclusive) {
@@ -75,8 +77,25 @@ synthway_result_t sw_audio_input_open(sw_audio_input* input, int device_index, u
     return SYNTHWAY_OK;
 }
 
+void sw_audio_input_open_virtual(sw_audio_input* input, uint32_t sample_rate) {
+    atomic_store_explicit(&input->written, 0, memory_order_relaxed);
+    input->exclusive = false;
+    input->sample_rate = sample_rate;
+    input->is_virtual = true;
+}
+
 bool sw_audio_input_is_open(const sw_audio_input* input) {
-    return input->device_initialized;
+    return input->device_initialized || input->is_virtual;
+}
+
+uint64_t sw_audio_input_written(sw_audio_input* input) {
+    return atomic_load_explicit(&input->written, memory_order_acquire);
+}
+
+void sw_audio_input_read(const sw_audio_input* input, uint64_t first, float* out, uint32_t count) {
+    for (uint32_t i = 0; i < count; ++i) {
+        out[i] = input->ring[(first + i) & (SW_AUDIO_INPUT_RING_FRAMES - 1)];
+    }
 }
 
 void sw_audio_input_read_latest(sw_audio_input* input, float* out, uint32_t count) {
@@ -84,18 +103,15 @@ void sw_audio_input_read_latest(sw_audio_input* input, float* out, uint32_t coun
         count = SW_AUDIO_INPUT_RING_FRAMES;
     }
     /* The audio thread keeps writing during the copy, but it would need to
-       write the whole rest of the ring (about a second) to reach the frames
+       write the whole rest of the ring (several seconds) to reach the frames
        being copied. */
-    const uint64_t written = atomic_load_explicit(&input->written, memory_order_acquire);
+    const uint64_t written = sw_audio_input_written(input);
     uint32_t missing = 0;
     if (written < count) {
         missing = count - (uint32_t)written;
         memset(out, 0, sizeof(float) * missing);
     }
-    const uint64_t first = written - (count - missing);
-    for (uint32_t i = missing; i < count; ++i) {
-        out[i] = input->ring[(first + (i - missing)) & (SW_AUDIO_INPUT_RING_FRAMES - 1)];
-    }
+    sw_audio_input_read(input, written - (count - missing), out + missing, count - missing);
 }
 
 void sw_audio_input_close(sw_audio_input* input) {
@@ -108,6 +124,7 @@ void sw_audio_input_close(sw_audio_input* input) {
         ma_context_uninit(&input->context);
         input->context_initialized = false;
     }
+    input->is_virtual = false;
     input->exclusive = false;
     input->sample_rate = 0;
 }

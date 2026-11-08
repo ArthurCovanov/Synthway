@@ -40,7 +40,10 @@ float sw_pitch_detect(
     float* out_clarity
 ) {
     *out_clarity = 0.0f;
-    const uint32_t fft_size = 2 * n;
+    uint32_t fft_size = 2;
+    while (fft_size < 2 * n) {
+        fft_size <<= 1;
+    }
     const uint32_t max_lag = n / 2;
 
     /* Without its mean, so that an offset does not look like a period */
@@ -58,7 +61,7 @@ float sw_pitch_detect(
     if (energy < 1e-12 * n) {
         return 0.0f;
     }
-    memset(re + n, 0, sizeof(float) * n);
+    memset(re + n, 0, sizeof(float) * (fft_size - n));
     memset(im, 0, sizeof(float) * fft_size);
 
     /* Autocorrelation r(lag) through the power spectrum; the zero padding

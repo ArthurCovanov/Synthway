@@ -23,7 +23,7 @@ static synthway_result_t sw_audio_clip_read(sw_audio_clip* clip, ma_decoder* dec
         return SYNTHWAY_INVALID_PARAM;
     }
     uint64_t capacity = length > 0 ? length + CHUNK_FRAMES : (uint64_t)sample_rate * 4;
-    float* samples = (float*)malloc(sizeof(float) * capacity);
+    float* samples = (float*)malloc(sizeof(float) * capacity * 2);
     if (!samples) {
         return SYNTHWAY_ERROR;
     }
@@ -32,7 +32,7 @@ static synthway_result_t sw_audio_clip_read(sw_audio_clip* clip, ma_decoder* dec
     for (;;) {
         if (capacity - frames < CHUNK_FRAMES) {
             capacity *= 2;
-            float* grown = (float*)realloc(samples, sizeof(float) * capacity);
+            float* grown = (float*)realloc(samples, sizeof(float) * capacity * 2);
             if (!grown) {
                 free(samples);
                 return SYNTHWAY_ERROR;
@@ -40,7 +40,7 @@ static synthway_result_t sw_audio_clip_read(sw_audio_clip* clip, ma_decoder* dec
             samples = grown;
         }
         ma_uint64 read = 0;
-        ma_result result = ma_decoder_read_pcm_frames(decoder, samples + frames, CHUNK_FRAMES, &read);
+        ma_result result = ma_decoder_read_pcm_frames(decoder, samples + frames * 2, CHUNK_FRAMES, &read);
         frames += read;
         if (frames > max_frames) {
             free(samples);
@@ -58,12 +58,13 @@ static synthway_result_t sw_audio_clip_read(sw_audio_clip* clip, ma_decoder* dec
     clip->samples = samples;
     clip->frame_count = frames;
     clip->sample_rate = sample_rate;
+    clip->channels = 2;
     return SYNTHWAY_OK;
 }
 
-/* Mono float at the file's own rate */
+/* Stereo float at the file's own rate (mono inputs are duplicated by miniaudio) */
 static ma_decoder_config sw_audio_clip_config(void) {
-    return ma_decoder_config_init(ma_format_f32, 1, 0);
+    return ma_decoder_config_init(ma_format_f32, 2, 0);
 }
 
 synthway_result_t sw_audio_clip_decode_memory(sw_audio_clip* clip, const void* data, size_t size, double max_seconds) {

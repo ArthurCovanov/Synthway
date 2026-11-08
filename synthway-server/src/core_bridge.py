@@ -12,22 +12,37 @@ from typing import List, Optional, Sequence, Tuple
 
 try:
     from models import (
-        ANALYSIS_SPECTRUM_POINTS, MAX_PARTIALS, Analysis, AnalysisPartial, ClipTrack, DeviceInfo, DeviceTypeEnum,
-        Envelope, MidiPortInfo, MidiPortTypeEnum, Timbre, WaveformEnum,
+        ANALYSIS_SPECTRUM_POINTS, MAX_PARTIALS, Analysis, AnalysisPartial, ClipTrack, ClipWaveform, DeviceInfo,
+        DeviceTypeEnum, Envelope, MidiPortInfo, MidiPortTypeEnum, Timbre, WaveformEnum,
     )
 except ImportError:
     from .models import (
-        ANALYSIS_SPECTRUM_POINTS, MAX_PARTIALS, Analysis, AnalysisPartial, ClipTrack, DeviceInfo, DeviceTypeEnum,
-        Envelope, MidiPortInfo, MidiPortTypeEnum, Timbre, WaveformEnum,
+        ANALYSIS_SPECTRUM_POINTS, MAX_PARTIALS, Analysis, AnalysisPartial, ClipTrack, ClipWaveform, DeviceInfo,
+        DeviceTypeEnum, Envelope, MidiPortInfo, MidiPortTypeEnum, Timbre, WaveformEnum,
     )
 
 # synthway_result_t codes the server tells apart
 RESULT_INVALID_PARAM = -2
+RESULT_NOT_RUNNING = -6
 RESULT_IO_ERROR = -8
 RESULT_FORMAT_ERROR = -9
 
 # SYNTHWAY_ANALYZER_NOISE_GATE_OFF: the noise gate ignores nothing
 NOISE_GATE_OFF = -120.0
+
+# Analysis windows of analyze_clip_range, in seconds (SYNTHWAY_ANALYZER_WINDOW_AUTO,
+# SYNTHWAY_ANALYZER_MIN_WINDOW_S, SYNTHWAY_ANALYZER_MAX_WINDOW_S): 0 is the usual one, about 170 ms
+WINDOW_AUTO = 0.0
+MIN_WINDOW_S = 0.01
+MAX_WINDOW_S = 0.5
+
+# Reference note and harmonic filter of analyze_clip_range (SYNTHWAY_ANALYZER_REFERENCE_AUTO and
+# MIN/MAX_REFERENCE_HZ, SYNTHWAY_ANALYZER_ALL_PARTIALS and MAX_HARMONIC_CENTS)
+REFERENCE_AUTO = 0.0
+MIN_REFERENCE_HZ = 16.0
+MAX_REFERENCE_HZ = 5000.0
+ALL_PARTIALS = 0.0
+MAX_HARMONIC_CENTS = 100.0
 
 
 class CoreError(RuntimeError):
@@ -158,7 +173,7 @@ def _check_result(lib, res: int, action: str):
 
 class Analyzer:
     """A synthway_analyzer_t: the note and the partials of a microphone, an
-    audio file or samples. It neither plays nor records anything.
+    audio file or samples. It plays nothing, and records the microphone only when asked.
     The native analyzer is not thread-safe: every call here holds a lock."""
 
     def __init__(self, lib):
@@ -186,7 +201,7 @@ class Analyzer:
         with self._lock:
             return self._analysis(self._lib.synthway_analyzer_analyze_samples, buffer, len(samples), sample_rate)
 
-    # ---------- Microphone: listened to, never saved ----------
+    # ---------- Microphone: listened to, saved only while recording ----------
 
     def open_input(self, device_index: int = -1, sample_rate: int = 0) -> Tuple[int, bool]:
         """Opens a capture device (-1: the system's) and starts listening.
@@ -202,7 +217,24 @@ class Analyzer:
                 bool(self._lib.synthway_analyzer_is_input_exclusive(self._handle)),
             )
 
+    def open_virtual_input(self, sample_rate: int):
+        """An input fed by write_input instead of a capture device: a microphone for tests."""
+        with self._lock:
+            _check_result(
+                self._lib, self._lib.synthway_analyzer_open_virtual_input(self._handle, sample_rate),
+                "Opening the virtual input",
+            )
+
+    def write_input(self, samples: Sequence[float]):
+        """Feeds samples to the virtual input, as a capture thread would."""
+        buffer = (ctypes.c_float * len(samples))(*samples)
+        with self._lock:
+            _check_result(
+                self._lib, self._lib.synthway_analyzer_write_input(self._handle, buffer, len(samples)), "Writing input",
+            )
+
     def close_input(self):
+        """Closes the microphone; a recording in progress stops and becomes the clip."""
         with self._lock:
             self._lib.synthway_analyzer_close_input(self._handle)
 
@@ -214,6 +246,40 @@ class Analyzer:
         """What the microphone heard last."""
         with self._lock:
             return self._analysis(self._lib.synthway_analyzer_analyze_input)
+
+    # ---------- Recording the microphone ----------
+
+    def start_recording(self):
+        """Records what the open microphone hears from now on, in memory, with no time limit.
+        analyze_input or recording_info must be called at least every second meanwhile."""
+        with self._lock:
+            _check_result(self._lib, self._lib.synthway_analyzer_start_recording(self._handle), "Starting the recording")
+
+    def stop_recording(self) -> bool:
+        """Stops recording: the recording becomes the clip, the microphone stays open.
+        False when nothing was being recorded, or nothing captured (the clip is then kept)."""
+        with self._lock:
+            res = self._lib.synthway_analyzer_stop_recording(self._handle)
+            if res == RESULT_NOT_RUNNING:
+                return False
+            _check_result(self._lib, res, "Stopping the recording")
+            return True
+
+    def is_recording(self) -> bool:
+        with self._lock:
+            return bool(self._lib.synthway_analyzer_is_recording(self._handle))
+
+    def recording_info(self) -> Tuple[int, int]:
+        """(frames recorded, frames lost and replaced by silence), of the recording
+        in progress or the last one; also takes the latest samples from the microphone."""
+        frames, lost = ctypes.c_uint64(0), ctypes.c_uint64(0)
+        with self._lock:
+            _check_result(
+                self._lib,
+                self._lib.synthway_analyzer_get_recording_info(self._handle, ctypes.byref(frames), ctypes.byref(lost)),
+                "Recording info",
+            )
+        return frames.value, lost.value
 
     # ---------- Noise gate ----------
 
@@ -264,12 +330,71 @@ class Analyzer:
                 )
             return self._analysis(self._lib.synthway_analyzer_analyze_clip, ctypes.c_double(time_s))
 
+    def analyze_clip_range(
+        self,
+        start_s: float,
+        end_s: float,
+        window_s: float = WINDOW_AUTO,
+        noise_gate_db: Optional[float] = None,
+        reference_hz: float = REFERENCE_AUTO,
+        harmonic_cents: float = ALL_PARTIALS,
+    ) -> Analysis:
+        """A zone of the loaded file, through windows of window_s seconds (WINDOW_AUTO: the usual one).
+        A zone no longer than a window is that window around its middle (a moment seen through a
+        window of that size); a longer one is the median of up to 100 moments, partials matched by
+        their ratio to the note. reference_hz: the note the ratios are taken to (REFERENCE_AUTO: the
+        note heard, a zone's low end, octave errors corrected); harmonic_cents > 0 keeps only the
+        partials that close to a whole ratio. With this noise gate (None: the one in place)."""
+        with self._lock:
+            if noise_gate_db is not None:
+                _check_result(
+                    self._lib, self._lib.synthway_analyzer_set_noise_gate(self._handle, noise_gate_db),
+                    "Setting the noise gate",
+                )
+            return self._analysis(
+                self._lib.synthway_analyzer_analyze_clip_range,
+                ctypes.c_double(start_s), ctypes.c_double(end_s), ctypes.c_double(window_s),
+                ctypes.c_float(reference_hz), ctypes.c_float(harmonic_cents),
+            )
+
     def clip_overview(self, count: int) -> List[float]:
         """Peak of each of count equal parts of the file, for the waveform."""
         peaks = (ctypes.c_float * count)()
         with self._lock:
             _check_result(self._lib, self._lib.synthway_analyzer_get_clip_overview(self._handle, peaks, count), "Overview")
         return [round(v, 4) for v in peaks]
+
+    def clip_stereo_overview(self, count: int) -> Tuple[List[float], List[float]]:
+        """Left and right channel peaks for each of count equal parts of the file."""
+        left, right = (ctypes.c_float * count)(), (ctypes.c_float * count)()
+        with self._lock:
+            _check_result(
+                self._lib,
+                self._lib.synthway_analyzer_get_clip_stereo_overview(self._handle, left, right, count),
+                "Stereo overview",
+            )
+        return [round(v, 4) for v in left], [round(v, 4) for v in right]
+
+    def clip_waveform(self, first_frame: int, frame_count: int, count: int) -> ClipWaveform:
+        """Lowest and highest sample of each channel in each of count equal parts of the
+        frame_count frames from first_frame, stopped at the end of the clip; never more
+        parts than frames, so that a part holds at least one sample."""
+        frames, rate = ctypes.c_uint64(0), ctypes.c_uint32(0)
+        with self._lock:
+            self._lib.synthway_analyzer_get_clip_info(self._handle, ctypes.byref(frames), ctypes.byref(rate))
+            covered = max(0, min(frame_count, frames.value - first_frame))
+            count = max(1, min(count, covered))
+            outputs = [(ctypes.c_float * count)() for _ in range(4)]
+            _check_result(
+                self._lib,
+                self._lib.synthway_analyzer_get_clip_waveform(self._handle, first_frame, frame_count, count, *outputs),
+                "Waveform",
+            )
+        left_low, left_high, right_low, right_high = ([round(v, 5) for v in values] for values in outputs)
+        return ClipWaveform(
+            first_frame=first_frame, frame_count=covered,
+            left_low=left_low, left_high=left_high, right_low=right_low, right_high=right_high,
+        )
 
     def clip_track(self, count: int) -> ClipTrack:
         """The note at count moments evenly spread along the file."""
@@ -284,6 +409,12 @@ class Analyzer:
             clarity=[round(v, 3) for v in clarity],
             level_db=[round(v, 1) for v in level],
         )
+
+    def save_clip_wav(self, path: str):
+        """Writes the clip (loaded file or last recording) as a mono 16-bit WAV file."""
+        native_path = os.fspath(path).encode("mbcs" if sys.platform.startswith("win") else "utf-8")
+        with self._lock:
+            _check_result(self._lib, self._lib.synthway_analyzer_save_clip_wav(self._handle, native_path), "Saving the WAV")
 
 
 def _find_library() -> str:
@@ -452,6 +583,8 @@ class SynthwayCore:
             "synthway_analysis_get_size": ([], ctypes.c_uint32),
             "synthway_analyzer_analyze_samples": ([analyzer, floats, ctypes.c_uint32, ctypes.c_uint32, analysis], ctypes.c_int),
             "synthway_analyzer_open_input": ([analyzer, ctypes.c_int, ctypes.c_uint32], ctypes.c_int),
+            "synthway_analyzer_open_virtual_input": ([analyzer, ctypes.c_uint32], ctypes.c_int),
+            "synthway_analyzer_write_input": ([analyzer, floats, ctypes.c_uint32], ctypes.c_int),
             "synthway_analyzer_close_input": ([analyzer], None),
             "synthway_analyzer_is_input_open": ([analyzer], ctypes.c_bool),
             "synthway_analyzer_is_input_exclusive": ([analyzer], ctypes.c_bool),
@@ -465,8 +598,25 @@ class SynthwayCore:
                 [analyzer, ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.c_uint32)], ctypes.c_int,
             ),
             "synthway_analyzer_analyze_clip": ([analyzer, ctypes.c_double, analysis], ctypes.c_int),
+            "synthway_analyzer_analyze_clip_range": (
+                [analyzer, ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_float, ctypes.c_float, analysis],
+                ctypes.c_int,
+            ),
             "synthway_analyzer_get_clip_overview": ([analyzer, floats, ctypes.c_uint32], ctypes.c_int),
+            "synthway_analyzer_get_clip_stereo_overview": (
+                [analyzer, floats, floats, ctypes.c_uint32], ctypes.c_int,
+            ),
+            "synthway_analyzer_get_clip_waveform": (
+                [analyzer, ctypes.c_uint64, ctypes.c_uint64, ctypes.c_uint32, floats, floats, floats, floats], ctypes.c_int,
+            ),
             "synthway_analyzer_get_clip_track": ([analyzer, ctypes.c_uint32, floats, floats, floats], ctypes.c_int),
+            "synthway_analyzer_save_clip_wav": ([analyzer, ctypes.c_char_p], ctypes.c_int),
+            "synthway_analyzer_start_recording": ([analyzer], ctypes.c_int),
+            "synthway_analyzer_stop_recording": ([analyzer], ctypes.c_int),
+            "synthway_analyzer_is_recording": ([analyzer], ctypes.c_bool),
+            "synthway_analyzer_get_recording_info": (
+                [analyzer, ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.c_uint64)], ctypes.c_int,
+            ),
         }
         for name, (argtypes, restype) in signatures.items():
             function = getattr(self._lib, name)

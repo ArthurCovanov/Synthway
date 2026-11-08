@@ -46,6 +46,24 @@ pip install -r requirements.txt
 
 ### 3. Lancer le serveur
 
+- **Sous Windows, pour jouer (recommandé)** :
+
+  Lance le serveur sous Windows, pas dans WSL. Sous WSL, le son passe par WSLg (PulseAudio, puis une liaison RDP jusqu'à Windows) : mesuré à environ 0,5 s de retard, qui grandit tant que le moteur tourne, parce que les horloges de WSL et de Windows dérivent. Sous Windows, le core sort par WASAPI avec un tampon de 30 ms (3 × 10 ms, le minimum du mode partagé).
+
+  Le Python de MSYS2 UCRT64 suffit. Installe une fois ses dépendances avec `pacman` : `pip` ne trouve pas de version compilée de `pydantic-core` pour ce Python.
+  ```bash
+  pacman -S --needed mingw-w64-ucrt-x86_64-python-fastapi mingw-w64-ucrt-x86_64-uvicorn mingw-w64-ucrt-x86_64-python-websockets mingw-w64-ucrt-x86_64-python-python-multipart
+  ```
+  Puis, dans PowerShell :
+  ```powershell
+  cd synthway-server
+  C:\msys64\ucrt64\bin\python.exe -m uvicorn main:app --app-dir src --port 18741
+  ```
+  - **Sans `--reload` pour jouer :** avec lui, chaque modification du code du serveur (par toi, Claude ou Gemini) le redémarre et coupe le son. Ajoute-le seulement pour travailler sur le serveur.
+  - **Un seul serveur sur 18741 :** n'en lance pas un autre dans la Debian en même temps. WSL relaie ses ports vers le `localhost` de Windows, et le second à démarrer trouve le port pris (`[winerror 10048] une seule utilisation de chaque adresse de socket…`).
+  - **L'interface ne change pas :** Vite se lance dans la Debian (`npm run dev`), sur [http://localhost:5173](http://localhost:5173). Le navigateur appelle directement le serveur sur `http://127.0.0.1:18741`, sans passer par WSL.
+  - **Sortie :** garde 48000 Hz dans les Réglages de l'interface si c'est la fréquence de ta sortie (`/api/devices` l'indique) : sinon, Windows rééchantillonne. Un casque Bluetooth ajoute souvent un retard à lui seul.
+
 - **Mode Web API complet (FastAPI + Uvicorn)** :
   ```bash
   cd synthway-server/src
@@ -55,7 +73,7 @@ pip install -r requirements.txt
 
   Le port de Synthway est **18741**, choisi parce que peu d'outils l'utilisent ; le 8000 est souvent pris (Open WebUI, Django…). Garde `--port 18741` : sans lui, uvicorn écoute sur son propre défaut, 8000. C'est le port que l'interface cherche par défaut.
 
-  Le serveur n'écoute que sur cette machine (`127.0.0.1`), et seules les pages servies localement peuvent l'appeler directement (CORS). Ajouter `--host 0.0.0.0` l'ouvre au réseau : n'importe qui sur le réseau pourrait alors piloter ta sortie audio. Ne le fais qu'en connaissance de cause.
+  Le serveur n'écoute que sur cette machine (`127.0.0.1`), et seules les pages servies localement peuvent l'appeler directement : par la règle CORS pour les routes HTTP, et en vérifiant l'en-tête `Origin` pour `/ws/synth` et `/ws/analyzer`, que le CORS ne couvre pas (un autre site est refusé, code 1008 / HTTP 403 ; un programme, sans en-tête `Origin`, est accepté). Sans cette vérification, n'importe quelle page ouverte dans le navigateur pourrait jouer des notes ou ouvrir le micro. Ajouter `--host 0.0.0.0` l'ouvre au réseau : n'importe qui sur le réseau pourrait alors piloter ta sortie audio. Ne le fais qu'en connaissance de cause.
 
 - **Paquet installé** :
   ```bash
@@ -100,7 +118,7 @@ Le pont expose aussi ce rendu : `SynthwayCore.render()` (échantillons en mémoi
 - **Une note à la fois :** le moteur est monophonique, et `note_off` coupe le son sans arrêter le moteur.
   - **Composer :** les commandes directes `note_on` restent monophoniques. Pour lire une composition, l'UI envoie au même WebSocket un timbre temporaire assemblé depuis les notes simultanées, puis commande la hauteur de référence ; le core additionne ses partiels. La limite est celle de `max_partials` (64 par défaut).
 - **Enveloppe :** `note_on` lance l'attaque et `note_off` le relâchement de l'enveloppe ADSR. Un `note_on` sur une note déjà ouverte change la hauteur sans relancer l'attaque (legato). Le serveur garde l'enveloppe et l'applique à chaque démarrage du moteur : on peut la régler avant de démarrer l'audio.
-- **Analyzer :** deux analyseurs du core (`synthway_analyzer_t`), indépendants du moteur et créés au premier usage : l'un pour le micro, l'autre pour le fichier chargé, pour qu'un long décodage ne bloque pas l'analyse en direct. Le micro est ouvert par le core, seulement quand une page envoie `start` sur `/ws/analyzer`, et fermé à `stop` ou quand la page se déconnecte. Une seule page l'écoute à la fois. Rien n'est enregistré ni joué : seuls les résultats de l'analyse sortent du core. Un fichier importé arrive entier dans le corps de la requête, et le core le décode en mémoire (WAV, FLAC, MP3 ; 256 Mo et 10 minutes au plus).
+- **Analyzer :** deux analyseurs du core (`synthway_analyzer_t`), indépendants du moteur et créés au premier usage : l'un pour le micro, l'autre pour le fichier chargé, pour qu'un long décodage ne bloque pas l'analyse en direct. Le micro est ouvert par le core, seulement quand une page envoie `start` sur `/ws/analyzer`, et fermé à `stop` ou quand la page se déconnecte. Une seule page l'écoute à la fois. Rien n'est joué. Le micro n'est enregistré que si la page envoie `record` : le core garde l'enregistrement en mémoire, sans limite de durée, et ses échantillons ne passent par le serveur que lorsqu'on le télécharge en WAV. Le serveur l'alimente en appelant l'analyse en direct toutes les 50 ms. Sinon, seuls les résultats de l'analyse sortent du core. Un fichier importé arrive entier dans le corps de la requête, et le core le décode en mémoire (WAV, FLAC, MP3 ; 256 Mo et 10 minutes au plus).
 - **Timbre (synthèse additive) :** un timbre remplace la forme d'onde et l'enveloppe par une liste de partiels, chacun avec son rapport à la note jouée, son amplitude, sa forme d'onde et son enveloppe. Comme l'enveloppe, le serveur le garde et l'applique à chaque démarrage du moteur. 64 partiels au plus (`max_partials` dans `/api/engine/status`, `MAX_PARTIALS` dans `models.py`, vérifié contre le core au chargement de la bibliothèque). Le serveur ne prévient ni des partiels au-delà de la moitié de la fréquence d'échantillonnage ni de la saturation : l'UI s'en charge.
 
 ---
@@ -120,9 +138,15 @@ Le pont expose aussi ce rendu : `SynthwayCore.render()` (échantillons en mémoi
 | `POST` | `/api/synth/envelope` | Règle l'enveloppe `{"attack", "decay", "sustain", "release"}` : durées de 0 à 10 s, maintien de 0 à 1 (sinon 422) |
 | `POST` | `/api/synth/timbre` | Fait jouer les notes par des partiels : `{"partials": [{"ratio", "amplitude", "waveform", "envelope"}, ...]}`, rapport dans ]0, 1000], amplitude de 0 à 1, 64 partiels au plus (sinon 422) |
 | `DELETE` | `/api/synth/timbre` | Revient à l'oscillateur unique (forme d'onde et enveloppe) |
-| `POST` | `/api/analyzer/clip?name=…` | Charge un fichier audio, envoyé tel quel dans le corps de la requête, à la place du précédent. Renvoie sa durée, sa fréquence d'échantillonnage, sa forme d'onde (`overview` : 1000 crêtes) et la note tout du long (`track` : fréquence, netteté et niveau toutes les 20 ms, 1000 points au plus). 400 si vide, 413 si trop gros ou trop long, 415 si ce n'est ni du WAV, ni du FLAC, ni du MP3 |
+| `POST` | `/api/analyzer/clip?name=…` | Charge un fichier audio, envoyé tel quel dans le corps de la requête, à la place du précédent. Renvoie sa durée, sa fréquence d'échantillonnage, ses crêtes globales (`overview`) et gauche/droite (`overview_left`, `overview_right` : 1000 chacune) et la note tout du long (`track` : fréquence, netteté et niveau toutes les 20 ms, 1000 points au plus). 400 si vide, 413 si trop gros ou trop long, 415 si ce n'est ni du WAV, ni du FLAC, ni du MP3 |
 | `GET` | `/api/analyzer/clip` | Le dernier fichier chargé, comme ci-dessus, ou `null` |
-| `GET` | `/api/analyzer/clip/analysis?time=…&noise_gate_db=…` | Analyse du fichier autour de `time` secondes : note (`frequency`, `clarity`, `level_db`), partiels (`frequency`, `ratio`, `amplitude`) et spectre (`spectrum_db`, 256 points de `spectrum_min_hz` à `spectrum_max_hz` sur une échelle logarithmique). `noise_gate_db`, facultatif, de −120 (désactivé, par défaut) à 0 : les pics sous ce niveau sont ignorés comme bruit ambiant (422 hors de ces bornes). 404 sans fichier |
+| `GET` | `/api/analyzer/clip.wav` | Le fichier chargé décodé en WAV pour le navigateur ; accepte les requêtes HTTP `Range` pour permettre la lecture à une position choisie |
+| `GET` | `/api/analyzer/clip/analysis?time=…&window_ms=…&noise_gate_db=…` ou `?start=…&end=…&window_ms=…` | Analyse du fichier autour de `time` secondes, ou d'une zone de `start` à `end` (médiane de ses moments, voir `synthway_analyzer_analyze_clip_range`) : note (`frequency`, `clarity`, `level_db`), partiels (`frequency`, `ratio`, `amplitude`) et spectre (`spectrum_db`, 256 points de `spectrum_min_hz` à `spectrum_max_hz` sur une échelle logarithmique). `window_ms`, facultatif : la fenêtre d'analyse, de 10 à 500 ms, ou 0 (par défaut) pour l'habituelle, d'environ 170 ms. `noise_gate_db`, facultatif, de −120 (désactivé, par défaut) à 0 : les pics sous ce niveau sont ignorés comme bruit ambiant. `reference_hz`, facultatif : la note à laquelle les rapports sont pris, de 16 à 5000 Hz, ou 0 (par défaut) pour la note entendue (sauts d'octave corrigés sur une zone). `harmonic_cents`, facultatif : ne garde que les partiels à moins de ce nombre de cents d'un rapport entier (100 au plus), 0 (par défaut) pour tous. 422 hors de ces bornes, sans `time` ni zone, ou pour une zone vide ; 404 sans fichier |
+| `GET` | `/api/analyzer/clip/waveform?first=…&frames=…&count=…` | Forme d'onde d'une partie du fichier, pour la dessiner zoomée : les `frames` échantillons à partir de `first` (arrêtés à la fin du fichier), coupés en `count` parts égales (8192 au plus, jamais plus que d'échantillons), avec le plus bas et le plus haut échantillon de chaque canal dans chacune (`left_low`, `left_high`, `right_low`, `right_high`). Avec autant de parts que d'échantillons, chaque part est un échantillon. Renvoie aussi `first_frame` et `frame_count` (échantillons couverts). 404 sans fichier, 422 si `first` dépasse la fin |
+| `GET` | `/api/analyzer/recording` | Le dernier enregistrement du micro, présenté comme un fichier (`name` : `"Enregistrement"`), ou `null` (aucun, ou enregistrement en cours). Il est distinct du fichier chargé |
+| `GET` | `/api/analyzer/recording/analysis?time=…` ou `?start=…&end=…` (et `window_ms`, `noise_gate_db`) | Analyse de l'enregistrement, d'un instant ou d'une zone, comme pour un fichier. 404 sans enregistrement |
+| `GET` | `/api/analyzer/recording/waveform?first=…&frames=…&count=…` | Forme d'onde d'une partie de l'enregistrement, comme pour un fichier (mono : les deux canaux sont identiques). 404 sans enregistrement |
+| `GET` | `/api/analyzer/recording.wav` | L'enregistrement en WAV mono 16 bits, écrit par le core, à télécharger (`Content-Disposition: attachment`) ; l'UI le lit aussi (le navigateur ignore alors cet en-tête) et il accepte les requêtes HTTP `Range` comme `clip.wav`. 404 sans enregistrement |
 
 ### Canal WebSocket (`/ws/synth`)
 
@@ -155,8 +179,8 @@ Idéal pour l'interface graphique afin de limiter l'overhead HTTP :
 
 ### Canal WebSocket (`/ws/analyzer`)
 
-Analyse en direct du micro. Le core écoute et analyse ; le serveur envoie un résultat toutes les 50 ms. Rien n'est enregistré.
+Analyse en direct du micro. Le core écoute et analyse ; le serveur envoie un résultat toutes les 50 ms. Rien n'est enregistré, sauf sur demande.
 
-- **De la page :** `{ "type": "start", "device_index": -1, "sample_rate": 0, "noise_gate_db": -120 }` ouvre l'entrée choisie (`-1` : celle du système ; `0` : sa propre fréquence d'échantillonnage ; `noise_gate_db` facultatif, seuil anti-bruit de −120, désactivé, à 0), `{ "type": "set", "noise_gate_db": -70 }` change le seuil pendant l'écoute, `{ "type": "stop" }` la ferme.
-- **Du serveur :** `{ "type": "started", "device_index": -1, "sample_rate": 48000, "exclusive": true }` (`exclusive` : le core a obtenu le mode exclusif, sans les effets audio du système ; `false` : mode partagé, avec eux), puis `{ "type": "analysis", "analysis": { ... } }` (même contenu que `/api/analyzer/clip/analysis`) jusqu'à `{ "type": "stopped" }`. Une erreur (micro introuvable, micro déjà écouté par une autre page, message invalide) donne `{ "type": "error", "error": "..." }` et la connexion reste ouverte.
-- Le micro se ferme aussi quand la page se déconnecte.
+- **De la page :** `{ "type": "start", "device_index": -1, "sample_rate": 0, "noise_gate_db": -120 }` ouvre l'entrée choisie (`-1` : celle du système ; `0` : sa propre fréquence d'échantillonnage ; `noise_gate_db` facultatif, seuil anti-bruit de −120, désactivé, à 0), `{ "type": "set", "noise_gate_db": -70 }` change le seuil pendant l'écoute, `{ "type": "record" }` enregistre à partir de maintenant (micro ouvert), `{ "type": "stop_record" }` arrête l'enregistrement sans fermer le micro, `{ "type": "stop" }` ferme le micro.
+- **Du serveur :** `{ "type": "started", "device_index": -1, "sample_rate": 48000, "exclusive": true }` (`exclusive` : le core a obtenu le mode exclusif, sans les effets audio du système ; `false` : mode partagé, avec eux), puis `{ "type": "analysis", "analysis": { ... } }` (même contenu que `/api/analyzer/clip/analysis`) jusqu'à `{ "type": "stopped" }`. Pendant un enregistrement : `{ "type": "recording" }` au début, `"recording": { "duration": 1.25, "lost": 0 }` dans chaque analyse (en secondes ; `lost` : échantillons que le core n'a pas eu le temps de prendre, remplacés par du silence), puis `{ "type": "recorded", "duration": 3.5, "lost": 0 }` à la fin, que la page l'ait demandée ou que le micro se ferme. Une erreur (micro introuvable, micro déjà écouté par une autre page, enregistrement sans micro, message invalide) donne `{ "type": "error", "error": "..." }` et la connexion reste ouverte.
+- Le micro se ferme aussi quand la page se déconnecte ; un enregistrement en cours est alors gardé.

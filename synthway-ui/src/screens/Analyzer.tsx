@@ -1,35 +1,68 @@
-import { Crosshair, FileAudio, Mic, MicOff, Pause, Play, Upload } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react';
+import { Circle, Crosshair, Download, FileAudio, Mic, MicOff, Minus, Pause, Play, Plus, Sparkles, Square, Upload } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import { AnalysisSpectrum, partialColor } from '../components/AnalysisSpectrum';
-import { ClipWaveform } from '../components/ClipWaveform';
+import { ClipWaveform, type ClipSelection } from '../components/ClipWaveform';
 import layout from '../components/layout.module.css';
 import { ScreenHeader } from '../components/ScreenHeader';
-import { Badge, Button, Field, Panel, Section, Segmented, Slider, SoonBadge, inputClass, selectClass } from '../components/ui';
+import { Badge, Button, Field, Panel, Section, Segmented, Slider, Toggle, inputClass, selectClass } from '../components/ui';
 import { Tuner } from '../components/Tuner';
-import { AnalyzerSocket, api, NOISE_GATE_OFF } from '../lib/api';
-import { formatCents, frequencyToNote, harmonicGap } from '../lib/music';
+import {
+  ANALYSIS_WINDOW_DEFAULT_MS,
+  ANALYSIS_WINDOW_MAX_MS,
+  ANALYSIS_WINDOW_MIN_MS,
+  ANALYZER_CLIP_WAV_URL,
+  AnalyzerSocket,
+  api,
+  HARMONIC_CENTS,
+  NOISE_GATE_OFF,
+  RECORDING_WAV_URL,
+  type AnalysisOptions,
+  type AnalysisTarget,
+} from '../lib/api';
+import { instrumentFromPartials, type Instrument } from '../lib/instruments';
+import { formatCents, frequencyToNote, harmonicGap, NOTE_NAMES } from '../lib/music';
 import { usePersistentState } from '../lib/storage';
 import { useSynthServer } from '../lib/SynthServer';
-import type { Analysis, AnalyzerMessage, ClipInfo } from '../types';
+import type { Analysis, AnalyzerMessage, ClipInfo, RecordingTimes } from '../types';
 import styles from './Analyzer.module.css';
 
 /*
- * Analyzer, first step: shows, never records nor plays.
+ * Analyzer: analyzes the microphone or a loaded audio file.
  *   - Micro: synthway-core listens to a capture device and analyzes what it
  *     hears; the server sends the results 20 times a second (/ws/analyzer).
+ *     « Enregistrer » records it in the core, with no time limit; the
+ *     recording is then shown and played like a file. Placing the cursor on it
+ *     or playing it stops listening, and listening again removes the cursor:
+ *     the panels below show one or the other. The recording can be downloaded
+ *     as a WAV file.
  *   - Fichier: a WAV, FLAC or MP3 file is sent whole to the core, which decodes
  *     it; the note is followed along it, and a cursor picks the moment analyzed.
- *     « Parcourir » moves the cursor at real speed, without sound.
+ *   « Lire » plays the file or the recording in the browser, from the cursor,
+ *   which follows it; placing the cursor pauses it. Dragging on the waveform
+ *   selects a zone, which « Lire » then plays in a loop.
+ * What the panels below show: without a zone, the moment of the cursor seen
+ * through the analysis window (« Fenêtre d'analyse », drawn as green bounds on
+ * the waveform); with a zone, the median of its moments, computed by the core.
+ * Their ratios are taken to the reference note: the one heard (for a zone, the
+ * low end of its notes, octave errors corrected by the core), or one fixed
+ * here, in the octave chosen. « Harmoniques seulement » keeps only partials
+ * near a whole ratio, which leaves out most of the other instruments of a mix.
+ * « Créer un instrument » makes an Instrument Creator card of those partials.
  * Next steps: hear the file through the core, follow each partial over time
- * (its envelope), and build an Instrument Creator card from the partials.
+ * (its envelope).
  */
 
 type Source = 'micro' | 'file';
 type Listening = 'off' | 'starting' | 'on';
 
 const ACCEPTED_FILES = '.wav,.flac,.mp3,audio/wav,audio/x-wav,audio/flac,audio/mpeg';
-/** A partial counts as a harmonic within this many cents of a whole ratio */
-const HARMONIC_CENTS = 30;
+/** Harmonics of a note part from 6 bins of a Blackman window apart: windows shorter than 6 periods mix them */
+const PERIODS_PER_WINDOW = 6;
+/** A fixed reference note, as MIDI notes: C0 (16 Hz) to D#8 (4978 Hz), within what the core accepts */
+const REFERENCE_MIDI_MIN = 12;
+const REFERENCE_MIDI_MAX = 111;
+/** Track points of a zone on another note than its reference, above this share, earn a warning */
+const OTHER_NOTES_SHARE = 0.25;
 /** Anti-noise slider: 0 is off, then 1 to GATE_SLIDER_MAX raise the gate from -99 to -20 dBFS.
     Its popup takes any gate the core accepts, from NOISE_GATE_OFF to 0 dBFS. */
 const GATE_SLIDER_ZERO_DB = -100;
@@ -60,7 +93,178 @@ function formatDuration(seconds: number): string {
   return seconds < 60 ? `${seconds.toFixed(2)} s` : `${Math.floor(seconds / 60)} min ${Math.round(seconds % 60)} s`;
 }
 
-export function Analyzer() {
+function describeZone(zone: ClipSelection): string {
+  return `Zone de ${zone.start.toFixed(2)} s à ${zone.end.toFixed(2)} s (${formatDuration(zone.end - zone.start)}), lue en boucle par « Lire » et analysée en entier (médiane de ses moments). Un clic ou Échap la retire.`;
+}
+
+/** The zone if there is one (playback moving the cursor does not change it), else the cursor's moment */
+function useAnalysisTarget(selection: ClipSelection | null, time: number | null): AnalysisTarget | null {
+  const start = selection?.start;
+  const end = selection?.end;
+  const moment = selection ? null : time;
+  return useMemo(
+    () => (start !== undefined && end !== undefined ? { start, end } : moment !== null ? { time: moment } : null),
+    [start, end, moment],
+  );
+}
+
+/** Analyses of a file or a recording, one request at a time: while one runs, only the latest target asked waits */
+function useAnalysisRequests(
+  fetchAnalysis: (target: AnalysisTarget, options: AnalysisOptions) => Promise<Analysis>,
+  optionsRef: { current: AnalysisOptions },
+  onAnalysis: (analysis: Analysis) => void,
+  onError: (error: string) => void,
+) {
+  const wanted = useRef<AnalysisTarget | null>(null);
+  const inFlight = useRef(false);
+  return useCallback(
+    async (target: AnalysisTarget) => {
+      wanted.current = target;
+      if (inFlight.current) return;
+      inFlight.current = true;
+      while (wanted.current !== null) {
+        const next = wanted.current;
+        wanted.current = null;
+        try {
+          onAnalysis(await fetchAnalysis(next, optionsRef.current));
+        } catch (error) {
+          onError(describe(error));
+        }
+      }
+      inFlight.current = false;
+    },
+    [fetchAnalysis, optionsRef, onAnalysis, onError],
+  );
+}
+
+/** What the analysis shown looks at, in words */
+function describeAnalyzed(target: AnalysisTarget | null, windowMs: number): string {
+  if (!target) return 'en direct, au micro (fenêtre habituelle, environ 170 ms)';
+  if ('time' in target) return `l’instant ${target.time.toFixed(2)} s, à travers une fenêtre de ${windowMs} ms`;
+  return `la zone de ${target.start.toFixed(2)} s à ${target.end.toFixed(2)} s : médiane de ses moments, par fenêtres de ${windowMs} ms`;
+}
+
+function midiFrequency(midi: number, a4: number): number {
+  return a4 * Math.pow(2, (midi - 69) / 12);
+}
+
+function midiLabel(midi: number): string {
+  return `${NOTE_NAMES[((midi % 12) + 12) % 12]}${Math.floor(midi / 12) - 1}`;
+}
+
+/** Share of the clear points of the note track, within a zone, on another note than reference (in any octave) */
+function otherNotesShare(clip: ClipInfo, zone: ClipSelection, reference: number): number {
+  const { frequency, clarity } = clip.track;
+  let clear = 0;
+  let other = 0;
+  for (let i = 0; i < frequency.length; i += 1) {
+    const time = ((i + 0.5) / frequency.length) * clip.duration;
+    if (time < zone.start || time > zone.end || !(frequency[i] > 0) || clarity[i] < 0.5) continue;
+    clear += 1;
+    const semitones = 12 * Math.log2(frequency[i] / reference);
+    if (Math.abs(semitones - 12 * Math.round(semitones / 12)) > 1.5) other += 1;
+  }
+  return clear >= 3 ? other / clear : 0;
+}
+
+/** While playing, the cursor follows 20 times a second, like the microphone's analyses */
+const PLAYBACK_FOLLOW_MS = 50;
+/** How often playback looks for the end of its loop: it can run this much past it before going back */
+const LOOP_CHECK_MS = 10;
+
+/**
+ * Plays a file or a recording in the browser, from the WAV the server makes of
+ * it (the server answers Range requests, so the browser can start anywhere).
+ * toggle(from) plays from the cursor, or pauses; while playing, onTime moves
+ * the cursor. With a loop, playback stays in it, going back to its start at its
+ * end (by a seek: a short gap can be heard). onTime and onError must be
+ * stable. clip null: nothing to play.
+ */
+function useClipPlayer(
+  url: string,
+  clip: ClipInfo | null,
+  loop: ClipSelection | null,
+  onTime: (time: number) => void,
+  onError: (error: string) => void,
+) {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const loopRef = useRef(loop);
+  loopRef.current = loop;
+
+  useEffect(() => {
+    setPlaying(false);
+    if (!clip) return undefined;
+    // A new address for each clip, so that no cache serves the previous one
+    const audio = new Audio(`${url}?v=${Date.now()}`);
+    audio.preload = 'auto';
+    audioRef.current = audio;
+    audio.addEventListener('play', () => setPlaying(true));
+    audio.addEventListener('pause', () => setPlaying(false));
+    audio.addEventListener('ended', () => {
+      const zone = loopRef.current;
+      if (!zone) {
+        onTime(clip.duration);
+        return;
+      }
+      // A loop up to the end of the clip
+      audio.currentTime = zone.start;
+      void audio.play().catch(() => undefined);
+    });
+    audio.addEventListener('error', () => {
+      setPlaying(false);
+      onError('La lecture a échoué.');
+    });
+    // Polled rather than on 'timeupdate' (4 times a second), and only while playing:
+    // a pause can come from placing the cursor elsewhere, which then wins
+    let followed = 0;
+    const tick = window.setInterval(() => {
+      if (audio.paused) return;
+      const zone = loopRef.current;
+      if (zone && audio.currentTime >= zone.end) audio.currentTime = zone.start;
+      if (performance.now() - followed >= PLAYBACK_FOLLOW_MS) {
+        followed = performance.now();
+        onTime(audio.currentTime);
+      }
+    }, LOOP_CHECK_MS);
+    return () => {
+      window.clearInterval(tick);
+      audio.pause();
+      audio.removeAttribute('src');
+      audio.load();
+      if (audioRef.current === audio) audioRef.current = null;
+    };
+  }, [url, clip, onTime, onError]);
+
+  /** Plays from `from`, or pauses where playback is */
+  const toggle = useCallback(
+    (from: number) => {
+      const audio = audioRef.current;
+      if (!audio) return;
+      if (!audio.paused) {
+        audio.pause();
+        onTime(audio.currentTime);
+        return;
+      }
+      // Kept by the browser even before the WAV has loaded. From outside the loop (the whole
+      // clip without one) or from its end, it starts at its start (the end of the clip can
+      // fall a hair before the end of its WAV, which would play nothing)
+      const start = loopRef.current?.start ?? 0;
+      const end = loopRef.current?.end ?? clip?.duration ?? 0;
+      audio.currentTime = from >= start && from < end - 0.01 ? from : start;
+      audio.play().catch((error: unknown) => {
+        // AbortError: paused or replaced before it could start
+        if (!(error instanceof DOMException && error.name === 'AbortError')) onError(`Lecture impossible : ${describe(error)}`);
+      });
+    },
+    [clip, onTime, onError],
+  );
+
+  const pause = useCallback(() => audioRef.current?.pause(), []);
+  return { playing, toggle, pause };
+}
+
+export function Analyzer({ onCreateInstrument }: { onCreateInstrument: (instrument: Instrument) => void }) {
   const server = useSynthServer();
   const online = server.connection === 'online' && server.coreLoaded;
   const [source, setSource] = usePersistentState<Source>('synthway.analyzer.source.v1', () => 'micro');
@@ -68,8 +272,18 @@ export function Analyzer() {
   const [inputDevice, setInputDevice] = usePersistentState<number>('synthway.analyzer.input.v1', () => -1);
   /** In dBFS; NOISE_GATE_OFF: off, the default */
   const [noiseGate, setNoiseGate] = usePersistentState<number>('synthway.analyzer.noise-gate.v1', () => NOISE_GATE_OFF);
-  const noiseGateRef = useRef(noiseGate);
-  noiseGateRef.current = noiseGate;
+  /** Analysis window of the cursor (and of each moment of a zone), in ms */
+  const [windowMs, setWindowMs] = usePersistentState<number>(
+    'synthway.analyzer.window-ms.v1',
+    () => ANALYSIS_WINDOW_DEFAULT_MS,
+  );
+  /** A reference note fixed by the user (MIDI), null: the note heard. Kept for this visit only: it belongs to one sound */
+  const [referenceMidi, setReferenceMidi] = useState<number | null>(null);
+  const referenceHz = referenceMidi === null ? 0 : midiFrequency(referenceMidi, a4);
+  /** Only the partials near a whole ratio: on by default, a mix holds other instruments */
+  const [harmonicsOnly, setHarmonicsOnly] = usePersistentState<boolean>('synthway.analyzer.harmonics-only.v1', () => true);
+  const optionsRef = useRef<AnalysisOptions>({ noiseGateDb: noiseGate, windowMs, referenceHz, harmonicCents: 0 });
+  optionsRef.current = { noiseGateDb: noiseGate, windowMs, referenceHz, harmonicCents: harmonicsOnly ? HARMONIC_CENTS : 0 };
 
   /* ---------- Microphone ---------- */
 
@@ -82,31 +296,62 @@ export function Analyzer() {
   const listeningRef = useRef<Listening>('off');
   listeningRef.current = listening;
 
+  // Recording: in the core, then shown like a file, with a cursor (null: none, the live analysis shows)
+  const [recording, setRecording] = useState<Listening>('off');
+  const [recordTimes, setRecordTimes] = useState<RecordingTimes | null>(null);
+  const [recorded, setRecorded] = useState(0); // recordings finished on this screen: each one is fetched
+  const [recordClip, setRecordClip] = useState<ClipInfo | null>(null);
+  const [recordTime, setRecordTime] = useState<number | null>(null);
+  const [recordAnalysis, setRecordAnalysis] = useState<Analysis | null>(null);
+  const [recordError, setRecordError] = useState<string | null>(null);
+  const recordingRef = useRef<Listening>('off');
+  recordingRef.current = recording;
+  const [recordSelection, setRecordSelection] = useState<ClipSelection | null>(null);
+  const {
+    playing: recordPlaying,
+    toggle: toggleRecordPlayback,
+    pause: pauseRecordPlayback,
+  } = useClipPlayer(RECORDING_WAV_URL, online ? recordClip : null, recordSelection, setRecordTime, setRecordError);
+
   const onSocketMessage = useCallback((message: AnalyzerMessage) => {
     if (message.type === 'started') {
       setListening('on');
       setInputRate(message.sample_rate);
       setInputExclusive(message.exclusive === true);
       setLiveError(null);
+      // « Enregistrer » with the microphone closed: it is open now
+      if (recordingRef.current === 'starting') socketRef.current?.record();
     } else if (message.type === 'analysis') {
       if (listeningRef.current !== 'off') setLiveAnalysis(message.analysis);
+      if (message.recording) setRecordTimes(message.recording);
+    } else if (message.type === 'recording') {
+      setRecording('on');
+    } else if (message.type === 'recorded') {
+      setRecording('off');
+      setRecordTimes({ duration: message.duration, lost: message.lost });
+      setRecorded((count) => count + 1);
     } else if (message.type === 'stopped') {
       setListening('off');
     } else if (message.type === 'error') {
       setLiveError(message.error);
       if (listeningRef.current === 'starting') setListening('off');
+      if (recordingRef.current === 'starting') setRecording('off');
     }
   }, []);
 
   const onSocketClose = useCallback(() => {
     if (listeningRef.current !== 'off') setLiveError('Connexion au serveur perdue : le micro est fermé.');
     setListening('off');
+    setRecording('off');
   }, []);
 
   const startListening = () => {
     socketRef.current ??= new AnalyzerSocket(onSocketMessage, onSocketClose);
     setLiveError(null);
     setLiveAnalysis(null);
+    pauseRecordPlayback();
+    setRecordTime(null); // listening again removes the cursor and the zone from the recording
+    setRecordSelection(null);
     setListening('starting');
     socketRef.current.start(inputDevice, noiseGate);
   };
@@ -126,7 +371,67 @@ export function Analyzer() {
   useEffect(() => () => socketRef.current?.close(), []);
   useEffect(() => {
     if (source !== 'micro' || !online) stopListening();
-  }, [source, online, stopListening]);
+    if (source !== 'micro') pauseRecordPlayback();
+  }, [source, online, stopListening, pauseRecordPlayback]);
+
+  /* ---------- Recording ---------- */
+
+  const startRecording = () => {
+    setRecordClip(null);
+    setRecordTime(null);
+    setRecordSelection(null);
+    setRecordAnalysis(null);
+    setRecordTimes(null);
+    setRecordError(null);
+    setRecording('starting');
+    // The microphone opens first if needed: 'started' then asks to record
+    if (listeningRef.current === 'on') socketRef.current?.record();
+    else if (listeningRef.current === 'off') startListening();
+  };
+
+  // Placing the cursor pauses playback and stops listening: the panels below show the recording
+  const seekRecording = useCallback(
+    (time: number) => {
+      pauseRecordPlayback();
+      stopListening();
+      setRecordTime(time);
+    },
+    [pauseRecordPlayback, stopListening],
+  );
+
+  // Playing it stops listening too, and starts from the cursor (the start when there is none)
+  const playOrPauseRecording = () => {
+    stopListening();
+    toggleRecordPlayback(recordTime ?? 0);
+  };
+
+  // The recording just finished, or the last one when the screen opens: the cursor goes to its clearest moment
+  useEffect(() => {
+    if (!online) return undefined;
+    let cancelled = false;
+    void api.recording().then((loaded) => {
+      if (cancelled || !loaded || recordingRef.current !== 'off') return;
+      setRecordClip(loaded);
+      setRecordSelection(null);
+      seekRecording(clearestMoment(loaded));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [online, recorded, seekRecording]);
+
+  const requestRecordAnalysis = useAnalysisRequests(api.analyzeRecording, optionsRef, setRecordAnalysis, setRecordError);
+  const recordTarget = useAnalysisTarget(recordSelection, recordTime);
+  useEffect(() => {
+    if (recordClip && recordTarget && online) void requestRecordAnalysis(recordTarget);
+  }, [recordClip, recordTarget, noiseGate, windowMs, referenceHz, harmonicsOnly, online, requestRecordAnalysis]);
+
+  const downloadRecording = () => {
+    const link = document.createElement('a');
+    link.href = RECORDING_WAV_URL;
+    link.download = '';
+    link.click();
+  };
 
   /* ---------- File ---------- */
 
@@ -135,16 +440,26 @@ export function Analyzer() {
   const [clipAnalysis, setClipAnalysis] = useState<Analysis | null>(null);
   const [uploading, setUploading] = useState(false);
   const [clipError, setClipError] = useState<string | null>(null);
-  const [scanning, setScanning] = useState(false);
   const [dropping, setDropping] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
-  const timeRef = useRef(0);
-  timeRef.current = clipTime;
+  const [clipSelection, setClipSelection] = useState<ClipSelection | null>(null);
+  const {
+    playing: clipPlaying,
+    toggle: toggleClipPlayback,
+    pause: pauseClipPlayback,
+  } = useClipPlayer(ANALYZER_CLIP_WAV_URL, online ? clip : null, clipSelection, setClipTime, setClipError);
+
+  // Placing the cursor pauses playback
+  const seekClip = (time: number) => {
+    pauseClipPlayback();
+    setClipTime(time);
+  };
 
   const showClip = useCallback((loaded: ClipInfo) => {
     setClip(loaded);
     setClipAnalysis(null);
-    setClipTime(clearestMoment(loaded));
+    setClipTime(0);
+    setClipSelection(null);
   }, []);
 
   // The server keeps the file loaded last: shown again when the screen opens
@@ -162,7 +477,7 @@ export function Analyzer() {
   const upload = async (file: File) => {
     setUploading(true);
     setClipError(null);
-    setScanning(false);
+    pauseClipPlayback();
     try {
       showClip(await api.uploadClip(file));
     } catch (error) {
@@ -172,54 +487,16 @@ export function Analyzer() {
     }
   };
 
-  // One analysis request at a time; while one runs, only the latest moment asked waits
-  const wanted = useRef<number | null>(null);
-  const inFlight = useRef(false);
-  const requestAnalysis = useCallback(async (time: number) => {
-    wanted.current = time;
-    if (inFlight.current) return;
-    inFlight.current = true;
-    while (wanted.current !== null) {
-      const next = wanted.current;
-      wanted.current = null;
-      try {
-        setClipAnalysis(await api.analyzeClip(next, noiseGateRef.current));
-      } catch (error) {
-        setClipError(describe(error));
-      }
-    }
-    inFlight.current = false;
-  }, []);
+  const requestAnalysis = useAnalysisRequests(api.analyzeClip, optionsRef, setClipAnalysis, setClipError);
+  const clipTarget = useAnalysisTarget(clipSelection, clipTime);
 
   useEffect(() => {
-    if (clip && online) void requestAnalysis(clipTime);
-  }, [clip, clipTime, noiseGate, online, requestAnalysis]);
+    if (clip && clipTarget && online) void requestAnalysis(clipTarget);
+  }, [clip, clipTarget, noiseGate, windowMs, referenceHz, harmonicsOnly, online, requestAnalysis]);
 
-  // « Parcourir »: the cursor moves at real speed, the analysis follows; nothing is played
   useEffect(() => {
-    if (!scanning || !clip) return undefined;
-    let frame = 0;
-    let last = performance.now();
-    const tick = (now: number) => {
-      const next = timeRef.current + (now - last) / 1000;
-      last = now;
-      if (next >= clip.duration) {
-        setClipTime(clip.duration);
-        setScanning(false);
-        return;
-      }
-      setClipTime(next);
-      frame = requestAnimationFrame(tick);
-    };
-    frame = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(frame);
-  }, [scanning, clip]);
-
-  const toggleScan = () => {
-    if (!clip) return;
-    if (!scanning && clipTime >= clip.duration - 0.01) setClipTime(0);
-    setScanning(!scanning);
-  };
+    if (source !== 'file') pauseClipPlayback();
+  }, [source, pauseClipPlayback]);
 
   const onDrop = (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -230,9 +507,43 @@ export function Analyzer() {
 
   /* ---------- Display ---------- */
 
-  const analysis = source === 'micro' ? liveAnalysis : clipAnalysis;
+  const onRecording = source === 'micro' && recordTarget !== null;
+  const analysis = source === 'micro' ? (onRecording ? recordAnalysis : liveAnalysis) : clipAnalysis;
   const partials = analysis?.partials ?? [];
   const captureDevices = server.devices?.capture_devices ?? [];
+  /** What the analysis shown looks at: null for the microphone, live */
+  const analyzedTarget = source === 'micro' ? (onRecording ? recordTarget : null) : clipTarget;
+  const zoneMode = analyzedTarget !== null && !('time' in analyzedTarget);
+  const measured = partials.filter((partial) => partial.ratio > 0);
+  const canCreate = online && analysis !== null && analysis.frequency > 0 && measured.length > 0;
+  const shownNote = analysis && analysis.frequency > 0 ? frequencyToNote(analysis.frequency, a4) : null;
+  const shownNoteName = shownNote ? `${shownNote.name}${shownNote.octave}` : '';
+  // Harmonics of the note part from about 6 periods of it on: a shorter window mixes them
+  const minWindowMs = analysis && analysis.frequency > 0 ? Math.ceil((PERIODS_PER_WINDOW * 1000) / analysis.frequency) : 0;
+  const windowTooShort = analyzedTarget !== null && minWindowMs > windowMs;
+  const zoneClip = source === 'micro' ? recordClip : clip;
+  const zoneOtherNotes =
+    zoneMode && zoneClip && analyzedTarget && 'start' in analyzedTarget && analysis && analysis.frequency > 0
+      ? otherNotesShare(zoneClip, analyzedTarget, analysis.frequency)
+      : 0;
+  /** The fixed reference note's pitch class and octave, to edit them */
+  const referencePitchClass = referenceMidi === null ? 0 : ((referenceMidi % 12) + 12) % 12;
+  const setReference = (midi: number) =>
+    setReferenceMidi(Math.max(REFERENCE_MIDI_MIN, Math.min(REFERENCE_MIDI_MAX, Math.round(midi))));
+
+  /** A card of the Instrument Creator from the partials shown, which opens it */
+  const createInstrument = () => {
+    if (!analysis || !canCreate) return;
+    const note = frequencyToNote(analysis.frequency, a4);
+    const origin = source === 'micro' ? (onRecording ? 'l’enregistrement du micro' : 'le micro, en direct') : clip?.name ?? 'un fichier';
+    onCreateInstrument(
+      instrumentFromPartials(
+        `${source === 'micro' ? (onRecording ? 'Enregistrement' : 'Micro') : clip?.name ?? 'Son'}${note ? ` · ${note.name}${note.octave}` : ''}`,
+        `Créé dans l’Analyzer depuis ${origin} : ${describeAnalyzed(analyzedTarget, windowMs)}, rapports à ${note ? `${note.name}${note.octave}` : 'la note'}${harmonicsOnly && analyzedTarget ? ', harmoniques seulement' : ''}. ${measured.length} partiel${measured.length > 1 ? 's' : ''} mesuré${measured.length > 1 ? 's' : ''}, sinusoïdes, une seule enveloppe pour l’instant.`,
+        measured,
+      ),
+    );
+  };
 
   return (
     <div className={layout.screen}>
@@ -256,65 +567,157 @@ export function Analyzer() {
       <div className={styles.body}>
         <Panel className={styles.source}>
           {source === 'micro' ? (
-            <Section
-              title="Micro"
-              badge={
-                listening === 'on' ? (
-                  <Badge tone="live">À l’écoute</Badge>
-                ) : listening === 'starting' ? (
-                  <Badge>Ouverture…</Badge>
-                ) : (
-                  <Badge>Coupé</Badge>
-                )
-              }
-            >
-              <div className={styles.micRow}>
-                <Field label="Entrée">
-                  <select
-                    className={selectClass}
-                    value={inputDevice}
-                    disabled={listening !== 'off'}
-                    onChange={(event) => setInputDevice(Number(event.target.value))}
+            <>
+              <Section
+                title="Micro"
+                badge={
+                  listening === 'on' ? (
+                    <Badge tone="live">À l’écoute</Badge>
+                  ) : listening === 'starting' ? (
+                    <Badge>Ouverture…</Badge>
+                  ) : (
+                    <Badge>Coupé</Badge>
+                  )
+                }
+              >
+                <div className={styles.micRow}>
+                  <Field label="Entrée">
+                    <select
+                      className={selectClass}
+                      value={inputDevice}
+                      disabled={listening !== 'off'}
+                      onChange={(event) => setInputDevice(Number(event.target.value))}
+                    >
+                      <option value={-1}>Entrée par défaut du système</option>
+                      {captureDevices.map((device) => (
+                        <option key={device.index} value={device.index}>
+                          {device.name}
+                          {device.is_default ? ' (défaut)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Button
+                    variant={listening === 'off' ? 'primary' : 'default'}
+                    disabled={!online || listening === 'starting'}
+                    onClick={listening === 'off' ? startListening : stopListening}
                   >
-                    <option value={-1}>Entrée par défaut du système</option>
-                    {captureDevices.map((device) => (
-                      <option key={device.index} value={device.index}>
-                        {device.name}
-                        {device.is_default ? ' (défaut)' : ''}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-                <Button
-                  variant={listening === 'off' ? 'primary' : 'default'}
-                  disabled={!online || listening === 'starting'}
-                  onClick={listening === 'off' ? startListening : stopListening}
-                >
-                  {listening === 'off' ? <Mic size={15} /> : <MicOff size={15} />}
-                  {listening === 'off' ? 'Écouter' : 'Arrêter'}
-                </Button>
-              </div>
-              <p className={styles.note}>
-                {listening === 'on'
-                  ? `À l’écoute à ${((inputRate ?? 0) / 1000).toFixed(1)} kHz. Rien n’est enregistré : seules la note et les partiels s’affichent.`
-                  : 'synthway-core ouvre le micro quand tu cliques sur Écouter, et le ferme quand tu arrêtes ou quittes l’onglet. Rien n’est enregistré.'}
-              </p>
-              {listening === 'on' &&
-                (inputExclusive ? (
+                    {listening === 'off' ? <Mic size={15} /> : <MicOff size={15} />}
+                    {listening === 'off' ? 'Écouter' : 'Arrêter'}
+                  </Button>
+                </div>
+                <p className={styles.note}>
+                  {listening === 'on'
+                    ? `À l’écoute à ${((inputRate ?? 0) / 1000).toFixed(1)} kHz. ${
+                        recording === 'on' ? 'Enregistrement en cours.' : 'Rien n’est enregistré : seules la note et les partiels s’affichent.'
+                      }`
+                    : 'synthway-core ouvre le micro quand tu cliques sur Écouter ou Enregistrer, et le ferme quand tu arrêtes ou quittes l’onglet.'}
+                </p>
+                {listening === 'on' &&
+                  (inputExclusive ? (
+                    <p className={styles.note}>
+                      Mode exclusif : le son arrive sans les effets audio de Windows (réduction de bruit, gain automatique).
+                      Pendant l’écoute, les autres applications ne peuvent pas utiliser ce micro.
+                    </p>
+                  ) : (
+                    <p className={styles.warning}>
+                      Mode partagé : Windows a refusé le mode exclusif, ses effets audio s’appliquent. La réduction de bruit
+                      peut étouffer une note tenue. Désactive les « Améliorations audio » du micro dans les Paramètres de
+                      Windows (Système › Son).
+                    </p>
+                  ))}
+                {!online && <p className={styles.note}>Le serveur n’est pas connecté (voir les Réglages).</p>}
+                {liveError && <p className={styles.error}>{liveError}</p>}
+              </Section>
+
+              <Section
+                title="Enregistrement"
+                className={styles.recordSection}
+                badge={
+                  recording === 'on' ? (
+                    <Badge tone="danger">● {(recordTimes?.duration ?? 0).toFixed(1)} s</Badge>
+                  ) : recording === 'starting' ? (
+                    <Badge>Ouverture…</Badge>
+                  ) : recordClip ? (
+                    <Badge>{formatDuration(recordClip.duration)}</Badge>
+                  ) : undefined
+                }
+                actions={
+                  <>
+                    {recordClip && recording === 'off' && (
+                      <>
+                        <Button
+                          size="small"
+                          disabled={!online}
+                          onClick={playOrPauseRecording}
+                          title={recordPlaying ? 'Met la lecture en pause' : 'Lit l’enregistrement à partir du curseur, qui le suit (coupe l’écoute)'}
+                        >
+                          {recordPlaying ? <Pause size={13} /> : <Play size={13} />}
+                          {recordPlaying ? 'Pause' : 'Lire'}
+                        </Button>
+                        <Button size="small" onClick={downloadRecording} title="Télécharge l’enregistrement en WAV (mono, 16 bits)">
+                          <Download size={13} />
+                          Télécharger .wav
+                        </Button>
+                      </>
+                    )}
+                    <Button
+                      size="small"
+                      variant={recording === 'off' ? 'primary' : 'default'}
+                      disabled={!online || recording === 'starting'}
+                      onClick={recording === 'off' ? startRecording : () => socketRef.current?.stopRecord()}
+                      title={recording === 'off' ? 'Enregistre ce que le micro entend, sans limite de durée' : undefined}
+                    >
+                      {recording === 'off' ? <Circle size={13} /> : <Square size={13} />}
+                      {recording === 'off' ? 'Enregistrer' : 'Arrêter l’enregistrement'}
+                    </Button>
+                  </>
+                }
+              >
+                <div className={styles.drop}>
+                  {recordClip ? (
+                    <ClipWaveform
+                      clip={recordClip}
+                      time={recordTime}
+                      a4={a4}
+                      zoomable
+                      playing={recordPlaying}
+                      loadWaveform={api.recordingWaveform}
+                      onSeek={seekRecording}
+                      selection={recordSelection}
+                      onSelect={setRecordSelection}
+                      windowSeconds={windowMs / 1000}
+                      label="Moment analysé dans l’enregistrement"
+                    />
+                  ) : (
+                    <div className={styles.dropHint} data-recording={recording === 'on' ? 'true' : undefined}>
+                      <Circle size={28} />
+                      {recording === 'on' ? (
+                        <span>Enregistrement… {(recordTimes?.duration ?? 0).toFixed(1)} s. Arrête quand tu veux.</span>
+                      ) : (
+                        <span>Clique sur « Enregistrer » : le micro s’ouvre et tout ce qu’il entend est gardé, sans limite de durée.</span>
+                      )}
+                      <span className={styles.note}>La forme d’onde de l’enregistrement s’affichera ici. Rien n’est joué.</span>
+                    </div>
+                  )}
+                </div>
+                {recordClip && recording === 'off' && (
                   <p className={styles.note}>
-                    Mode exclusif : le son arrive sans les effets audio de Windows (réduction de bruit, gain automatique).
-                    Pendant l’écoute, les autres applications ne peuvent pas utiliser ce micro.
+                    {(recordClip.sample_rate / 1000).toFixed(1)} kHz ·{' '}
+                    {recordTime === null
+                      ? 'clique sur l’enregistrement pour analyser un moment, glisse pour choisir une zone à lire en boucle, ou « Lire » : l’écoute s’arrête.'
+                      : 'un clic choisit le moment analysé et le départ de « Lire » (flèches : ±10 ms), un glissé une zone à lire en boucle. « Écouter » reprend le direct et retire le curseur.'}
                   </p>
-                ) : (
+                )}
+                {recordClip && recordSelection && <p className={styles.note}>{describeZone(recordSelection)}</p>}
+                {recordTimes && recordTimes.lost > 0 && (
                   <p className={styles.warning}>
-                    Mode partagé : Windows a refusé le mode exclusif, ses effets audio s’appliquent. La réduction de bruit
-                    peut étouffer une note tenue. Désactive les « Améliorations audio » du micro dans les Paramètres de
-                    Windows (Système › Son).
+                    {recordTimes.lost.toFixed(2)} s perdues pendant l’enregistrement (le serveur n’a pas suivi), remplacées par du silence.
                   </p>
-                ))}
-              {!online && <p className={styles.note}>Le serveur n’est pas connecté (voir les Réglages).</p>}
-              {liveError && <p className={styles.error}>{liveError}</p>}
-            </Section>
+                )}
+                {recordError && <p className={styles.error}>{recordError}</p>}
+              </Section>
+            </>
           ) : (
             <Section
               title="Fichier"
@@ -323,16 +726,18 @@ export function Analyzer() {
                 <>
                   {clip && (
                     <>
-                      <Button size="small" onClick={toggleScan} title="Fait avancer le curseur en temps réel, sans jouer le son">
-                        {scanning ? <Pause size={13} /> : <Play size={13} />}
-                        {scanning ? 'Pause' : 'Parcourir'}
+                      <Button
+                        size="small"
+                        disabled={!online}
+                        onClick={() => toggleClipPlayback(clipTime)}
+                        title={clipPlaying ? 'Met la lecture en pause' : 'Lit le fichier à partir du curseur, qui le suit'}
+                      >
+                        {clipPlaying ? <Pause size={13} /> : <Play size={13} />}
+                        {clipPlaying ? 'Pause' : 'Lire'}
                       </Button>
                       <Button
                         size="small"
-                        onClick={() => {
-                          setScanning(false);
-                          setClipTime(clearestMoment(clip));
-                        }}
+                        onClick={() => seekClip(clearestMoment(clip))}
                         title="Place le curseur sur le moment où la note est la plus nette"
                       >
                         <Crosshair size={13} />
@@ -373,10 +778,14 @@ export function Analyzer() {
                     clip={clip}
                     time={clipTime}
                     a4={a4}
-                    onSeek={(time) => {
-                      setScanning(false);
-                      setClipTime(time);
-                    }}
+                    zoomable
+                    stereo
+                    playing={clipPlaying}
+                    loadWaveform={api.clipWaveform}
+                    onSeek={seekClip}
+                    selection={clipSelection}
+                    onSelect={setClipSelection}
+                    windowSeconds={windowMs / 1000}
                   />
                 ) : (
                   <div className={styles.dropHint}>
@@ -389,9 +798,11 @@ export function Analyzer() {
               {clip && (
                 <p className={styles.note}>
                   {formatDuration(clip.duration)} · {(clip.sample_rate / 1000).toFixed(1)} kHz · les points roses suivent la
-                  note le long du fichier. Clique ou glisse pour choisir le moment analysé (flèches : ±10 ms).
+                  note le long du fichier. Un clic choisit le moment analysé et le départ de « Lire » (flèches : ±10 ms), un
+                  glissé une zone à lire en boucle.
                 </p>
               )}
+              {clip && clipSelection && <p className={styles.note}>{describeZone(clipSelection)}</p>}
               {!online && <p className={styles.note}>Le serveur n’est pas connecté (voir les Réglages).</p>}
               {clipError && <p className={styles.error}>{clipError}</p>}
             </Section>
@@ -420,7 +831,52 @@ export function Analyzer() {
               </label>
             }
           >
-            <Tuner analysis={analysis} a4={a4} hold={source === 'micro'} />
+            <Tuner analysis={analysis} a4={a4} hold={source === 'micro' && !onRecording} />
+            <div className={styles.referenceRow}>
+              <span className={styles.referenceLabel}>Note de référence</span>
+              <Segmented
+                compact
+                label="Note de référence"
+                value={referenceMidi === null ? 'auto' : 'fixed'}
+                onChange={(mode) =>
+                  mode === 'auto' ? setReferenceMidi(null) : setReference(shownNote?.midi ?? 43)
+                }
+                options={[
+                  { value: 'auto', label: 'Auto', title: 'La note entendue (sur une zone, la plus basse de ses notes nettes)' },
+                  { value: 'fixed', label: 'Fixée', title: 'Les rapports sont pris à la note choisie, dans son octave' },
+                ]}
+              />
+              {referenceMidi !== null && (
+                <span className={styles.referencePicker}>
+                  <select
+                    className={selectClass}
+                    aria-label="Nom de la note de référence"
+                    value={referencePitchClass}
+                    onChange={(event) => setReference(referenceMidi - referencePitchClass + Number(event.target.value))}
+                  >
+                    {NOTE_NAMES.map((name, index) => (
+                      <option key={name} value={index}>
+                        {name}
+                      </option>
+                    ))}
+                  </select>
+                  <Button size="small" iconOnly title="Une octave plus bas" onClick={() => setReference(referenceMidi - 12)}>
+                    <Minus size={13} />
+                  </Button>
+                  <span className={styles.mono}>
+                    {midiLabel(referenceMidi)} · {referenceHz.toFixed(1)} Hz
+                  </span>
+                  <Button size="small" iconOnly title="Une octave plus haut" onClick={() => setReference(referenceMidi + 12)}>
+                    <Plus size={13} />
+                  </Button>
+                </span>
+              )}
+            </div>
+            <p className={styles.note}>
+              {referenceMidi === null
+                ? 'Les rapports sont pris à la note entendue. Sur une zone, c’est la plus basse de ses notes nettes : une fondamentale qui s’éteint avant ses harmoniques ne la fait pas monter d’une octave. Fixe-la si tu connais la note jouée.'
+                : `Les rapports sont pris à ${midiLabel(referenceMidi)}, accordée sur ce que l’Analyzer entend de cette note dans n’importe quelle octave. Les moments sur une autre note ne comptent pas. Ne vaut pas pour l’écoute en direct.`}
+            </p>
           </Section>
         </Panel>
 
@@ -466,6 +922,51 @@ export function Analyzer() {
                   : 'Monte-le juste au-dessus du bruit de fond (ventilateur, souffle) pour que l’analyse l’ignore.'}
               </p>
             </div>
+            <div className={styles.gateRow}>
+              <Slider
+                label="Fenêtre d’analyse"
+                value={Math.max(ANALYSIS_WINDOW_MIN_MS, Math.min(ANALYSIS_WINDOW_MAX_MS, windowMs))}
+                min={ANALYSIS_WINDOW_MIN_MS}
+                max={ANALYSIS_WINDOW_MAX_MS}
+                step={5}
+                format={() => `${windowMs} ms`}
+                onChange={setWindowMs}
+                edit={{
+                  value: windowMs,
+                  min: ANALYSIS_WINDOW_MIN_MS,
+                  max: ANALYSIS_WINDOW_MAX_MS,
+                  unit: 'ms',
+                  decimals: 0,
+                  onCommit: (value) => setWindowMs(Math.round(value)),
+                  extra: (
+                    <div className={styles.gateExtra}>
+                      <Button
+                        size="small"
+                        disabled={windowMs === ANALYSIS_WINDOW_DEFAULT_MS}
+                        onClick={() => setWindowMs(ANALYSIS_WINDOW_DEFAULT_MS)}
+                      >
+                        {ANALYSIS_WINDOW_DEFAULT_MS} ms
+                      </Button>
+                      <span>la fenêtre habituelle</span>
+                    </div>
+                  ),
+                }}
+              />
+              <p className={styles.note}>
+                {analyzedTarget === null
+                  ? 'Pour le curseur et les zones. En direct, au micro, l’analyse garde sa fenêtre habituelle (environ 170 ms).'
+                  : zoneMode
+                    ? 'Avec une zone, l’analyse passe des fenêtres de cette durée sur toute la zone (jusqu’à 100, au moins 10 ms d’écart) et garde la médiane de chaque partiel.'
+                    : 'Le curseur analyse cette durée autour de lui (les bornes vertes sur la forme d’onde). Plus courte : plus précise dans le temps ; plus longue : plus fine en fréquence, et meilleure pour les notes graves.'}
+              </p>
+              {windowTooShort && (
+                <p className={styles.warning}>
+                  {minWindowMs <= ANALYSIS_WINDOW_MAX_MS
+                    ? `Pour ${shownNoteName} (${analysis?.frequency.toFixed(1)} Hz), il faut au moins ${minWindowMs} ms pour séparer ses harmoniques : à ${windowMs} ms, elles se mélangent.`
+                    : `${shownNoteName} est trop grave pour séparer ses harmoniques, même à ${ANALYSIS_WINDOW_MAX_MS} ms.`}
+                </p>
+              )}
+            </div>
           </Section>
         </Panel>
 
@@ -474,11 +975,43 @@ export function Analyzer() {
             title="Partiels"
             badge={<Badge>{partials.length}</Badge>}
             actions={
-              <span className={styles.soon} title="Prochaine étape : une carte de l’Instrument Creator à partir de ces partiels">
-                Créer un instrument <SoonBadge />
-              </span>
+              <Button
+                size="small"
+                variant="primary"
+                disabled={!canCreate}
+                onClick={createInstrument}
+                title={
+                  canCreate
+                    ? 'Crée une carte de l’Instrument Creator avec ces partiels (rapports et amplitudes), et l’ouvre'
+                    : 'Il faut une note et ses partiels : place le curseur ou choisis une zone sur un son'
+                }
+              >
+                <Sparkles size={13} />
+                Créer un instrument
+              </Button>
             }
           >
+            <div className={styles.partialsHead}>
+              <p className={styles.note}>
+                {analysis
+                  ? `Analyse de ${describeAnalyzed(analyzedTarget, windowMs)}${
+                      analyzedTarget && shownNoteName ? `, rapports à ${shownNoteName}` : ''
+                    }.`
+                  : 'Place le curseur ou choisis une zone sur un son.'}
+              </p>
+              <Toggle
+                label="Harmoniques seulement"
+                hint={`À ${HARMONIC_CENTS} cents d’un rapport entier : écarte les autres instruments d’un mix (pas en direct)`}
+                checked={harmonicsOnly}
+                onChange={setHarmonicsOnly}
+              />
+            </div>
+            {zoneOtherNotes > OTHER_NOTES_SHARE && (
+              <p className={styles.warning}>
+                La zone contient d’autres notes que {shownNoteName} ({Math.round(zoneOtherNotes * 100)} % du temps). Elles sont
+                écartées, mais une zone sur une seule note, de son attaque à la suivante, donne le résultat le plus net.
+              </p>
+            )}
             {partials.length === 0 ? (
               <p className={styles.note}>
                 {analysis ? 'Aucun pic ne se détache du bruit.' : 'Les partiels du son analysé s’affichent ici, du plus grave au plus aigu.'}

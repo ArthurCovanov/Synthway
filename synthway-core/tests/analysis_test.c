@@ -1,7 +1,8 @@
 /*
  * Analysis test: renders known sounds with the engine, offline, then checks
  * that the analyzer finds their note and their partials back. No audio device
- * is opened, nothing is played or recorded. Exit code 0 when every check passes.
+ * is opened, nothing is played; recordings come from a virtual microphone fed
+ * by the test. Exit code 0 when every check passes.
  *
  * Usage: synthway_analysis_test [path/to/scratch.wav]
  */
@@ -399,6 +400,43 @@ static void test_clip(const char* path) {
     /* The first and last points straddle the edges, half in silence */
     check(on_note >= POINTS - 2 && lowest_peak > 0.45f && highest_peak < 0.51f, "clip: note track and waveform overview", detail);
 
+    /* The waveform of a part: the whole swing of the sawtooth in each of POINTS parts, then
+       each of 64 samples, whose lowest and highest are those of the same 64 frames as one part */
+    float left_low[POINTS], left_high[POINTS], right_low[POINTS], right_high[POINTS];
+    synthway_result_t whole = synthway_analyzer_get_clip_waveform(
+        analyzer, 0, frames, POINTS, left_low, left_high, right_low, right_high);
+    int swinging = 0, same_channels = 1;
+    for (int i = 1; i < POINTS - 1; ++i) {
+        swinging += left_low[i] < -0.45f && left_high[i] > 0.45f && left_low[i] > -0.51f && left_high[i] < 0.51f;
+    }
+    for (int i = 0; i < POINTS; ++i) {
+        same_channels &= left_low[i] == right_low[i] && left_high[i] == right_high[i];
+    }
+    enum { SAMPLES = 64 };
+    float sample_low[SAMPLES], sample_high[SAMPLES], unused_low[SAMPLES], unused_high[SAMPLES];
+    float part_low, part_high, part_right_low, part_right_high;
+    synthway_result_t each = synthway_analyzer_get_clip_waveform(
+        analyzer, SAMPLE_RATE / 2, SAMPLES, SAMPLES, sample_low, sample_high, unused_low, unused_high);
+    synthway_result_t one = synthway_analyzer_get_clip_waveform(
+        analyzer, SAMPLE_RATE / 2, SAMPLES, 1, &part_low, &part_high, &part_right_low, &part_right_high);
+    int single = 1;
+    float lowest = 1.0f, highest = -1.0f;
+    for (int i = 0; i < SAMPLES; ++i) {
+        single &= sample_low[i] == sample_high[i];
+        if (sample_low[i] < lowest) lowest = sample_low[i];
+        if (sample_high[i] > highest) highest = sample_high[i];
+    }
+    /* Past the end: the range stops there; starting past it or without parts is refused */
+    synthway_result_t past = synthway_analyzer_get_clip_waveform(
+        analyzer, frames - 8, SAMPLES, SAMPLES, sample_low, sample_high, unused_low, unused_high);
+    int refused = synthway_analyzer_get_clip_waveform(analyzer, frames, 1, 1, &part_low, &part_high, &part_right_low, &part_right_high) == SYNTHWAY_INVALID_PARAM
+        && synthway_analyzer_get_clip_waveform(analyzer, 0, frames, 0, &part_low, &part_high, &part_right_low, &part_right_high) == SYNTHWAY_INVALID_PARAM;
+    snprintf(detail, sizeof(detail), "%d/%d parts swinging, %s, samples %.3f to %.3f, one part %.3f to %.3f",
+             swinging, POINTS - 2, same_channels ? "same channels" : "channels differ", lowest, highest, part_low, part_high);
+    check(whole == SYNTHWAY_OK && each == SYNTHWAY_OK && one == SYNTHWAY_OK && past == SYNTHWAY_OK && refused
+              && swinging == POINTS - 2 && same_channels && single && lowest == part_low && highest == part_high,
+          "clip: waveform of a part, down to its samples", detail);
+
     /* The same file from memory, as the server receives it */
     FILE* file = fopen(path, "rb");
     long size = 0;
@@ -428,6 +466,330 @@ static void test_clip(const char* path) {
 
     res = synthway_analyzer_load_clip(analyzer, "this/file/does/not/exist.wav");
     check(res == SYNTHWAY_IO_ERROR, "clip: a missing file is an I/O error", synthway_result_to_string(res));
+}
+
+static void test_recording(const char* path) {
+    /* A virtual microphone hears a 2-second sawtooth at 262 Hz, by blocks of
+       480 frames as a capture thread would; the analyzer is called every
+       50 ms, as by the server */
+    enum { BLOCK = 480 };
+    const uint32_t frames = 2 * SAMPLE_RATE;
+    float* note = render_note(261.63f, SYNTHWAY_WAVEFORM_SAWTOOTH, NULL, SAMPLE_RATE, frames);
+    synthway_analyzer_t* mic = synthway_analyzer_create();
+    synthway_analysis_t a;
+    char detail[192];
+
+    const int refused = synthway_analyzer_start_recording(mic) == SYNTHWAY_NOT_RUNNING
+                        && synthway_analyzer_write_input(mic, note, BLOCK) == SYNTHWAY_INVALID_PARAM
+                        && synthway_analyzer_stop_recording(mic) == SYNTHWAY_NOT_RUNNING
+                        && synthway_analyzer_save_clip_wav(mic, path) == SYNTHWAY_INVALID_PARAM
+                        && synthway_analyzer_open_virtual_input(mic, 1000) == SYNTHWAY_INVALID_PARAM;
+    synthway_analyzer_open_virtual_input(mic, SAMPLE_RATE);
+    synthway_analyzer_write_input(mic, note, 10 * BLOCK); /* heard before the recording: not kept */
+    const synthway_result_t started = synthway_analyzer_start_recording(mic);
+    for (uint32_t done = 0; done < frames; done += BLOCK) {
+        synthway_analyzer_write_input(mic, note + done, BLOCK);
+        if (done % (5 * BLOCK) == 0) {
+            synthway_analyzer_analyze_input(mic, &a);
+        }
+    }
+    uint64_t recorded = 0, lost = 1;
+    synthway_analyzer_get_recording_info(mic, &recorded, &lost);
+    const int was_recording = synthway_analyzer_is_recording(mic);
+    synthway_result_t stopped = synthway_analyzer_stop_recording(mic);
+
+    uint64_t clip_frames = 0;
+    uint32_t clip_rate = 0;
+    synthway_analyzer_get_clip_info(mic, &clip_frames, &clip_rate);
+    /* One overview part per frame: the size of every sample, which must be the one heard */
+    float* sizes = (float*)malloc(sizeof(float) * frames);
+    int same = clip_frames == frames && synthway_analyzer_get_clip_overview(mic, sizes, frames) == SYNTHWAY_OK;
+    for (uint32_t i = 0; same && i < frames; ++i) {
+        same = sizes[i] == fabsf(note[i]);
+    }
+    memset(&a, 0, sizeof(a));
+    synthway_analyzer_analyze_clip(mic, 1.0, &a);
+    snprintf(detail, sizeof(detail), "%llu frames recorded, %llu lost, clip of %llu frames at %u Hz, %s, %.3f Hz at 1 s",
+             (unsigned long long)recorded, (unsigned long long)lost, (unsigned long long)clip_frames, clip_rate,
+             same ? "samples identical" : "samples differ", a.frequency_hz);
+    check(refused && started == SYNTHWAY_OK && was_recording && stopped == SYNTHWAY_OK
+              && !synthway_analyzer_is_recording(mic) && synthway_analyzer_is_input_open(mic)
+              && recorded == frames && lost == 0 && clip_rate == SAMPLE_RATE && same
+              && fabs(cents(a.frequency_hz, 261.63)) < 1.0,
+          "recording: what the microphone hears becomes the clip", detail);
+
+    /* Saved as WAV, then loaded like any file */
+    synthway_result_t saved = synthway_analyzer_save_clip_wav(mic, path);
+    synthway_result_t loaded = synthway_analyzer_load_clip(analyzer, path);
+    synthway_analyzer_get_clip_info(analyzer, &clip_frames, &clip_rate);
+    memset(&a, 0, sizeof(a));
+    synthway_analyzer_analyze_clip(analyzer, 1.0, &a);
+    snprintf(detail, sizeof(detail), "saved: %s, loaded: %s, %llu frames at %u Hz, %.3f Hz at 1 s",
+             synthway_result_to_string(saved), synthway_result_to_string(loaded),
+             (unsigned long long)clip_frames, clip_rate, a.frequency_hz);
+    check(saved == SYNTHWAY_OK && loaded == SYNTHWAY_OK && clip_frames == frames && clip_rate == SAMPLE_RATE
+              && fabs(cents(a.frequency_hz, 261.63)) < 1.0,
+          "recording: saved as a WAV file", detail);
+
+    /* Nobody takes the samples for 16 s: the oldest are overwritten, silence
+       stands for them, and the recording keeps its length */
+    const uint32_t long_frames = 16 * SAMPLE_RATE;
+    float* steady = (float*)malloc(sizeof(float) * long_frames);
+    for (uint32_t i = 0; i < long_frames; ++i) {
+        steady[i] = 0.25f;
+    }
+    synthway_analyzer_start_recording(mic);
+    for (uint32_t done = 0; done < long_frames; done += BLOCK) {
+        synthway_analyzer_write_input(mic, steady + done, BLOCK);
+    }
+    stopped = synthway_analyzer_stop_recording(mic);
+    synthway_analyzer_get_recording_info(mic, &recorded, &lost);
+    float ends[16];
+    synthway_analyzer_get_clip_overview(mic, ends, 16);
+    snprintf(detail, sizeof(detail), "%llu frames, %llu lost; first second %.2f, last %.2f",
+             (unsigned long long)recorded, (unsigned long long)lost, ends[0], ends[15]);
+    check(stopped == SYNTHWAY_OK && recorded == long_frames && lost > 0 && lost < long_frames
+              && ends[0] == 0.0f && ends[15] == 0.25f,
+          "recording: samples lost when not taken in time are silence", detail);
+
+    /* Closing the microphone during a recording keeps it */
+    synthway_analyzer_start_recording(mic);
+    synthway_analyzer_write_input(mic, note, 10 * BLOCK);
+    synthway_analyzer_close_input(mic);
+    synthway_analyzer_get_clip_info(mic, &clip_frames, &clip_rate);
+    snprintf(detail, sizeof(detail), "clip of %llu frames", (unsigned long long)clip_frames);
+    check(clip_frames == 10 * BLOCK && !synthway_analyzer_is_recording(mic) && !synthway_analyzer_is_input_open(mic)
+              && synthway_analyzer_write_input(mic, note, BLOCK) == SYNTHWAY_INVALID_PARAM,
+          "recording: closing the microphone stops and keeps it", detail);
+
+    synthway_analyzer_destroy(mic);
+    free(steady);
+    free(sizes);
+    free(note);
+}
+
+/* An analyzer whose clip is these samples: a virtual microphone, recorded whole */
+static synthway_analyzer_t* clip_of(const float* samples, uint32_t frames) {
+    enum { BLOCK = 4800 };
+    synthway_analyzer_t* clip = synthway_analyzer_create();
+    synthway_analyzer_open_virtual_input(clip, SAMPLE_RATE);
+    synthway_analyzer_start_recording(clip);
+    for (uint32_t done = 0; done < frames; done += BLOCK) {
+        synthway_analyzer_write_input(clip, samples + done, frames - done < BLOCK ? frames - done : BLOCK);
+        uint64_t recorded, lost;
+        synthway_analyzer_get_recording_info(clip, &recorded, &lost);
+    }
+    synthway_analyzer_stop_recording(clip);
+    return clip;
+}
+
+static void test_window_sizes(void) {
+    /* A held sawtooth at 220 Hz, seen at 1 s through windows of 20 to 320 ms */
+    const uint32_t frames = 2 * SAMPLE_RATE;
+    float* x = render_note(220.0f, SYNTHWAY_WAVEFORM_SAWTOOTH, NULL, SAMPLE_RATE, frames);
+    synthway_analyzer_t* clip = clip_of(x, frames);
+    static const double windows[] = { 0.02, 0.05, 0.17, 0.32 };
+    char detail[256];
+    int length = 0, ok = 1;
+    for (size_t w = 0; w < sizeof(windows) / sizeof(windows[0]); ++w) {
+        synthway_analysis_t a;
+        memset(&a, 0, sizeof(a));
+        const synthway_result_t res = synthway_analyzer_analyze_clip_range(
+            clip, 1.0 - windows[w] / 2.0, 1.0 + windows[w] / 2.0, windows[w], 0.0f, 0.0f, &a);
+        int harmonics = 0;
+        for (int n = 1; n <= 12; ++n) {
+            const synthway_analysis_partial_t* p = partial_near(&a, 220.0 * n);
+            harmonics += p && fabs(p->ratio - n) < 0.01;
+        }
+        length += snprintf(detail + length, sizeof(detail) - length, "%s%.0f ms: %.2f Hz, %d/12",
+                           w ? "; " : "", 1000.0 * windows[w], a.frequency_hz, harmonics);
+        /* The shortest window reads the note more coarsely and cannot part
+           every harmonic, the others must */
+        ok = ok && res == SYNTHWAY_OK && fabs(cents(a.frequency_hz, 220.0)) < (w == 0 ? 10.0 : 2.0)
+             && harmonics >= (w == 0 ? 3 : 12);
+    }
+    check(ok, "window sizes: the note and its harmonics from 20 to 320 ms", detail);
+
+    /* The usual window around a moment is exactly analyze_clip at that moment */
+    synthway_analysis_t usual, zone;
+    synthway_analyzer_analyze_clip(clip, 1.0, &usual);
+    synthway_analyzer_analyze_clip_range(clip, 0.95, 1.05, SYNTHWAY_ANALYZER_WINDOW_AUTO, 0.0f, 0.0f, &zone);
+    snprintf(detail, sizeof(detail), "%.3f Hz and %.3f Hz", usual.frequency_hz, zone.frequency_hz);
+    check(memcmp(&usual, &zone, sizeof(usual)) == 0, "window sizes: the usual window is unchanged", detail);
+
+    synthway_analysis_t a;
+    const int refused = synthway_analyzer_analyze_clip_range(clip, 1.0, 1.0, 0.17, 0.0f, 0.0f, &a) == SYNTHWAY_INVALID_PARAM
+                        && synthway_analyzer_analyze_clip_range(clip, 1.0, 0.5, 0.17, 0.0f, 0.0f, &a) == SYNTHWAY_INVALID_PARAM
+                        && synthway_analyzer_analyze_clip_range(clip, 0.9, 1.1, 0.005, 0.0f, 0.0f, &a) == SYNTHWAY_INVALID_PARAM
+                        && synthway_analyzer_analyze_clip_range(clip, 0.9, 1.1, 0.6, 0.0f, 0.0f, &a) == SYNTHWAY_INVALID_PARAM
+                        && synthway_analyzer_analyze_clip_range(clip, 0.9, NAN, 0.17, 0.0f, 0.0f, &a) == SYNTHWAY_INVALID_PARAM
+                        && synthway_analyzer_analyze_clip_range(NULL, 0.9, 1.1, 0.17, 0.0f, 0.0f, &a) == SYNTHWAY_INVALID_PARAM;
+    check(refused, "window sizes: invalid zones and windows refused", "empty, reversed, too short, too long, NaN");
+    synthway_analyzer_destroy(clip);
+    free(x);
+}
+
+static void test_zone_with_vibrato(void) {
+    /* A sawtooth played around 220 Hz with a vibrato of ±20 cents at 5.5 Hz (a
+       violin's): one window reads the note anywhere within the swing, while
+       the zone's median finds its centre, and the harmonic ratios stay whole */
+    enum { BLOCK = 96 };
+    const uint32_t frames = 2 * SAMPLE_RATE;
+    float* x = (float*)malloc(sizeof(float) * frames);
+    synthway_engine_t* engine = synthway_engine_create();
+    synthway_engine_config_t config;
+    memset(&config, 0, sizeof(config));
+    config.sample_rate = SAMPLE_RATE;
+    config.channels = 1;
+    synthway_engine_init_offline(engine, &config);
+    synthway_engine_set_waveform(engine, SYNTHWAY_WAVEFORM_SAWTOOTH);
+    synthway_engine_set_volume(engine, 0.5f);
+    synthway_engine_set_tone_enabled(engine, true);
+    for (uint32_t done = 0; done < frames; done += BLOCK) {
+        const double t = (double)done / SAMPLE_RATE;
+        synthway_engine_set_frequency(engine, (float)(220.0 * pow(2.0, 20.0 * sin(6.2831853 * 5.5 * t) / 1200.0)));
+        synthway_engine_render(engine, x + done, BLOCK);
+    }
+    synthway_engine_destroy(engine);
+    synthway_analyzer_t* clip = clip_of(x, frames);
+
+    /* Single windows across a vibrato cycle: how far from the centre they read */
+    double widest = 0.0;
+    for (double t = 0.5; t < 0.7; t += 0.02) {
+        synthway_analysis_t moment;
+        synthway_analyzer_analyze_clip_range(clip, t - 0.085, t + 0.085, 0.17, 0.0f, 0.0f, &moment);
+        if (fabs(cents(moment.frequency_hz, 220.0)) > widest) widest = fabs(cents(moment.frequency_hz, 220.0));
+    }
+
+    synthway_analysis_t a;
+    memset(&a, 0, sizeof(a));
+    const synthway_result_t res = synthway_analyzer_analyze_clip_range(clip, 0.2, 1.8, 0.17, 0.0f, 0.0f, &a);
+    /* Each partial a harmonic, within 0.2 % of its whole ratio (3.5 cents);
+       harmonics 1 to 10 all there, fading as in a sawtooth */
+    int harmonics = 0, stray = 0, fading = 1;
+    double worst = 0.0, previous = 2.0;
+    for (uint32_t i = 0; i < a.partial_count; ++i) {
+        const double ratio = a.partials[i].ratio;
+        const long n = lround(ratio);
+        const double error = n >= 1 ? fabs(ratio / n - 1.0) : 1.0;
+        if (error > 0.002) {
+            stray++;
+            continue;
+        }
+        if (error > worst) worst = error;
+        if (n <= 10) {
+            harmonics++;
+            fading = fading && a.partials[i].amplitude < previous;
+            previous = a.partials[i].amplitude;
+        }
+    }
+    char detail[224];
+    snprintf(detail, sizeof(detail),
+             "one window: up to %.1f cents off; zone: %.2f Hz (%+.2f cents), %u partials, %d/10 harmonics, %d stray, "
+             "ratios within %.3f %%",
+             widest, a.frequency_hz, cents(a.frequency_hz, 220.0), a.partial_count, harmonics, stray, 100.0 * worst);
+    check(res == SYNTHWAY_OK && fabs(cents(a.frequency_hz, 220.0)) < 3.0 && harmonics == 10 && stray == 0 && fading,
+          "zone: medians through a vibrato keep the note and whole harmonic ratios", detail);
+    synthway_analyzer_destroy(clip);
+    free(x);
+}
+
+/* Lists the first ratios of an analysis into detail, after prefix */
+static void describe_ratios(char* detail, size_t size, const char* prefix, const synthway_analysis_t* a) {
+    int length = snprintf(detail, size, "%s%.2f Hz, %u partials:", prefix, a->frequency_hz, a->partial_count);
+    for (uint32_t i = 0; i < a->partial_count && i < 10 && length < (int)size; ++i) {
+        length += snprintf(detail + length, size - length, " %.2f", a->partials[i].ratio);
+    }
+}
+
+/* Partials within cents of a whole ratio (n >= 1), and whether ratio r is among them */
+static int harmonic_partials(const synthway_analysis_t* a, double cents_tolerance, int* has_ratio, int wanted) {
+    int count = 0;
+    *has_ratio = 0;
+    for (uint32_t i = 0; i < a->partial_count; ++i) {
+        const long n = lround(a->partials[i].ratio);
+        if (n >= 1 && fabs(1200.0 * log2(a->partials[i].ratio / n)) <= cents_tolerance) {
+            count++;
+            if (n == wanted) *has_ratio = 1;
+        }
+    }
+    return count;
+}
+
+static void test_reference_note(void) {
+    /* A bass like the one of a synthwave track: a G1 sine plucked every 155 ms,
+       gone within 80 ms, under a G2 layer rich in harmonics that fades slowly,
+       with a click at each attack. Windows read G1 at first, then G2. */
+    const uint32_t frames = SAMPLE_RATE;
+    const double note = 49.0, period = 0.155;
+    float* x = (float*)malloc(sizeof(float) * frames);
+    uint32_t state = 4242u;
+    for (uint32_t i = 0; i < frames; ++i) {
+        const double t = (double)i / SAMPLE_RATE;
+        const double age = fmod(t, period);
+        double layer = 0.0;
+        for (int n = 1; n <= 30; ++n) layer += sin(6.283185307 * n * 2.0 * note * t) / n;
+        state = state * 1664525u + 1013904223u;
+        const double click = age < 0.004 ? 0.3 * (1.0 - age / 0.004) * ((double)(state >> 8) / 8388608.0 - 1.0) : 0.0;
+        x[i] = (float)(0.5 * exp(-age / 0.0225) * sin(6.283185307 * note * t) + 0.3 * exp(-age / 0.12) * layer + click);
+    }
+    synthway_analyzer_t* clip = clip_of(x, frames);
+    char detail[256];
+    int has;
+
+    /* Three notes, with their attacks: the note is G1, the layer's harmonics come out as 2, 4, 6… */
+    synthway_analysis_t a;
+    memset(&a, 0, sizeof(a));
+    synthway_result_t res = synthway_analyzer_analyze_clip_range(clip, period, 4 * period, 0.17, 0.0f, 0.0f, &a);
+    int has_one;
+    harmonic_partials(&a, 30.0, &has_one, 1);
+    const int harmonics = harmonic_partials(&a, 30.0, &has, 2);
+    describe_ratios(detail, sizeof(detail), "", &a);
+    check(res == SYNTHWAY_OK && fabs(cents(a.frequency_hz, note)) < 15.0 && has_one && has && harmonics >= 10
+              && harmonics >= (int)a.partial_count - 2,
+          "reference: a zone that reads G1 then G2 keeps G1, whole ratios", detail);
+
+    /* G2 given, harmonics only: the layer alone, as 1, 2, 3…; the sub (0.5) is left out */
+    memset(&a, 0, sizeof(a));
+    res = synthway_analyzer_analyze_clip_range(clip, period, 4 * period, 0.17, 2.0f * (float)note, 30.0f, &a);
+    const int layer = harmonic_partials(&a, 30.0, &has, 1);
+    describe_ratios(detail, sizeof(detail), "G2 given: ", &a);
+    check(res == SYNTHWAY_OK && fabs(cents(a.frequency_hz, 2.0 * note)) < 15.0 && has && layer == (int)a.partial_count
+              && layer >= 10 && a.partials[0].ratio > 0.9f,
+          "reference: a note given, harmonics only", detail);
+
+    /* G2 given, every partial: the sub is there, at 0.5 */
+    memset(&a, 0, sizeof(a));
+    synthway_analyzer_analyze_clip_range(clip, period, 4 * period, 0.17, 2.0f * (float)note, 0.0f, &a);
+    describe_ratios(detail, sizeof(detail), "G2 given, every partial: ", &a);
+    check(a.partial_count > 0 && fabs(a.partials[0].ratio - 0.5f) < 0.01f, "reference: below the note, the sub stays without the filter", detail);
+
+    /* One window late in a note, read G2 on its own: with G1 given, its note is G1, its partials 2, 4, 6… */
+    synthway_analysis_t own;
+    const double late = 2 * period + 0.11;
+    synthway_analyzer_analyze_clip_range(clip, late - 0.035, late + 0.035, 0.07, 0.0f, 0.0f, &own);
+    memset(&a, 0, sizeof(a));
+    synthway_analyzer_analyze_clip_range(clip, late - 0.035, late + 0.035, 0.07, (float)note, 30.0f, &a);
+    uint32_t strongest = 0;
+    for (uint32_t i = 1; i < a.partial_count; ++i) {
+        if (a.partials[i].amplitude > a.partials[strongest].amplitude) strongest = i;
+    }
+    const int even = harmonic_partials(&a, 30.0, &has, 2);
+    char own_detail[48];
+    snprintf(own_detail, sizeof(own_detail), "on its own %.2f Hz; G1 given: ", own.frequency_hz);
+    describe_ratios(detail, sizeof(detail), own_detail, &a);
+    check(fabs(cents(a.frequency_hz, note)) < 15.0 && a.partial_count > 0 && fabs(a.partials[strongest].ratio - 2.0f) < 0.02f
+              && has && even == (int)a.partial_count,
+          "reference: one window, its note moved to the octave given", detail);
+
+    const int refused = synthway_analyzer_analyze_clip_range(clip, 0.2, 0.4, 0.17, 10.0f, 0.0f, &a) == SYNTHWAY_INVALID_PARAM
+                        && synthway_analyzer_analyze_clip_range(clip, 0.2, 0.4, 0.17, 6000.0f, 0.0f, &a) == SYNTHWAY_INVALID_PARAM
+                        && synthway_analyzer_analyze_clip_range(clip, 0.2, 0.4, 0.17, 0.0f, 150.0f, &a) == SYNTHWAY_INVALID_PARAM
+                        && synthway_analyzer_analyze_clip_range(clip, 0.2, 0.4, 0.17, 0.0f, -5.0f, &a) == SYNTHWAY_INVALID_PARAM
+                        && synthway_analyzer_analyze_clip_range(clip, 0.2, 0.4, 0.17, NAN, 0.0f, &a) == SYNTHWAY_INVALID_PARAM;
+    check(refused, "reference: invalid notes and tolerances refused", "10 Hz, 6000 Hz, 150 cents, -5 cents, NaN");
+    synthway_analyzer_destroy(clip);
+    free(x);
 }
 
 static void test_guards(void) {
@@ -479,6 +841,10 @@ int main(int argc, char* argv[]) {
     test_held_note();
     test_noise_gate();
     test_clip(wav_path);
+    test_recording(wav_path);
+    test_window_sizes();
+    test_zone_with_vibrato();
+    test_reference_note();
     test_guards();
 
     synthway_analyzer_destroy(analyzer);

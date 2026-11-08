@@ -141,7 +141,19 @@ if HAS_PYDANTIC:
         sample_rate: int
         frame_count: int
         overview: List[float] = Field(default_factory=list, description="Peak of each equal part of the file, for the waveform")
+        overview_left: List[float] = Field(default_factory=list, description="Left-channel peak of each equal part")
+        overview_right: List[float] = Field(default_factory=list, description="Right-channel peak of each equal part")
         track: ClipTrack = Field(default_factory=ClipTrack)
+
+    class ClipWaveform(BaseModel):
+        """A part of the clip, cut into equal parts: the lowest and highest sample of each channel in each.
+        With as many parts as frames, each part is one sample."""
+        first_frame: int
+        frame_count: int = Field(description="Frames covered, stopped at the end of the clip")
+        left_low: List[float] = Field(default_factory=list)
+        left_high: List[float] = Field(default_factory=list)
+        right_low: List[float] = Field(default_factory=list)
+        right_high: List[float] = Field(default_factory=list)
 
 else:
     @dataclass
@@ -239,4 +251,15 @@ else:
         sample_rate: int = 0
         frame_count: int = 0
         overview: List[float] = field(default_factory=list)
+        overview_left: List[float] = field(default_factory=list)
+        overview_right: List[float] = field(default_factory=list)
         track: ClipTrack = field(default_factory=ClipTrack)
+
+    @dataclass
+    class ClipWaveform:
+        first_frame: int = 0
+        frame_count: int = 0
+        left_low: List[float] = field(default_factory=list)
+        left_high: List[float] = field(default_factory=list)
+        right_low: List[float] = field(default_factory=list)
+        right_high: List[float] = field(default_factory=list)

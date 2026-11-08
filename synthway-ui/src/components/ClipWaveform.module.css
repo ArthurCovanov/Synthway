@@ -5,6 +5,21 @@
   min-height: 0;
 }
 
+.zoomIndicator {
+  position: absolute;
+  top: 3px;
+  right: 8px;
+  z-index: 1;
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg-2);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  pointer-events: none;
+}
+
 .svg {
   display: block;
   user-select: none;
@@ -17,6 +32,10 @@
   cursor: ew-resize;
 }
 
+.svg[data-panning] {
+  cursor: grabbing;
+}
+
 .svg:focus-visible .plot {
   stroke: var(--neon-pink);
 }
@@ -24,6 +43,14 @@
 .plot {
   fill: rgba(17, 16, 51, 0.5);
   stroke: var(--line);
+}
+
+/* The zone played in a loop */
+.selection {
+  fill: rgba(255, 26, 168, 0.14); /* --neon-pink */
+  stroke: var(--neon-pink-soft);
+  stroke-width: 1;
+  pointer-events: none;
 }
 
 .gridLine {
@@ -41,10 +68,43 @@
   fill: var(--neon-pink-soft);
 }
 
+/* Lowest to highest sample of each pixel column; the stroke keeps a quiet part visible */
 .wave {
+  fill: var(--neon-blue-soft);
   stroke: var(--neon-blue-soft);
   stroke-width: 1;
+  stroke-linejoin: round;
   opacity: 0.55;
+}
+
+/* Zoomed in to the samples: they are joined, and get a dot once far enough apart */
+.waveLine {
+  fill: none;
+  stroke: var(--neon-blue-soft);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  opacity: 0.85;
+}
+
+.sample {
+  fill: var(--neon-blue-soft);
+  pointer-events: none;
+}
+
+.channelDivider {
+  stroke: rgba(150, 125, 255, 0.18);
+  stroke-dasharray: 3 4;
+  pointer-events: none;
+}
+
+.channelLabel {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  fill: var(--text-2);
+  paint-order: stroke;
+  stroke: var(--bg-2);
+  stroke-width: 3px;
 }
 
 .notePoint {
@@ -63,5 +123,19 @@
   font-family: var(--font-mono);
   font-size: 10px;
   fill: var(--text-0);
+  pointer-events: none;
+}
+
+/* Analysis window around the cursor, without a zone: green bounds |—|—| */
+.analysisWindow line {
+  stroke: var(--neon-green);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  pointer-events: none;
+}
+
+.analysisBand {
+  fill: var(--neon-green);
+  opacity: 0.08;
   pointer-events: none;
 }

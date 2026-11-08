@@ -37,6 +37,14 @@ export function App() {
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
 
+  useEffect(() => {
+    const preventAltWheelScroll = (event: WheelEvent) => {
+      if (event.altKey) event.preventDefault();
+    };
+    window.addEventListener('wheel', preventAltWheelScroll, { capture: true, passive: false });
+    return () => window.removeEventListener('wheel', preventAltWheelScroll, true);
+  }, []);
+
   const navigate = (id: ScreenId) => {
     window.location.hash = `/${id}`;
     setScreen(id);
@@ -58,7 +66,16 @@ export function App() {
               />
             )}
             {screen === 'composer' && <Composer instruments={instruments} />}
-            {screen === 'analyzer' && <Analyzer />}
+            {screen === 'analyzer' && (
+              <Analyzer
+                onCreateInstrument={(instrument) => {
+                  // A new card at the end of the library, opened in the Instrument Creator
+                  setInstruments((list) => [...list, instrument]);
+                  setSelectedInstrumentId(instrument.id);
+                  navigate('instruments');
+                }}
+              />
+            )}
             {screen === 'settings' && <Settings />}
           </main>
         </div>

@@ -29,6 +29,10 @@ Relis le journal, puis mets à jour **ton** entrée :
 - **Fichiers :** la liste réelle des fichiers modifiés ;
 - **Résultat :** une ou deux phrases sur ce qui est fait, ce qui ne l'est pas et ce qui n'a pas été vérifié.
 
+## Avant de rendre la main
+
+Arrête tout serveur de développement que tu as lancé ou repris pour ta tâche avant de terminer. Relis le haut de docs/journal.md pour vérifier qu’aucun autre agent n’en dépend au même moment. Si un autre agent en a explicitement besoin, laisse-le tourner et indique dans le résultat de ton entrée le serveur concerné, son port si connu, et l’agent qui en dépend. Dans tous les cas, précise dans le journal si le serveur a été arrêté ou laissé actif. Ne coupe pas un serveur déjà lancé par l’utilisateur ou un autre agent et que tu n’as pas repris pour ta tâche.
+
 ## Règles
 
 - Ne modifie jamais l'entrée d'un autre contributeur.

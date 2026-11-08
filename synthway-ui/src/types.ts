@@ -132,13 +132,40 @@ export interface ClipInfo {
   frame_count: number;
   /** Peak of each equal part of the file */
   overview: number[];
+  /** Independent Left/Right peaks for stereo waveform display */
+  overview_left?: number[];
+  overview_right?: number[];
   track: ClipTrack;
+}
+
+/**
+ * A part of a clip, to draw it zoomed in: frame_count frames from first_frame
+ * cut into equal parts, with the lowest and highest sample of each channel in
+ * each. With as many parts as frames, each part is one sample (low = high).
+ */
+export interface ClipWaveformPart {
+  first_frame: number;
+  frame_count: number;
+  left_low: number[];
+  left_high: number[];
+  right_low: number[];
+  right_high: number[];
+}
+
+/** A recording of the microphone, in seconds; lost: samples the core had no time to take, now silence */
+export interface RecordingTimes {
+  duration: number;
+  lost: number;
 }
 
 /** Messages of /ws/analyzer, from the server */
 export type AnalyzerMessage =
   /** exclusive: the microphone is heard without the system's audio effects; false: shared mode, with them */
   | { type: 'started'; device_index: number; sample_rate: number; exclusive: boolean }
-  | { type: 'analysis'; analysis: Analysis }
+  /** recording: only while recording */
+  | { type: 'analysis'; analysis: Analysis; recording?: RecordingTimes }
+  | { type: 'recording' }
+  /** The recording has ended (also when the microphone closes): /api/analyzer/recording shows it */
+  | ({ type: 'recorded' } & RecordingTimes)
   | { type: 'stopped' }
   | { type: 'error'; error: string };

@@ -89,7 +89,6 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
     moved: boolean;
   } | null>(null);
   const rollScrollRef = useRef<HTMLDivElement>(null);
-  const initialVerticalCenter = useRef(false);
 
   const { tracks, bpm, beatsPerBar, bars } = composition;
   const track = tracks.find((item) => item.id === selectedTrackId) ?? tracks[0];
@@ -114,10 +113,11 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
   }, [track?.id, selectedBasePitch]);
 
   useEffect(() => {
-    if (initialVerticalCenter.current || !rollScrollRef.current) return;
-    initialVerticalCenter.current = true;
-    const scroller = rollScrollRef.current;
-    scroller.scrollTop = RULER_HEIGHT + PITCH_WINDOW_CENTER * ROW - scroller.clientHeight / 2;
+    const frame = requestAnimationFrame(() => {
+      const scroller = rollScrollRef.current;
+      if (scroller) scroller.scrollTop = RULER_HEIGHT + PITCH_WINDOW_CENTER * ROW - scroller.clientHeight / 2;
+    });
+    return () => cancelAnimationFrame(frame);
   }, []);
 
   useEffect(() => {
@@ -182,6 +182,20 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
   const updateTrack = (id: string, patch: Partial<Track>) =>
     setTracks((list) => list.map((item) => (item.id === id && !lockedTracks[id] ? { ...item, ...patch } : item)));
 
+  const recenterOnPitch = (pitch: number) => {
+    setHighestVisiblePitch(pitch + PITCH_WINDOW_CENTER);
+    setLowestVisiblePitch(pitch + PITCH_WINDOW_CENTER - INITIAL_PITCH_ROWS + 1);
+    requestAnimationFrame(() => {
+      const scroller = rollScrollRef.current;
+      if (scroller) scroller.scrollTop = RULER_HEIGHT + PITCH_WINDOW_CENTER * ROW - scroller.clientHeight / 2;
+    });
+  };
+
+  const selectTrack = (item: Track) => {
+    setSelectedTrackId(item.id);
+    recenterOnPitch(item.basePitch ?? DEFAULT_BASE_PITCH);
+  };
+
   const commitBaseNote = () => {
     const pitch = parseNoteName(baseNoteDraft);
     if (pitch === null) {
@@ -196,12 +210,7 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
 
   const recenterPitchRoll = () => {
     const pitch = commitBaseNote();
-    setHighestVisiblePitch(pitch + PITCH_WINDOW_CENTER);
-    setLowestVisiblePitch(pitch + PITCH_WINDOW_CENTER - INITIAL_PITCH_ROWS + 1);
-    requestAnimationFrame(() => {
-      const scroller = rollScrollRef.current;
-      if (scroller) scroller.scrollTop = RULER_HEIGHT + PITCH_WINDOW_CENTER * ROW - scroller.clientHeight / 2;
-    });
+    recenterOnPitch(pitch);
   };
 
   const onPitchScroll = () => {
@@ -235,14 +244,14 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
     const instrument = instruments[tracks.length % instruments.length];
     const created = createTrack(tracks.length + 1, instrument.id, HUES[tracks.length % HUES.length]);
     setTracks((list) => [...list, created]);
-    setSelectedTrackId(created.id);
+    selectTrack(created);
   };
 
   const removeTrack = (id: string) => {
     if (tracks.length <= 1 || lockedTracks[id]) return;
     const next = tracks.filter((item) => item.id !== id);
     setTracks(() => next);
-    if (id === track.id) setSelectedTrackId(next[0].id);
+    if (id === track.id) selectTrack(next[0]);
   };
 
   /** Short preview of a note, only when the audio is already on */
@@ -502,11 +511,11 @@ export function Composer({ instruments }: { instruments: Instrument[] }) {
                   )}
                   style={{ '--hue': HUE_VAR[hueOf(item)] } as CSSProperties}
                   data-track-id={item.id}
-                  onClick={() => setSelectedTrackId(item.id)}
+                  onClick={() => selectTrack(item)}
                   onKeyDown={(event) => {
                     if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
                       event.preventDefault();
-                      setSelectedTrackId(item.id);
+                      selectTrack(item);
                     }
                   }}
                 >

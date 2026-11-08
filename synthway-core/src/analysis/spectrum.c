@@ -25,7 +25,7 @@ static float to_db(double amplitude) {
     return db < SW_SPECTRUM_FLOOR_DB ? SW_SPECTRUM_FLOOR_DB : db;
 }
 
-void sw_spectrum_compute(const float* x, uint32_t n, float* re, float* im, float* mag_db) {
+void sw_spectrum_compute(const float* x, uint32_t n, uint32_t fft_size, float* re, float* im, float* mag_db) {
     double mean = 0.0;
     for (uint32_t i = 0; i < n; ++i) {
         mean += x[i];
@@ -40,12 +40,16 @@ void sw_spectrum_compute(const float* x, uint32_t n, float* re, float* im, float
         im[i] = 0.0f;
         window_sum += w;
     }
+    for (uint32_t i = n; i < fft_size; ++i) {
+        re[i] = 0.0f;
+        im[i] = 0.0f;
+    }
 
-    sw_fft(re, im, n, false);
+    sw_fft(re, im, fft_size, false);
 
     /* A sine of amplitude A peaks at A / 2 * window_sum */
     const double scale = 2.0 / window_sum;
-    for (uint32_t k = 0; k <= n / 2; ++k) {
+    for (uint32_t k = 0; k <= fft_size / 2; ++k) {
         mag_db[k] = to_db(scale * sqrt((double)re[k] * re[k] + (double)im[k] * im[k]));
     }
 }
@@ -73,19 +77,22 @@ static float noise_floor_db(const float* mag_db, uint32_t first, uint32_t last) 
 
 void sw_spectrum_find_partials(
     const float* mag_db,
-    uint32_t n,
+    uint32_t window_frames,
+    uint32_t fft_size,
     float sample_rate,
     float gate_db,
     synthway_analysis_t* out
 ) {
     out->partial_count = 0;
-    const float bin_hz = sample_rate / (float)n;
-    const uint32_t half = n / 2;
+    const float bin_hz = sample_rate / (float)fft_size;
+    const uint32_t half = fft_size / 2;
+    /* The main lobe widens with the padding: as many bins more */
+    const uint32_t neighbourhood = (PEAK_NEIGHBOURHOOD * fft_size + window_frames - 1) / window_frames;
 
     uint32_t first = (uint32_t)ceilf(PARTIAL_MIN_HZ / bin_hz);
     uint32_t last = (uint32_t)(0.98f * (float)half);
-    if (first < PEAK_NEIGHBOURHOOD) first = PEAK_NEIGHBOURHOOD;
-    if (last > half - PEAK_NEIGHBOURHOOD) last = half - PEAK_NEIGHBOURHOOD;
+    if (first < neighbourhood) first = neighbourhood;
+    if (last > half - neighbourhood) last = half - neighbourhood;
     if (first >= last) {
         return;
     }
@@ -112,7 +119,7 @@ void sw_spectrum_find_partials(
         /* Strictly above the left side, at least as high as the right side:
            a flat top counts once */
         int is_peak = 1;
-        for (uint32_t d = 1; d <= PEAK_NEIGHBOURHOOD && is_peak; ++d) {
+        for (uint32_t d = 1; d <= neighbourhood && is_peak; ++d) {
             is_peak = v > mag_db[k - d] && v >= mag_db[k + d];
         }
         if (!is_peak) {

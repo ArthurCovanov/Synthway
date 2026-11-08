@@ -2,9 +2,25 @@
 #include "analysis/pitch.h"
 #include "analysis/spectrum.h"
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define WINDOW_SECONDS 0.17
+
+/* Partials of two moments of a zone are the same within this share of their
+   ratio (1 %, 17 cents): far finer than the gap between harmonics 64 and 65 */
+#define MATCH_TOLERANCE 0.01f
+
+/* A moment's note is trusted from this clarity on: below, an attack or noise */
+#define NOTE_CLARITY 0.5f
+/* A note is the reference's, in whatever octave, within this many semitones */
+#define REFERENCE_SEMITONES 1.5
+/* Without a reference given, a zone's is the note this share of its clear
+   moments lie below (its low end, see sw_analysis_combine) */
+#define REFERENCE_PERCENTILE 0.2f
+/* Without a reference given, a zone has a note when at least this share of
+   its moments are on it */
+#define MIN_ON_NOTE_SHARE 0.25f
 
 /* Lowest partial worth naming a note after: at most 20 dB below the strongest */
 #define AUDIBLE_PARTIAL 0.1f
@@ -30,6 +46,25 @@ uint32_t sw_analysis_window_frames(uint32_t sample_rate) {
     return frames;
 }
 
+uint32_t sw_analysis_frames_for(double seconds, uint32_t sample_rate) {
+    const double wanted = seconds * sample_rate + 0.5;
+    if (!(wanted >= SW_ANALYSIS_MIN_WINDOW)) {
+        return SW_ANALYSIS_MIN_WINDOW;
+    }
+    return wanted >= SW_ANALYSIS_MAX_WINDOW ? SW_ANALYSIS_MAX_WINDOW : (uint32_t)wanted;
+}
+
+/* Samples the note is taken on, in the middle of a window of frames: its
+   central half, but at least half the usual window when the window allows it */
+static uint32_t sw_analysis_pitch_frames(uint32_t frames, uint32_t sample_rate) {
+    const uint32_t usual_half = (uint32_t)(WINDOW_SECONDS / 2.0 * sample_rate);
+    uint32_t n = frames / 2;
+    if (n < usual_half) {
+        n = frames < usual_half ? frames : usual_half;
+    }
+    return n > SW_ANALYSIS_MAX_WINDOW / 2 ? SW_ANALYSIS_MAX_WINDOW / 2 : n;
+}
+
 static float rms_db(const float* x, uint32_t n) {
     double sum = 0.0;
     for (uint32_t i = 0; i < n; ++i) {
@@ -45,17 +80,18 @@ static float rms_db(const float* x, uint32_t n) {
 
 void sw_analysis_run_pitch(
     const float* window,
+    uint32_t frames,
     uint32_t sample_rate,
     sw_analysis_workspace* workspace,
     float* out_frequency_hz,
     float* out_clarity,
     float* out_level_db
 ) {
-    const uint32_t n = sw_analysis_window_frames(sample_rate);
-    const float* centre = window + n / 4;
-    *out_level_db = rms_db(centre, n / 2);
+    const uint32_t n = sw_analysis_pitch_frames(frames, sample_rate);
+    const float* centre = window + (frames - n) / 2;
+    *out_level_db = rms_db(centre, n);
     *out_frequency_hz = sw_pitch_detect(
-        centre, n / 2, (float)sample_rate, workspace->re, workspace->im, workspace->nsdf, out_clarity
+        centre, n, (float)sample_rate, workspace->re, workspace->im, workspace->nsdf, out_clarity
     );
 }
 
@@ -123,6 +159,7 @@ static float sw_analysis_settle_fundamental(
 
 void sw_analysis_run(
     const float* window,
+    uint32_t frames,
     uint32_t sample_rate,
     float noise_gate_db,
     sw_analysis_workspace* workspace,
@@ -131,12 +168,16 @@ void sw_analysis_run(
     memset(out, 0, sizeof(*out));
     out->sample_rate = sample_rate;
     float frequency;
-    sw_analysis_run_pitch(window, sample_rate, workspace, &frequency, &out->clarity, &out->level_db);
+    sw_analysis_run_pitch(window, frames, sample_rate, workspace, &frequency, &out->clarity, &out->level_db);
 
-    const uint32_t n = sw_analysis_window_frames(sample_rate);
-    sw_spectrum_compute(window, n, workspace->re, workspace->im, workspace->mag_db);
-    sw_spectrum_find_partials(workspace->mag_db, n, (float)sample_rate, noise_gate_db, out);
-    sw_spectrum_display(workspace->mag_db, n, (float)sample_rate, out);
+    /* The spectrum of the whole window, padded with silence up to a power of two */
+    uint32_t fft_size = SW_ANALYSIS_MIN_WINDOW;
+    while (fft_size < frames) {
+        fft_size <<= 1;
+    }
+    sw_spectrum_compute(window, frames, fft_size, workspace->re, workspace->im, workspace->mag_db);
+    sw_spectrum_find_partials(workspace->mag_db, frames, fft_size, (float)sample_rate, noise_gate_db, out);
+    sw_spectrum_display(workspace->mag_db, fft_size, (float)sample_rate, out);
 
     /* Gated and nothing above the gate: only ambient noise is left, whatever
        period it may have (a fan's hum) */
@@ -145,8 +186,220 @@ void sw_analysis_run(
         out->clarity = 0.0f;
     }
 
-    out->frequency_hz = sw_analysis_settle_fundamental(out, frequency, workspace->nsdf, n / 2);
+    out->frequency_hz = sw_analysis_settle_fundamental(
+        out, frequency, workspace->nsdf, sw_analysis_pitch_frames(frames, sample_rate)
+    );
     for (uint32_t i = 0; i < out->partial_count; ++i) {
         out->partials[i].ratio = out->frequency_hz > 0.0f ? out->partials[i].frequency_hz / out->frequency_hz : 0.0f;
     }
+}
+
+/* --------------------------------------------------------------------------
+   A zone: the medians of the analyses of its moments
+   -------------------------------------------------------------------------- */
+static int sw_compare_floats(const void* a, const void* b) {
+    const float x = *(const float*)a, y = *(const float*)b;
+    return (x > y) - (x < y);
+}
+
+static int sw_compare_peaks(const void* a, const void* b) {
+    const float x = ((const sw_analysis_peak*)a)->key, y = ((const sw_analysis_peak*)b)->key;
+    return (x > y) - (x < y);
+}
+
+/* Median of n values (they get sorted), 0 for none */
+static float sw_median(float* values, uint32_t n) {
+    if (n == 0) {
+        return 0.0f;
+    }
+    qsort(values, n, sizeof(float), sw_compare_floats);
+    return n % 2 ? values[n / 2] : 0.5f * (values[n / 2 - 1] + values[n / 2]);
+}
+
+/* The frequency moved by whole octaves next to reference, when it lies
+   within REFERENCE_SEMITONES of one of reference's octaves; 0 otherwise */
+static float sw_analysis_fold(float frequency, float reference) {
+    if (frequency <= 0.0f || reference <= 0.0f) {
+        return 0.0f;
+    }
+    const double octaves = log2((double)reference / frequency);
+    const double whole = floor(octaves + 0.5);
+    if (fabs(octaves - whole) * 12.0 > REFERENCE_SEMITONES) {
+        return 0.0f;
+    }
+    return (float)(frequency * pow(2.0, whole));
+}
+
+/* Keeps the partials within harmonic_cents of a whole ratio (1, 2, 3…), with
+   amplitudes relative to the strongest kept; harmonic_cents 0 keeps them all */
+static void sw_analysis_keep_harmonics(synthway_analysis_t* out, float harmonic_cents) {
+    if (harmonic_cents <= 0.0f || out->frequency_hz <= 0.0f) {
+        return;
+    }
+    uint32_t kept = 0;
+    float strongest = 0.0f;
+    for (uint32_t i = 0; i < out->partial_count; ++i) {
+        const float ratio = out->partials[i].ratio;
+        const long n = lroundf(ratio);
+        if (n >= 1 && fabs(1200.0 * log2((double)ratio / n)) <= harmonic_cents) {
+            out->partials[kept++] = out->partials[i];
+            if (out->partials[kept - 1].amplitude > strongest) strongest = out->partials[kept - 1].amplitude;
+        }
+    }
+    for (uint32_t i = 0; i < kept && strongest > 0.0f; ++i) {
+        out->partials[i].amplitude /= strongest;
+    }
+    out->partial_count = kept;
+}
+
+void sw_analysis_relate(synthway_analysis_t* out, float reference_hz, float harmonic_cents) {
+    if (reference_hz > 0.0f) {
+        /* The note heard, moved to the reference's octave, keeps the ratios
+           true to its tuning; a note too far from it, or none, gives way */
+        const float folded = out->clarity >= NOTE_CLARITY ? sw_analysis_fold(out->frequency_hz, reference_hz) : 0.0f;
+        out->frequency_hz = folded > 0.0f ? folded : reference_hz;
+        for (uint32_t i = 0; i < out->partial_count; ++i) {
+            out->partials[i].ratio = out->partials[i].frequency_hz / out->frequency_hz;
+        }
+    }
+    sw_analysis_keep_harmonics(out, harmonic_cents);
+}
+
+void sw_analysis_combine(
+    const synthway_analysis_t* moments,
+    uint32_t count,
+    float reference_hz,
+    float harmonic_cents,
+    sw_analysis_peak* peaks,
+    float* values,
+    float* references,
+    uint32_t* marks,
+    synthway_analysis_t* out
+) {
+    memset(out, 0, sizeof(*out));
+    out->sample_rate = moments[0].sample_rate;
+    out->spectrum_min_hz = moments[0].spectrum_min_hz;
+    out->spectrum_max_hz = moments[0].spectrum_max_hz;
+
+    /* Level, clarity and spectrum: over every moment */
+    for (uint32_t i = 0; i < count; ++i) values[i] = moments[i].level_db;
+    out->level_db = sw_median(values, count);
+    for (uint32_t i = 0; i < count; ++i) values[i] = moments[i].clarity;
+    out->clarity = sw_median(values, count);
+    for (uint32_t p = 0; p < SYNTHWAY_ANALYSIS_SPECTRUM_POINTS; ++p) {
+        for (uint32_t i = 0; i < count; ++i) values[i] = moments[i].spectrum_db[p];
+        out->spectrum_db[p] = sw_median(values, count);
+    }
+
+    /* The reference: the one given, or the low end of the clear notes heard,
+       so that moments read an octave too high (a fundamental that fades
+       first) do not lift it. Attacks and noise, unclear, have no say. */
+    uint32_t notes = 0;
+    for (uint32_t i = 0; i < count; ++i) {
+        if (moments[i].frequency_hz > 0.0f && moments[i].clarity >= NOTE_CLARITY) {
+            values[notes++] = log2f(moments[i].frequency_hz);
+        }
+    }
+    float reference = reference_hz;
+    if (reference <= 0.0f && notes > 0) {
+        qsort(values, notes, sizeof(float), sw_compare_floats);
+        reference = exp2f(values[(uint32_t)(REFERENCE_PERCENTILE * (notes - 1))]);
+    }
+
+    /* Each moment's own note, moved to the reference's octave: its partials
+       are taken to it, so that vibrato and octave errors leave their ratios
+       unchanged. A moment on another note, an attack or noise counts out. */
+    uint32_t on_note = 0;
+    for (uint32_t i = 0; i < count; ++i) {
+        references[i] = moments[i].clarity >= NOTE_CLARITY ? sw_analysis_fold(moments[i].frequency_hz, reference) : 0.0f;
+        if (references[i] > 0.0f) values[on_note++] = references[i];
+    }
+    bool by_ratio = on_note > 0 && (reference_hz > 0.0f || on_note >= MIN_ON_NOTE_SHARE * count);
+    if (by_ratio) {
+        out->frequency_hz = sw_median(values, on_note);
+    } else if (reference_hz > 0.0f) {
+        /* Given, but heard nowhere: every moment is taken to it as it is */
+        for (uint32_t i = 0; i < count; ++i) references[i] = reference_hz;
+        on_note = count;
+        out->frequency_hz = reference_hz;
+        by_ratio = true;
+    }
+    const uint32_t counted = by_ratio ? on_note : count;
+
+    /* Every partial of the moments that count, by ratio (or frequency) */
+    uint32_t peak_count = 0;
+    for (uint32_t i = 0; i < count; ++i) {
+        marks[i] = UINT32_MAX;
+        if (by_ratio && references[i] <= 0.0f) {
+            continue;
+        }
+        for (uint32_t j = 0; j < moments[i].partial_count; ++j) {
+            const synthway_analysis_partial_t* partial = &moments[i].partials[j];
+            peaks[peak_count].key = by_ratio ? partial->frequency_hz / references[i] : partial->frequency_hz;
+            peaks[peak_count].amplitude = partial->amplitude;
+            peaks[peak_count].moment = i;
+            peak_count++;
+        }
+    }
+    qsort(peaks, peak_count, sizeof(sw_analysis_peak), sw_compare_peaks);
+
+    /* A group of keys, each within MATCH_TOLERANCE of the group's median as it
+       grows (so a partial smeared by vibrato, spread around its ratio, stays
+       one, while a run of scattered noise peaks cannot grow far), is one
+       partial, kept when found in at least half the moments that count */
+    uint32_t kept = 0;
+    for (uint32_t first = 0; first < peak_count;) {
+        uint32_t end = first + 1;
+        while (end < peak_count && peaks[end].key <= peaks[(first + end) / 2].key * (1.0f + MATCH_TOLERANCE)) {
+            end++;
+        }
+        uint32_t found_in = 0;
+        for (uint32_t k = first; k < end; ++k) {
+            if (marks[peaks[k].moment] != first) {
+                marks[peaks[k].moment] = first;
+                found_in++;
+            }
+        }
+        if (2 * found_in >= counted) {
+            for (uint32_t k = first; k < end; ++k) values[k - first] = peaks[k].key;
+            const float key = sw_median(values, end - first);
+            for (uint32_t k = first; k < end; ++k) values[k - first] = peaks[k].amplitude;
+            const float amplitude = sw_median(values, end - first);
+
+            uint32_t slot = kept;
+            if (kept == SYNTHWAY_ANALYSIS_MAX_PARTIALS) {
+                /* Full: replaces the weakest, if weaker than this one */
+                slot = 0;
+                for (uint32_t i = 1; i < kept; ++i) {
+                    if (out->partials[i].amplitude < out->partials[slot].amplitude) slot = i;
+                }
+                if (out->partials[slot].amplitude >= amplitude) slot = UINT32_MAX;
+            } else {
+                kept++;
+            }
+            if (slot != UINT32_MAX) {
+                out->partials[slot].ratio = by_ratio ? key : 0.0f;
+                out->partials[slot].frequency_hz = by_ratio ? key * out->frequency_hz : key;
+                out->partials[slot].amplitude = amplitude;
+            }
+        }
+        first = end;
+    }
+
+    /* By frequency, relative to the strongest */
+    float strongest = 0.0f;
+    for (uint32_t i = 0; i < kept; ++i) {
+        const synthway_analysis_partial_t partial = out->partials[i];
+        uint32_t j = i;
+        for (; j > 0 && out->partials[j - 1].frequency_hz > partial.frequency_hz; --j) {
+            out->partials[j] = out->partials[j - 1];
+        }
+        out->partials[j] = partial;
+        if (partial.amplitude > strongest) strongest = partial.amplitude;
+    }
+    for (uint32_t i = 0; i < kept && strongest > 0.0f; ++i) {
+        out->partials[i].amplitude /= strongest;
+    }
+    out->partial_count = kept;
+    sw_analysis_keep_harmonics(out, harmonic_cents);
 }

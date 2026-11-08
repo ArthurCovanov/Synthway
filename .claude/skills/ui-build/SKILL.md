@@ -15,11 +15,11 @@ Node n'est pas installé sous Windows : tout passe par WSL.
 Depuis Windows, sur une seule ligne :
 
 ```powershell
-wsl -d archlinux -e bash -c "cd /mnt/c/msys64/home/112165/workspace/synthway/synthway-ui && npm run typecheck && SYNTHWAY_SERVER_URL=http://localhost:18742 node node_modules/vite/bin/vite.js build --outDir /tmp/synthway-ui-dist --emptyOutDir"
+wsl -d archlinux -e bash -c "cd /mnt/c/msys64/home/112165/workspace/synthway/synthway-ui && npm run typecheck && SYNTHWAY_SERVER_URL=http://127.0.0.1:18742 node node_modules/vite/bin/vite.js build --outDir /tmp/synthway-ui-dist --emptyOutDir"
 ```
 
 - `npm run typecheck` ne doit afficher aucune erreur.
-- `SYNTHWAY_SERVER_URL` pointe vers le serveur factice de l'étape 2. Il est lu à la compilation pour les messages de l'interface (port affiché), et au lancement de `vite preview` pour le relais.
+- `SYNTHWAY_SERVER_URL` pointe vers le serveur factice de l'étape 2. Il est lu à la compilation : la page compilée appelle directement cette adresse depuis le navigateur.
 - Le build doit se terminer par `✓ built`. Il écrit dans `/tmp` de WSL, donc rien n'est ajouté au dépôt.
 - Ne lance pas `npm install` pendant que l'utilisateur fait tourner `npm run dev` : ça change les `node_modules` qu'il utilise. Demande-lui d'abord. Une nouvelle dépendance passe par le skill `third-party-resources`.
 
@@ -34,7 +34,7 @@ wsl -d archlinux -e bash -c "cd /mnt/c/msys64/home/112165/workspace/synthway/syn
 ```
 
 ```powershell
-wsl -d archlinux -e bash -c "cd /mnt/c/msys64/home/112165/workspace/synthway/synthway-ui && SYNTHWAY_SERVER_URL=http://localhost:18742 node node_modules/vite/bin/vite.js preview --outDir /tmp/synthway-ui-dist --port 4174 --strictPort --host 127.0.0.1"
+wsl -d archlinux -e bash -c "cd /mnt/c/msys64/home/112165/workspace/synthway/synthway-ui && node node_modules/vite/bin/vite.js preview --outDir /tmp/synthway-ui-dist --port 4174 --strictPort --host 127.0.0.1"
 ```
 
 Si le serveur factice refuse de démarrer parce que le port est pris, n'en change pas pour 18741.

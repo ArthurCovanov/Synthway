@@ -1,6 +1,7 @@
 """Sound analysis through the real synthway-core library: sounds rendered
 offline by the engine, then analyzed. No audio device is opened, the
-microphone is never used. Skipped when synthway-core has not been built."""
+microphone is never used (recordings come from a virtual input fed by the
+test). Skipped when synthway-core has not been built."""
 import math
 
 import pytest
@@ -57,6 +58,38 @@ def test_clip_from_bytes(core, analyzer, tmp_path):
     assert len(on_note) >= 48
 
 
+def test_window_and_zone(core, analyzer, tmp_path):
+    path = tmp_path / "saw.wav"
+    core.render_to_wav(str(path), 220.0, 1.0, WaveformEnum.SAWTOOTH, volume=0.5)
+    analyzer.load_clip_bytes(path.read_bytes())
+    # A moment through a 50 ms window, then the median of a zone through the usual window
+    moment = analyzer.analyze_clip_range(0.475, 0.525, 0.05)
+    zone = analyzer.analyze_clip_range(0.1, 0.9, core_bridge.WINDOW_AUTO)
+    for analysis in (moment, zone):
+        assert abs(cents(analysis.frequency, 220.0)) < 2
+        assert [round(p.ratio) for p in analysis.partials[:8]] == [1, 2, 3, 4, 5, 6, 7, 8]
+    assert [p.ratio for p in zone.partials[:8]] == pytest.approx([1, 2, 3, 4, 5, 6, 7, 8], abs=0.002)
+    # The octave below given as the note: the same partials, at 2, 4, 6…; harmonics only changes nothing here
+    lower = analyzer.analyze_clip_range(0.1, 0.9, core_bridge.WINDOW_AUTO, None, 110.0, 30.0)
+    assert abs(cents(lower.frequency, 110.0)) < 2
+    assert [p.ratio for p in lower.partials[:4]] == pytest.approx([2, 4, 6, 8], abs=0.004)
+    with pytest.raises(core_bridge.CoreError) as error:
+        analyzer.analyze_clip_range(0.5, 0.5)
+    assert error.value.code == core_bridge.RESULT_INVALID_PARAM
+
+    # Zoomed in: the whole swing of the sawtooth in each part, then down to its samples
+    part = analyzer.clip_waveform(24000, 4800, 10)
+    assert part.frame_count == 4800 and all(low < -0.45 and high > 0.45 for low, high in zip(part.left_low, part.left_high))
+    assert part.left_low == part.right_low  # rendered the same on both channels
+    samples = analyzer.clip_waveform(24000, 50, 800)
+    assert len(samples.left_low) == 50 and samples.left_low == samples.left_high
+    end = analyzer.clip_waveform(47990, 100, 100)
+    assert end.frame_count == 10 and len(end.left_low) == 10
+    with pytest.raises(core_bridge.CoreError) as error:
+        analyzer.clip_waveform(48000, 10, 10)
+    assert error.value.code == core_bridge.RESULT_INVALID_PARAM
+
+
 def test_clip_refuses_what_is_not_audio(analyzer):
     with pytest.raises(core_bridge.CoreError) as error:
         analyzer.load_clip_bytes(b"definitely not an audio file, just some bytes")
@@ -68,6 +101,34 @@ def test_microphone_stays_closed(analyzer):
     assert analyzer.is_input_open() is False
     with pytest.raises(core_bridge.CoreError):
         analyzer.analyze_input()
+
+
+def test_recording_from_a_virtual_microphone(core, analyzer, tmp_path):
+    # A virtual input stands for the microphone: the test plays the capture thread
+    samples = core.render(220.0, 1.0, WaveformEnum.SAWTOOTH, volume=0.5)
+    with pytest.raises(core_bridge.CoreError) as error:
+        analyzer.start_recording()  # no microphone open
+    assert error.value.code == core_bridge.RESULT_NOT_RUNNING
+    analyzer.open_virtual_input(48000)
+    analyzer.start_recording()
+    for start in range(0, len(samples), 4800):
+        analyzer.write_input(samples[start:start + 4800])
+        analyzer.analyze_input()  # takes the new samples, like the server's live loop
+    assert analyzer.is_recording() and analyzer.recording_info() == (48000, 0)
+    assert analyzer.stop_recording() is True
+    assert analyzer.stop_recording() is False  # nothing left to stop
+    assert analyzer.is_input_open() and analyzer.clip_info() == (48000, 48000)
+
+    clip = main.clip_response(analyzer, main.RECORDING_NAME)
+    assert clip.duration == 1.0 and clip.name == "Enregistrement"
+    assert abs(cents(analyzer.analyze_clip(0.5).frequency, 220.0)) < 1
+
+    path = tmp_path / "enregistrement.wav"
+    analyzer.save_clip_wav(str(path))
+    analyzer.close_input()
+    analyzer.load_clip_bytes(path.read_bytes())
+    assert analyzer.clip_info() == (48000, 48000)
+    assert abs(cents(analyzer.analyze_clip(0.5).frequency, 220.0)) < 1
 
 
 def test_noise_gate(core, analyzer):

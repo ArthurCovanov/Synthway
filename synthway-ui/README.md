@@ -14,7 +14,7 @@ La barre latérale, inspirée de [Voicebox](https://voicebox.sh/), donne accès 
 | --- | --- | --- |
 | **Instrument Creator** | Bibliothèque d'instruments (cartes), éditeur de partiels (spectre, enveloppes, onde résultante, volume, filtre, couleur), liste et réglages de chaque partiel, clavier en bas d'écran | Partiels (le timbre), volume, notes jouées au clavier |
 | **Composer** | Pistes (muet, solo, instrument), piano roll et transport avec vue d'ensemble | Lecture et pause, reprise, déplacement du curseur, addition des notes actives via le timbre du moteur (64 partiels au plus) |
-| **Analyzer** | Source (micro ou fichier), accordeur (note, écart en cents, fréquence, netteté, niveau), spectre mesuré, liste des partiels. Affichage seul : rien n'est enregistré ni joué | Micro écouté par le core en direct (`/ws/analyzer`), fichier décodé et analysé par le core |
+| **Analyzer** | Source (micro ou fichier), accordeur (note, écart en cents, fréquence, netteté, niveau), spectre mesuré, liste des partiels | Micro écouté par le core en direct (`/ws/analyzer`), fichier décodé et analysé par le core ; lecture du fichier et de l'enregistrement dans le navigateur |
 | **Réglages** | État du serveur, sortie audio et fréquence d'échantillonnage, MIDI, apparence, à propos | Démarrage et arrêt du moteur, choix de la sortie |
 
 Les réglages qui pilotent le moteur portent un badge **Moteur**. Ceux qui ne sont pas encore pris en charge par le core portent un badge **Bientôt** : filtre et choix du clavier MIDI. Ils sont quand même édités et enregistrés.
@@ -39,15 +39,22 @@ La lecture du Composer envoie au moteur un timbre temporaire constitué des part
 
 ### Analyzer
 
-L'analyse est faite par `synthway-core` : l'interface ne touche jamais au son, elle affiche ce que le serveur lui envoie.
+L'analyse est faite par `synthway-core`. Pour lire un fichier ou un enregistrement, le navigateur joue le WAV que le serveur lui fournit ; le micro reste géré par le core.
 
 - **Micro :** choisir une entrée (la liste vient du serveur), puis **Écouter**. Le core ouvre le micro, et l'interface reçoit 20 analyses par seconde. Le micro se ferme sur **Arrêter**, en passant au mode Fichier ou en quittant l'onglet. Une seule page l'écoute à la fois. L'écran dit si le core a obtenu le mode exclusif (le son arrive sans les effets audio de Windows, et les autres applications ne peuvent pas utiliser le micro pendant l'écoute) ou seulement le mode partagé : un avertissement explique alors que la réduction de bruit de Windows peut étouffer une note tenue, et comment la couper.
-- **Fichier :** **Importer un son** ou déposer un fichier WAV, FLAC ou MP3. Il est envoyé entier au serveur, qui le garde : il revient à la réouverture de l'onglet. La forme d'onde montre en points roses la note tout le long du fichier (plus haut quand elle monte, plus vif quand elle est nette). Un clic ou un glissé place le curseur, les flèches le déplacent de 10 ms (Maj : 100 ms). Le curseur part du moment le plus net (bouton **Moment le plus net**), et **Parcourir** le fait avancer en temps réel, sans jouer le son.
+- **Enregistrement :** sous le micro, **Enregistrer** ouvre le micro s'il est fermé et enregistre tout ce qu'il entend, dans le core, sans limite de durée (le badge compte les secondes) ; **Arrêter l'enregistrement** le termine, de même qu'**Arrêter** ou quitter l'onglet. La forme d'onde de l'enregistrement s'affiche alors comme celle d'un fichier, le curseur sur son moment le plus net. Placer le curseur (clic, flèches) coupe l'écoute en direct : la note, le spectre et les partiels sont ceux du moment choisi. **Lire** joue l'enregistrement dans le navigateur à partir du curseur (au début s'il n'y en a pas, et depuis la fin, il recommence), et le curseur le suit ; lire coupe aussi l'écoute, et placer le curseur met la lecture en pause. Le graphique se zoome, et un glissé y choisit une zone lue en boucle, comme pour un fichier ; **Écouter** retire aussi la zone. **Écouter** reprend le direct et retire le curseur, pour ne jamais mélanger les deux. **Télécharger .wav** récupère l'enregistrement en WAV mono 16 bits. Le serveur garde le dernier enregistrement : il revient à la réouverture de l'onglet ; un nouvel enregistrement le remplace.
+- **Fichier :** **Importer un son** ou déposer un fichier WAV, FLAC ou MP3. Il est envoyé entier au serveur, qui le garde : il revient à la réouverture de l'onglet. La forme d'onde sépare les canaux **L** et **R** et montre en points roses la note tout le long du fichier. Le graphique affiche le zoom, à ×1 au départ ; **Alt + roulette** zoome horizontalement autour du pointeur (Alt empêche aussi le défilement de la page dans toute l'application), jusqu'à ne plus voir qu'une trentaine d'échantillons, et le clic milieu maintenu déplace l'affichage horizontalement. Comme dans un éditeur audio, la forme d'onde est la vraie à tout zoom : le serveur donne, pour la partie affichée (et autant de chaque côté), le plus bas et le plus haut échantillon de chaque colonne de pixels, puis les échantillons eux-mêmes, reliés, avec un point chacun quand ils sont assez écartés. Elle est redemandée au plus toutes les 50 ms en zoomant ou en déplaçant ; en attendant, ou sans serveur à jour, c'est l'aperçu de 1000 crêtes qui s'affiche. Un clic au bouton gauche place le curseur, les flèches le déplacent de 10 ms (Maj : 100 ms). Un glissé au bouton gauche choisit une zone (au-delà de 4 pixels ; le curseur se place à son début) : **Lire** la joue alors en boucle, depuis le curseur s'il est dedans, sinon depuis son début. Le retour au début se fait par un saut du lecteur, vérifié toutes les 10 ms : la boucle peut dépasser un peu la fin de la zone, et un court blanc peut s'entendre au raccord. Un clic simple ou Échap retire la zone. **Lire** joue le fichier décodé en WAV par le navigateur à partir du curseur (depuis la fin, il recommence) ; le curseur et l'analyse le suivent, 20 fois par seconde. Cliquer ou glisser sur la forme d'onde met la lecture en pause et choisit le moment analysé, d'où repartira **Lire**. La lecture est en mono, même pour un fichier stéréo. **Moment le plus net** place le curseur sur la note la plus nette.
 - **Accordeur :** la note la plus proche (en anglais et en solfège), l'écart en cents sur une jauge (vert à ±5 cents, jaune à ±15), la fréquence, la netteté et le niveau. Sous 0,5 de netteté ou sous −80 dBFS, aucune note n'est affichée ; entre 0,5 et 0,8, elle est estompée (« incertaine »). Au micro, la dernière note nette reste 1,2 s, estompée. Le La de référence se règle (440 Hz par défaut).
 - **Spectre :** en dBFS sur une échelle de fréquences logarithmique, avec les partiels dans leur couleur, leur rapport à la note au-dessus des plus forts, et les harmoniques de la note en pointillés.
 - **Anti-bruit :** sous le spectre, désactivé par défaut (0). En le montant, une ligne jaune apparaît sur le spectre, de −99 à −20 dBFS : le core ignore les pics en dessous (ce ne sont plus des partiels, et sans partiel au-dessus, pas de note). Il suffit de la placer juste au-dessus du bruit de fond visible (ventilateur, souffle). Il vaut pour le micro, en direct, et pour le fichier. Pour un réglage fin, un clic sur sa valeur ouvre une petite fenêtre de saisie, au dixième de décibel, de −120 (désactivé) à 0 dBFS, au-delà de la course du curseur ; son bouton **Désactiver** remet le seuil à −120.
-- **Partiels :** fréquence, note la plus proche, rapport, harmonique la plus proche avec l'écart en cents (au-delà de 30 cents : « inharmonique »), amplitude relative au plus fort.
-- **À venir :** faire une carte de l'Instrument Creator à partir des partiels (badge **Bientôt**), suivre l'enveloppe de chaque partiel, écouter le fichier par le core.
+- **Fenêtre d'analyse :** sous l'anti-bruit, de 20 à 320 ms (170 par défaut, gardée dans `synthway.analyzer.window-ms.v1`), avec la même petite fenêtre de saisie. Sans zone, le curseur analyse cette durée autour de lui, montrée sur la forme d'onde par des bornes vertes |—|—| (et une bande verte pâle). Plus courte, l'analyse est plus précise dans le temps ; plus longue, plus fine en fréquence et meilleure pour les notes graves. En direct, au micro, l'analyse garde sa fenêtre habituelle.
+- **Zone :** quand une zone est choisie, les panneaux montrent l'analyse de toute la zone, faite par le core : des fenêtres de la taille choisie passées d'un bout à l'autre (100 au plus, à 10 ms d'écart au moins), puis la médiane. Chaque partiel est reconnu d'un moment à l'autre par son rapport à la note, que le vibrato ne change pas, et gardé s'il est présent dans au moins la moitié des moments. Le mode curseur n'est qu'un cas particulier : une zone de la taille de la fenêtre. Pendant la lecture en boucle, l'analyse de la zone reste fixe.
+- **Avertissements :** sous la fenêtre d'analyse, quand elle est trop courte pour la note (il faut environ 6 périodes pour séparer ses harmoniques : 123 ms pour un G1) ; dans les partiels, quand plus d'un quart d'une zone est sur une autre note (d'après le suivi de la note).
+- **Note de référence :** sous l'accordeur. **Auto** prend la note entendue ; sur une zone, la plus basse de ses notes nettes (corrigée par le core), pour qu'une fondamentale qui s'éteint avant ses harmoniques ne la fasse pas monter d'une octave. **Fixée** prend la note choisie (son nom, et l'octave avec − et +), accordée sur ce que l'Analyzer entend de cette note dans n'importe quelle octave : si l'Analyzer entend G2 alors que la note jouée est G1, fixe G1, et les partiels de la couche G2 deviennent 2, 4, 6… La note fixée ne dure que le temps de la visite (elle va avec un son), et ne vaut pas pour l'écoute en direct.
+- **Harmoniques seulement :** en tête des partiels, activé par défaut et gardé dans `synthway.analyzer.harmonics-only.v1`. Ne garde que les partiels à moins de 30 cents d'un rapport entier : dans un mix, ça écarte l'essentiel des autres instruments. À couper pour un son inharmonique (cloche). Ne vaut pas pour l'écoute en direct.
+- **Partiels :** une ligne dit ce qui est analysé (le direct, l'instant et sa fenêtre, ou la zone, et la note des rapports), puis, pour chaque partiel : fréquence, note la plus proche, rapport, harmonique la plus proche avec l'écart en cents (au-delà de 30 cents : « inharmonique »), amplitude relative au plus fort.
+- **Créer un instrument :** fait une carte de l'Instrument Creator avec les partiels affichés (leur rapport à la note et leur amplitude, en sinusoïdes), l'ajoute à la bibliothèque et l'ouvre. Elle s'appelle comme la source et la note (« Enregistrement · A3 »). Pour l'instant, tous ses partiels ont la même enveloppe (attaque 10 ms, maintien plein, relâchement 200 ms) : le spectre mesuré, tenu. Son volume est choisi pour que la somme des partiels ne sature pas. Il faut une note : sans note, le bouton est grisé.
+- **À venir :** faire une carte de l'Instrument Creator à partir des partiels (badge **Bientôt**), suivre l'enveloppe de chaque partiel.
 
 ### Jouer au clavier
 
@@ -77,7 +84,7 @@ Instruments, composition, réglages audio, apparence et réglages de l'Analyzer 
 ```text
 synthway-ui/
 ├── index.html
-├── vite.config.ts            # Proxy vers synthway-server, polling sous WSL
+├── vite.config.ts            # Adresse de synthway-server, polling sous WSL
 ├── public/favicon.png        # Généré depuis le logo
 ├── scripts/
 │   ├── make-brand-assets.py  # Régénère emblème, favicon et logo depuis assets/logo
@@ -119,13 +126,13 @@ npm install
 npm run dev
 ```
 
-L'interface est sur [http://localhost:5173](http://localhost:5173). Vite relaie `/api`, `/health` et `/ws` vers `synthway-server`, par défaut `http://localhost:18741`. Si ce port est pris par autre chose, l'interface l'indique (« Port 18741 occupé ») ; lance alors le serveur sur un autre port et indique-le à Vite :
+L'interface est sur [http://localhost:5173](http://localhost:5173). Vite ne sert que la page : le navigateur appelle directement `synthway-server` (REST et WebSockets), par défaut sur `http://127.0.0.1:18741`. Le serveur l'accepte parce que la page est servie par cette machine (sa règle CORS). Quand le serveur tourne sous Windows et Vite dans WSL, aucune requête ne passe donc par WSL. Si ce port est pris par autre chose, l'interface l'indique (« Port 18741 occupé ») ; lance alors le serveur sur un autre port et indique-le à Vite :
 
 ```bash
-SYNTHWAY_SERVER_URL=http://localhost:18751 npm run dev
+SYNTHWAY_SERVER_URL=http://127.0.0.1:18751 npm run dev
 ```
 
-Les messages de l'interface (« Port … occupé », commande pour lancer le serveur) citent le port de cette adresse. Il est fixé au lancement de `npm run dev`, ou à la compilation pour `npm run build`.
+Cette adresse est fixée au lancement de `npm run dev`, ou à la compilation pour `npm run build`. Les messages de l'interface (« Port … occupé », commande pour lancer le serveur) citent son port.
 
 Sous WSL, le projet est sur le disque Windows (`/mnt/c/...`), où les modifications faites depuis Windows ne déclenchent pas d'événements de fichiers. `vite.config.ts` passe donc automatiquement en scrutation (polling), pour que le rechargement à chaud fonctionne.
 
@@ -133,11 +140,11 @@ Pour vérifier le code : `npm run typecheck`, puis `npm run build` (voir le skil
 
 ### Sans le vrai serveur
 
-`scripts/mock-server.mjs` imite l'API de `synthway-server` sans core et sans aucun son, et journalise tout ce que l'interface envoie. Pour l'Analyzer, il n'ouvre aucun micro et ne décode aucun fichier : un faux micro chante autour de La 3, un peu bas, avec vibrato, et tout fichier WAV, FLAC ou MP3 devient une corde pincée en Sol 3 de 3 s. Pratique pour travailler sur l'UI sans risquer de jouer du son. Il écoute par défaut sur le port 18742, à côté de celui du vrai serveur (18741) mais jamais dessus : l'interface ne peut pas atteindre le vrai moteur par erreur.
+`scripts/mock-server.mjs` imite l'API de `synthway-server` sans core et sans aucun son, et journalise tout ce que l'interface envoie. Pour l'Analyzer, il n'ouvre aucun micro et ne décode aucun fichier : un faux micro chante autour de La 3, un peu bas, avec vibrato ; un « enregistrement » ne garde que sa durée (ce même chanteur, et un WAV de silence au téléchargement) ; tout fichier WAV, FLAC ou MP3 devient une corde pincée en Sol 3 de 3 s. Pratique pour travailler sur l'UI sans risquer de jouer du son. Il écoute par défaut sur le port 18742, à côté de celui du vrai serveur (18741) mais jamais dessus : l'interface ne peut pas atteindre le vrai moteur par erreur.
 
 ```bash
 npm run mock-server
-SYNTHWAY_SERVER_URL=http://localhost:18742 npm run dev
+SYNTHWAY_SERVER_URL=http://127.0.0.1:18742 npm run dev
 ```
 
 Il faut le tenir à jour quand l'API du serveur change.

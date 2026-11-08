@@ -3,7 +3,7 @@
 // keep them in sync when the server API changes.
 //
 // Usage: node scripts/mock-server.mjs [port]   (default 18742)
-// then:  SYNTHWAY_SERVER_URL=http://localhost:18742 npm run dev
+// then:  SYNTHWAY_SERVER_URL=http://127.0.0.1:18742 npm run dev
 //
 // The default port is the real server's (18741) + 1 on purpose: if the real
 // server is running, the UI must never reach it by mistake and play sound.
@@ -52,6 +52,7 @@ async function readBody(req) {
 // ---------- Analyzer: fake analyses, no microphone opened, no file decoded ----------
 
 let clip = null; // the "loaded file": its name and duration only
+let take = null; // the microphone's last "recording": its duration only, nothing is captured
 const NOTE_HZ = 196; // G3, the note of every fake file
 
 /** A plucked string: harmonics in 1/n, the high ones dying first, plus one inharmonic partial.
@@ -107,24 +108,130 @@ function clipMoment(t) {
   return { frequency, level, clarity };
 }
 
-function clipResponse() {
-  const points = Math.min(1000, Math.ceil(clip.duration / 0.02));
-  const moments = Array.from({ length: points }, (_, i) => clipMoment(((i + 0.5) / points) * clip.duration));
+/** The fake microphone at time t (seconds since it opened): someone sings around A3, a little flat, with vibrato and breaths */
+function singerMoment(t) {
+  const breathing = t % 4 > 3.3;
+  const frequency = breathing ? 0 : 220 * Math.pow(2, (-8 + 12 * Math.sin(2 * Math.PI * 0.4 * t)) / 1200);
+  return { frequency, level: breathing ? -75 : -18, clarity: breathing ? 0.2 : 0.95 };
+}
+
+/** A file or a recording for display, its moments given by moment(t) */
+function clipResponse(name, duration, moment = clipMoment) {
+  const points = Math.min(1000, Math.ceil(duration / 0.02));
+  const moments = Array.from({ length: points }, (_, i) => moment(((i + 0.5) / points) * duration));
+  const overview = Array.from({ length: 1000 }, (_, i) => {
+    const { level } = moment(((i + 0.5) / 1000) * duration);
+    return Math.round(Math.min(1, Math.pow(10, level / 20) * 1.4 * (0.8 + 0.2 * Math.random())) * 1e4) / 1e4;
+  });
   return {
-    name: clip.name,
-    duration: clip.duration,
+    name,
+    duration,
     sample_rate: 48000,
-    frame_count: Math.round(clip.duration * 48000),
-    overview: Array.from({ length: 1000 }, (_, i) => {
-      const { level } = clipMoment(((i + 0.5) / 1000) * clip.duration);
-      return Math.round(Math.min(1, Math.pow(10, level / 20) * 1.4 * (0.8 + 0.2 * Math.random())) * 1e4) / 1e4;
-    }),
+    frame_count: Math.round(duration * 48000),
+    overview,
+    overview_left: overview,
+    overview_right: overview.map((peak) => Math.round(peak * 0.78 * 1e4) / 1e4),
     track: {
       frequency: moments.map((m) => Math.round(m.frequency * 1000) / 1000),
       clarity: moments.map((m) => Math.round(m.clarity * 1000) / 1000),
       level_db: moments.map((m) => Math.round(m.level * 10) / 10),
     },
   };
+}
+
+/** The fake sound at a frame: the note's first harmonics, at the level moment(t) says, and a faint hiss */
+function fakeSample(moment, note, frame) {
+  const t = frame / 48000;
+  const amplitude = Math.min(1, Math.pow(10, moment(t).level / 20) * 1.4);
+  let value = 0;
+  for (let n = 1; n <= 4; n += 1) value += Math.sin(2 * Math.PI * n * note * t) / n;
+  const hiss = ((Math.abs(Math.sin(frame * 12.9898) * 43758.5453) % 1) - 0.5) * 0.002;
+  return (amplitude * value) / 1.7 + hiss;
+}
+
+/** Like the core: lowest and highest sample of each part, the right channel quieter; never more parts than frames */
+function waveformResponse(res, url, duration, moment, note) {
+  const total = Math.round(duration * 48000);
+  const [first, frames, count] = ['first', 'frames', 'count'].map((key) => Number(url.searchParams.get(key)));
+  if (!(Number.isInteger(first) && first >= 0 && frames >= 1 && count >= 1 && count <= 8192)) {
+    return error(res, 422, 'Paramètres invalides');
+  }
+  if (first >= total) return error(res, 422, 'Au-delà de la fin du son');
+  const covered = Math.min(frames, total - first);
+  const parts = Math.min(count, covered);
+  const round = (value) => Math.round(value * 1e5) / 1e5;
+  const body = { first_frame: first, frame_count: covered, left_low: [], left_high: [], right_low: [], right_high: [] };
+  for (let i = 0; i < parts; i += 1) {
+    const start = first + Math.floor((covered * i) / parts);
+    const end = Math.max(start + 1, first + Math.floor((covered * (i + 1)) / parts));
+    let low = Infinity;
+    let high = -Infinity;
+    for (let frame = start; frame < end; frame += 1) {
+      const value = fakeSample(moment, note, frame);
+      low = Math.min(low, value);
+      high = Math.max(high, value);
+    }
+    body.left_low.push(round(low));
+    body.left_high.push(round(high));
+    body.right_low.push(round(low * 0.78));
+    body.right_high.push(round(high * 0.78));
+  }
+  return json(res, body);
+}
+
+function median(values) {
+  const sorted = [...values].sort((a, b) => a - b);
+  const half = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[half] : (sorted[half - 1] + sorted[half]) / 2;
+}
+
+/** Like the core: the ratios taken to a reference note (the note heard moved to its octave when
+    within 1.5 semitones of it, else the reference itself), then only the harmonics within cents */
+function relate(analysis, referenceHz, harmonicCents) {
+  if (referenceHz > 0) {
+    let folded = referenceHz;
+    if (analysis.frequency > 0) {
+      const octaves = Math.log2(referenceHz / analysis.frequency);
+      if (Math.abs(octaves - Math.round(octaves)) * 12 <= 1.5) folded = analysis.frequency * 2 ** Math.round(octaves);
+    }
+    analysis.frequency = folded;
+    for (const p of analysis.partials) p.ratio = Math.round((p.frequency / folded) * 10000) / 10000;
+  }
+  if (harmonicCents > 0 && analysis.frequency > 0) {
+    analysis.partials = analysis.partials.filter((p) => {
+      const n = Math.round(p.ratio);
+      return n >= 1 && Math.abs(1200 * Math.log2(p.ratio / n)) <= harmonicCents;
+    });
+    const strongest = Math.max(1e-9, ...analysis.partials.map((p) => p.amplitude));
+    for (const p of analysis.partials) p.amplitude = Math.round((p.amplitude / strongest) * 10000) / 10000;
+  }
+  return analysis;
+}
+
+/** Like the server: a moment (time, through a window of window_ms), or a zone (start and end), whose
+    moments' medians stand for the core's (at most 100 moments, 10 ms apart at least) */
+function analysisResponse(res, url, moment) {
+  const param = (key) => (url.searchParams.has(key) ? Number(url.searchParams.get(key)) : null);
+  const [time, start, end] = ['time', 'start', 'end'].map(param);
+  const windowMs = param('window_ms') ?? 0;
+  const gate = param('noise_gate_db') ?? -120;
+  const referenceHz = param('reference_hz') ?? 0;
+  const harmonicCents = param('harmonic_cents') ?? 0;
+  if (windowMs !== 0 && !(windowMs >= 10 && windowMs <= 500)) return error(res, 422, 'Fenêtre de 10 à 500 ms, ou 0 pour l’habituelle');
+  if (referenceHz !== 0 && !(referenceHz >= 16 && referenceHz <= 5000)) return error(res, 422, 'Note de référence de 16 à 5000 Hz, ou 0');
+  if (!(harmonicCents >= 0 && harmonicCents <= 100)) return error(res, 422, 'Tolérance des harmoniques de 0 à 100 cents');
+  if (start !== null || end !== null) {
+    if (start === null || end === null || !(end > start)) return error(res, 422, 'Une zone demande start et end, end après start');
+    const count = Math.max(2, Math.min(100, Math.floor((end - start) / 0.01) + 1));
+    const moments = Array.from({ length: count }, (_, i) => moment(start + ((end - start) * i) / (count - 1)));
+    const notes = moments.filter((m) => m.frequency > 0);
+    const frequency = notes.length * 2 >= count ? median(notes.map((m) => m.frequency)) : 0;
+    const analysis = fakeAnalysis(frequency, median(moments.map((m) => m.level)), median(moments.map((m) => m.clarity)), gate);
+    return json(res, relate(analysis, referenceHz, harmonicCents));
+  }
+  if (time === null) return error(res, 422, 'Il faut time, ou start et end');
+  const m = moment(time);
+  return json(res, relate(fakeAnalysis(m.frequency, m.level, m.clarity, gate), referenceHz, harmonicCents));
 }
 
 function analyzerRoute(req, res, url, raw) {
@@ -138,17 +245,79 @@ function analyzerRoute(req, res, url, raw) {
     }
     clip = { name: url.searchParams.get('name') ?? 'son', duration: 3 };
     log(`   clip: ${clip.name}, ${raw.length} bytes (not decoded: a fake G3 pluck stands for it)`);
-    return json(res, clipResponse());
+    return json(res, clipResponse(clip.name, clip.duration));
   }
   if (req.method === 'GET' && url.pathname === '/api/analyzer/clip') {
-    return json(res, clip ? clipResponse() : null);
+    return json(res, clip ? clipResponse(clip.name, clip.duration) : null);
+  }
+  if (req.method === 'GET' && url.pathname === '/api/analyzer/clip.wav') {
+    if (!clip) return error(res, 404, 'Aucun fichier chargé');
+    return sendWav(req, res, silentWav(clip.duration), 'inline');
   }
   if (req.method === 'GET' && url.pathname === '/api/analyzer/clip/analysis') {
     if (!clip) return error(res, 404, 'Aucun fichier chargé');
-    const m = clipMoment(Number(url.searchParams.get('time') ?? 0));
-    return json(res, fakeAnalysis(m.frequency, m.level, m.clarity, Number(url.searchParams.get('noise_gate_db') ?? -120)));
+    return analysisResponse(res, url, clipMoment);
+  }
+  if (req.method === 'GET' && url.pathname === '/api/analyzer/clip/waveform') {
+    if (!clip) return error(res, 404, 'Aucun fichier chargé');
+    return waveformResponse(res, url, clip.duration, clipMoment, NOTE_HZ);
+  }
+  // The microphone's last recording: the fake singer, for as long as it lasted
+  if (req.method === 'GET' && url.pathname === '/api/analyzer/recording') {
+    return json(res, take ? clipResponse('Enregistrement', take.duration, singerMoment) : null);
+  }
+  if (req.method === 'GET' && url.pathname === '/api/analyzer/recording/analysis') {
+    if (!take) return error(res, 404, 'Aucun enregistrement');
+    return analysisResponse(res, url, singerMoment);
+  }
+  if (req.method === 'GET' && url.pathname === '/api/analyzer/recording/waveform') {
+    if (!take) return error(res, 404, 'Aucun enregistrement');
+    return waveformResponse(res, url, take.duration, singerMoment, 220);
+  }
+  if (req.method === 'GET' && url.pathname === '/api/analyzer/recording.wav') {
+    if (!take) return error(res, 404, 'Aucun enregistrement');
+    return sendWav(req, res, silentWav(take.duration), 'attachment; filename="synthway-mock.wav"');
   }
   return false;
+}
+
+/** A WAV file, whole or the byte range asked, like the real server: the browser seeks in it with Range requests */
+function sendWav(req, res, wav, disposition) {
+  const headers = { 'Accept-Ranges': 'bytes', 'Content-Type': 'audio/wav', 'Content-Disposition': disposition };
+  const match = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range ?? '');
+  if (!match || (!match[1] && !match[2])) {
+    res.writeHead(200, { ...headers, 'Content-Length': wav.length });
+    return res.end(wav);
+  }
+  const [, startText, endText] = match;
+  const start = startText ? Number(startText) : Math.max(0, wav.length - Number(endText));
+  const end = endText && startText ? Math.min(Number(endText), wav.length - 1) : wav.length - 1;
+  if (start >= wav.length || end < start) {
+    res.writeHead(416, { ...headers, 'Content-Range': `bytes */${wav.length}` });
+    return res.end();
+  }
+  const body = wav.subarray(start, end + 1);
+  res.writeHead(206, { ...headers, 'Content-Range': `bytes ${start}-${end}/${wav.length}`, 'Content-Length': body.length });
+  return res.end(body);
+}
+
+/** A mono 16-bit WAV file of silence: the mock captures nothing */
+function silentWav(seconds) {
+  const frames = Math.round(seconds * 48000);
+  const header = Buffer.alloc(44);
+  header.write('RIFF', 0, 'latin1');
+  header.writeUInt32LE(36 + frames * 2, 4);
+  header.write('WAVEfmt ', 8, 'latin1');
+  header.writeUInt32LE(16, 16); // fmt chunk size
+  header.writeUInt16LE(1, 20); // PCM
+  header.writeUInt16LE(1, 22); // mono
+  header.writeUInt32LE(48000, 24);
+  header.writeUInt32LE(48000 * 2, 28); // bytes per second
+  header.writeUInt16LE(2, 32); // bytes per frame
+  header.writeUInt16LE(16, 34); // bits per sample
+  header.write('data', 36, 'latin1');
+  header.writeUInt32LE(frames * 2, 40);
+  return Buffer.concat([header, Buffer.alloc(frames * 2)]);
 }
 
 function error(res, status, detail) {
@@ -156,11 +325,24 @@ function error(res, status, detail) {
   res.end(JSON.stringify({ detail }));
 }
 
+// Like the real server: the UI calls it directly, and only pages served by
+// this machine may (CORS)
+const LOCAL_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
+
 const server = createServer(async (req, res) => {
+  const origin = req.headers.origin;
+  if (origin && LOCAL_ORIGIN.test(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  }
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, { 'Access-Control-Allow-Methods': '*', 'Access-Control-Allow-Headers': '*' });
+    return res.end();
+  }
   const url = new URL(req.url, 'http://localhost');
   if (url.pathname.startsWith('/api/analyzer/')) {
     const raw = req.method === 'POST' ? await readRaw(req) : Buffer.alloc(0);
-    if (url.pathname !== '/api/analyzer/clip/analysis') log('HTTP', req.method, req.url);
+    if (!url.pathname.endsWith('/analysis')) log('HTTP', req.method, req.url);
     if (analyzerRoute(req, res, url, raw) !== false) return;
     res.writeHead(404);
     return res.end();
@@ -284,14 +466,27 @@ function onSynthSocket(socket) {
   });
 }
 
-/** Like /ws/analyzer of the real server, with a fake microphone: someone sings
-    around A3, a little flat, with vibrato and breaths */
+/** Like /ws/analyzer of the real server, with a fake microphone (singerMoment)
+    and a fake recording: only its duration is kept */
 function onAnalyzerSocket(socket) {
   let timer;
   let gate = -120;
+  let recordStarted = null; // Date.now() when recording
+  const recordingTimes = () => ({ duration: Math.round(Date.now() - recordStarted) / 1000, lost: 0 });
+  // Like the core: the recording ends when asked, or when the microphone closes
+  const finishRecording = () => {
+    if (recordStarted === null) return null;
+    const times = recordingTimes();
+    take = { duration: times.duration };
+    recordStarted = null;
+    log(`   recording: ${times.duration} s (nothing captured)`);
+    return times;
+  };
   const stop = () => {
     clearInterval(timer);
     timer = undefined;
+    const recorded = finishRecording();
+    if (recorded && !socket.destroyed) sendText(socket, JSON.stringify({ type: 'recorded', ...recorded }));
   };
   readMessages(socket, (message) => {
     log('WS analyzer <-', JSON.stringify(message));
@@ -305,11 +500,21 @@ function onAnalyzerSocket(socket) {
       const deviceIndex = message.device_index ?? -1;
       sendText(socket, JSON.stringify({ type: 'started', device_index: deviceIndex, sample_rate: 48000, exclusive: deviceIndex !== 0 }));
       timer = setInterval(() => {
-        const t = (Date.now() - started) / 1000;
-        const breathing = t % 4 > 3.3;
-        const frequency = breathing ? 0 : 220 * Math.pow(2, (-8 + 12 * Math.sin(2 * Math.PI * 0.4 * t)) / 1200);
-        sendText(socket, JSON.stringify({ type: 'analysis', analysis: fakeAnalysis(frequency, breathing ? -75 : -18, breathing ? 0.2 : 0.95, gate) }));
+        const m = singerMoment((Date.now() - started) / 1000);
+        const analysis = { type: 'analysis', analysis: fakeAnalysis(m.frequency, m.level, m.clarity, gate) };
+        if (recordStarted !== null) analysis.recording = recordingTimes();
+        sendText(socket, JSON.stringify(analysis));
       }, 50);
+    } else if (message.type === 'record') {
+      if (!timer) {
+        sendText(socket, JSON.stringify({ type: 'error', error: 'Le micro n’est pas ouvert : rien à enregistrer' }));
+        return;
+      }
+      recordStarted = Date.now();
+      sendText(socket, JSON.stringify({ type: 'recording' }));
+    } else if (message.type === 'stop_record') {
+      const recorded = finishRecording();
+      sendText(socket, JSON.stringify(recorded ? { type: 'recorded', ...recorded } : { type: 'error', error: 'Aucun enregistrement en cours' }));
     } else if (message.type === 'stop') {
       stop();
       sendText(socket, JSON.stringify({ type: 'stopped' }));
@@ -327,6 +532,13 @@ server.on('upgrade', (req, socket) => {
     socket.destroy();
     return;
   }
+  // Like the real server: CORS does not cover WebSockets, so other websites are refused here
+  const origin = req.headers.origin;
+  if (origin && !LOCAL_ORIGIN.test(origin)) {
+    log('WS refused', req.url, 'from origin', origin);
+    socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+    return;
+  }
   const accept = createHash('sha1')
     .update(`${req.headers['sec-websocket-key']}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
     .digest('base64');
@@ -339,4 +551,4 @@ server.on('upgrade', (req, socket) => {
   socket.on('error', () => undefined);
 });
 
-server.listen(port, '127.0.0.1', () => log(`Silent mock synthway-server on http://localhost:${port}`));
+server.listen(port, '127.0.0.1', () => log(`Silent mock synthway-server on http://127.0.0.1:${port}`));

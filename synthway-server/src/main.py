@@ -19,11 +19,15 @@ import json
 import logging
 import math
 import os
+import re
 import sys
+import tempfile
+from datetime import datetime
 from typing import Optional
 
 try:
-    from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+    import anyio  # FastAPI's own async layer
+    from fastapi import FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
     from fastapi.middleware.cors import CORSMiddleware
     import uvicorn
     HAS_FASTAPI = True
@@ -32,11 +36,14 @@ except ImportError:
 
 try:  # run from src/ (uvicorn main:app, python main.py)
     from core_bridge import (
-        NOISE_GATE_OFF, RESULT_FORMAT_ERROR, RESULT_INVALID_PARAM, Analyzer, CoreError, SynthwayCore, DeviceTypeEnum,
+        MAX_HARMONIC_CENTS, MAX_REFERENCE_HZ, MAX_WINDOW_S, MIN_REFERENCE_HZ, MIN_WINDOW_S, NOISE_GATE_OFF,
+        RESULT_FORMAT_ERROR, RESULT_INVALID_PARAM, Analyzer, CoreError,
+        SynthwayCore, DeviceTypeEnum,
     )
     from models import (
         Analysis,
         ClipResponse,
+        ClipWaveform,
         DeviceListResponse,
         EngineConfigRequest,
         EngineStatusResponse,
@@ -47,11 +54,14 @@ try:  # run from src/ (uvicorn main:app, python main.py)
     )
 except ImportError:  # installed package (synthway-server command)
     from .core_bridge import (
-        NOISE_GATE_OFF, RESULT_FORMAT_ERROR, RESULT_INVALID_PARAM, Analyzer, CoreError, SynthwayCore, DeviceTypeEnum,
+        MAX_HARMONIC_CENTS, MAX_REFERENCE_HZ, MAX_WINDOW_S, MIN_REFERENCE_HZ, MIN_WINDOW_S, NOISE_GATE_OFF,
+        RESULT_FORMAT_ERROR, RESULT_INVALID_PARAM, Analyzer, CoreError,
+        SynthwayCore, DeviceTypeEnum,
     )
     from .models import (
         Analysis,
         ClipResponse,
+        ClipWaveform,
         DeviceListResponse,
         EngineConfigRequest,
         EngineStatusResponse,
@@ -74,18 +84,25 @@ except Exception as e:
 
 
 # Analyzer: an uploaded file goes to the core whole, at once (never streamed);
-# the microphone is read by the core, only analysis results leave it
+# the microphone is read and recorded by the core, only analysis results leave
+# it (and the recording, as a WAV file, when the page downloads it)
 MAX_CLIP_UPLOAD_BYTES = 256 * 1024 * 1024  # a 10-minute WAV, 48 kHz stereo 16 bits, is 115 MB
 CLIP_OVERVIEW_POINTS = 1000
 CLIP_TRACK_STEP_S = 0.02  # one note every 20 ms along a file...
 CLIP_TRACK_MAX_POINTS = 1000  # ...at most 1000 of them
-LIVE_INTERVAL_S = 0.05  # 20 analyses per second from the microphone
+CLIP_WAVEFORM_MAX_PARTS = 8192  # a zoomed waveform: about one part per pixel column of the page
+LIVE_INTERVAL_S = 0.05  # 20 analyses per second from the microphone (they also feed the recording)
+RECORDING_NAME = "Enregistrement"
+# A moment with the usual window is the zone of that length around it (the core's window is at least as long)
+ANALYSIS_USUAL_WINDOW_S = 0.17
 
 
 class AnalyzerHub:
     """The server's two analyzers, created on first use: one for the
     microphone, one for the loaded file, so that decoding a long file never
-    holds the live analysis up. One page listens to the microphone at a time."""
+    holds the live analysis up. One page listens to the microphone at a time.
+    The microphone's recording becomes the clip of the live analyzer, apart
+    from the loaded file."""
 
     def __init__(self):
         self._live: Optional[Analyzer] = None
@@ -103,6 +120,13 @@ class AnalyzerHub:
             self._clip = core.create_analyzer()
         return self._clip
 
+    def recording(self) -> Optional[Analyzer]:
+        """The live analyzer once it holds a finished recording, else None (blocking: call it in a thread)."""
+        live = self._live
+        if live is None or live.is_recording() or live.clip_info()[0] == 0:
+            return None
+        return live
+
 
 analyzers = AnalyzerHub()
 
@@ -112,13 +136,64 @@ def clip_response(analyzer: Analyzer, name: str) -> ClipResponse:
     frames, rate = analyzer.clip_info()
     duration = frames / rate
     track_points = max(1, min(CLIP_TRACK_MAX_POINTS, math.ceil(duration / CLIP_TRACK_STEP_S)))
+    overview_count = max(1, min(CLIP_OVERVIEW_POINTS, frames))
+    overview_left, overview_right = analyzer.clip_stereo_overview(overview_count)
     return ClipResponse(
         name=name,
         duration=duration,
         sample_rate=rate,
         frame_count=frames,
-        overview=analyzer.clip_overview(max(1, min(CLIP_OVERVIEW_POINTS, frames))),
+        overview=analyzer.clip_overview(overview_count),
+        overview_left=overview_left,
+        overview_right=overview_right,
         track=analyzer.clip_track(track_points),
+    )
+
+
+def clip_wav_bytes(analyzer: Analyzer) -> bytes:
+    """The analyzer's clip (a loaded file or a recording) as a WAV file written by the core
+    (blocking: call it in a thread)."""
+    handle, path = tempfile.mkstemp(prefix="synthway-", suffix=".wav")
+    os.close(handle)
+    try:
+        analyzer.save_clip_wav(path)
+        with open(path, "rb") as file:
+            return file.read()
+    finally:
+        os.remove(path)
+
+
+def clip_wav_payload(data: bytes, range_header: Optional[str]):
+    """Return a WAV response payload with optional byte-range support."""
+    headers = {"Accept-Ranges": "bytes", "Content-Disposition": "inline"}
+    if not range_header or not range_header.startswith("bytes=") or "," in range_header:
+        return 200, headers, data
+
+    requested = range_header[6:]
+    start_text, separator, end_text = requested.partition("-")
+    if not separator:
+        return 200, headers, data
+    try:
+        if start_text:
+            start = int(start_text)
+            end = int(end_text) if end_text else len(data) - 1
+        else:
+            suffix_length = int(end_text)
+            if suffix_length <= 0:
+                raise ValueError
+            start = max(0, len(data) - suffix_length)
+            end = len(data) - 1
+    except ValueError:
+        return 200, headers, data
+
+    if start < 0 or start >= len(data) or end < start:
+        return 416, {**headers, "Content-Range": f"bytes */{len(data)}"}, b""
+
+    end = min(end, len(data) - 1)
+    return (
+        206,
+        {**headers, "Content-Range": f"bytes {start}-{end}/{len(data)}"},
+        data[start:end + 1],
     )
 
 
@@ -129,16 +204,32 @@ if HAS_FASTAPI:
         version="0.1.0",
     )
 
-    # The UI reaches the API through the Vite proxy (same origin). Direct
-    # cross-origin calls are only accepted from pages served by this machine,
+    # The UI calls the API directly, from its own origin (the Vite dev server).
+    # Cross-origin calls are only accepted from pages served by this machine,
     # so that no other website can drive the audio engine.
+    LOCAL_ORIGIN = r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$"
     app.add_middleware(
         CORSMiddleware,
-        allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$",
+        allow_origin_regex=LOCAL_ORIGIN,
         allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    async def accept_local(websocket: WebSocket) -> bool:
+        """
+        Accepts a WebSocket from a page served by this machine, or from a program
+        (no Origin header: browsers always send one). CORS does not cover
+        WebSockets: without this, any website open in the browser could play
+        notes or open the microphone. False when refused (closed, HTTP 403).
+        """
+        origin = websocket.headers.get("origin")
+        if origin is not None and not re.match(LOCAL_ORIGIN, origin):
+            logger.warning(f"WebSocket {websocket.url.path} refused from origin {origin}")
+            await websocket.close(code=1008)
+            return False
+        await websocket.accept()
+        return True
 
     @app.get("/health")
     async def health():
@@ -253,7 +344,8 @@ if HAS_FASTAPI:
             ("timbre": null goes back to the single oscillator: waveform and envelope)
         An invalid message gets {"error": ...} back; the connection stays open.
         """
-        await websocket.accept()
+        if not await accept_local(websocket):
+            return
         logger.info("WebSocket client connected to /ws/synth")
         try:
             while True:
@@ -310,7 +402,7 @@ if HAS_FASTAPI:
         except Exception as ex:
             logger.error(f"WebSocket error: {ex}")
 
-    # ---------- Analyzer: displays, never plays nor records ----------
+    # ---------- Analyzer: displays microphone analysis, records it when asked, serves file playback ----------
 
     @app.post("/api/analyzer/clip", response_model=ClipResponse)
     async def load_clip(request: Request, name: str = Query(default="son", max_length=200)):
@@ -344,41 +436,191 @@ if HAS_FASTAPI:
             return None
         return await asyncio.to_thread(clip_response, analyzers.clip(), analyzers.clip_name)
 
-    @app.get("/api/analyzer/clip/analysis", response_model=Analysis)
-    async def analyze_clip(
-        time: float = Query(ge=0.0, description="Seconds from the start of the file"),
-        noise_gate_db: float = Query(
-            default=NOISE_GATE_OFF, ge=NOISE_GATE_OFF, le=0.0,
-            description="Peaks below this level (dBFS) are ignored as ambient noise; -120: none",
-        ),
-    ):
-        """The note, the partials and the spectrum of the loaded file around time."""
+    @app.get("/api/analyzer/clip.wav")
+    async def play_clip(request: Request):
+        """Serves the loaded file decoded as WAV, so the browser can play and seek it."""
         if not core:
             raise HTTPException(status_code=503, detail="Synthway core library not loaded")
         if analyzers.clip_name is None:
             raise HTTPException(status_code=404, detail="Aucun fichier chargé")
-        return await asyncio.to_thread(analyzers.clip().analyze_clip, time, noise_gate_db)
+        return await wav_response(analyzers.clip(), request, "inline")
+
+    async def wav_response(analyzer: Analyzer, request: Request, disposition: str) -> Response:
+        """The analyzer's clip as WAV, whole or the byte range asked: the browser plays it and seeks in it."""
+        try:
+            data = await asyncio.to_thread(clip_wav_bytes, analyzer)
+        except CoreError as ex:
+            raise HTTPException(status_code=500, detail=str(ex)) from ex
+        status_code, headers, body = clip_wav_payload(data, request.headers.get("range"))
+        headers["Content-Disposition"] = disposition
+        return Response(content=body, status_code=status_code, media_type="audio/wav", headers=headers)
+
+    async def analyze_moment_or_zone(
+        analyzer: Analyzer,
+        time: Optional[float],
+        start: Optional[float],
+        end: Optional[float],
+        window_ms: float,
+        noise_gate_db: float,
+        reference_hz: float = 0.0,
+        harmonic_cents: float = 0.0,
+    ) -> Analysis:
+        """A moment (time) through a window of window_ms (0: the usual one, about 170 ms),
+        or a zone (start and end): the median of its moments, through windows of window_ms.
+        Ratios to reference_hz (0: the note heard), only harmonics with harmonic_cents > 0."""
+        if window_ms != 0 and not MIN_WINDOW_S * 1000 <= window_ms <= MAX_WINDOW_S * 1000:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Fenêtre de {MIN_WINDOW_S * 1000:g} à {MAX_WINDOW_S * 1000:g} ms, ou 0 pour l’habituelle",
+            )
+        if reference_hz != 0 and not MIN_REFERENCE_HZ <= reference_hz <= MAX_REFERENCE_HZ:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Note de référence de {MIN_REFERENCE_HZ:g} à {MAX_REFERENCE_HZ:g} Hz, ou 0 pour celle entendue",
+            )
+        if harmonic_cents > MAX_HARMONIC_CENTS:
+            raise HTTPException(status_code=422, detail=f"Tolérance des harmoniques de 0 à {MAX_HARMONIC_CENTS:g} cents")
+        window_s = window_ms / 1000
+        options = (window_s, noise_gate_db, reference_hz, harmonic_cents)
+        if start is not None or end is not None:
+            if start is None or end is None or not end > start:
+                raise HTTPException(status_code=422, detail="Une zone demande start et end, end après start")
+            return await asyncio.to_thread(analyzer.analyze_clip_range, start, end, *options)
+        if time is None:
+            raise HTTPException(status_code=422, detail="Il faut time, ou start et end")
+        if window_s == 0 and reference_hz == 0 and harmonic_cents == 0:
+            return await asyncio.to_thread(analyzer.analyze_clip, time, noise_gate_db)
+        half = (window_s or ANALYSIS_USUAL_WINDOW_S) / 2
+        return await asyncio.to_thread(analyzer.analyze_clip_range, time - half, time + half, *options)
+
+    @app.get("/api/analyzer/clip/analysis", response_model=Analysis)
+    async def analyze_clip(
+        time: Optional[float] = Query(default=None, ge=0.0, description="Seconds from the start of the file"),
+        start: Optional[float] = Query(default=None, ge=0.0, description="Start of a zone, in seconds"),
+        end: Optional[float] = Query(default=None, ge=0.0, description="End of a zone, in seconds"),
+        window_ms: float = Query(default=0.0, ge=0.0, description="Analysis window: 10 to 500 ms; 0, the usual one (about 170 ms)"),
+        noise_gate_db: float = Query(
+            default=NOISE_GATE_OFF, ge=NOISE_GATE_OFF, le=0.0,
+            description="Peaks below this level (dBFS) are ignored as ambient noise; -120: none",
+        ),
+        reference_hz: float = Query(default=0.0, ge=0.0, description="Note the ratios are taken to: 16 to 5000 Hz; 0, the note heard"),
+        harmonic_cents: float = Query(default=0.0, ge=0.0, description="Only partials this close to a whole ratio (up to 100 cents); 0, every partial"),
+    ):
+        """The note, the partials and the spectrum of the loaded file: around time, or the median over a zone."""
+        if not core:
+            raise HTTPException(status_code=503, detail="Synthway core library not loaded")
+        if analyzers.clip_name is None:
+            raise HTTPException(status_code=404, detail="Aucun fichier chargé")
+        return await analyze_moment_or_zone(
+            analyzers.clip(), time, start, end, window_ms, noise_gate_db, reference_hz, harmonic_cents,
+        )
+
+    async def waveform_response(analyzer: Analyzer, first: int, frames: int, count: int) -> ClipWaveform:
+        """A part of the analyzer's clip for drawing: 422 when it starts past the end."""
+        try:
+            return await asyncio.to_thread(analyzer.clip_waveform, first, frames, count)
+        except CoreError as ex:
+            if ex.code == RESULT_INVALID_PARAM:
+                raise HTTPException(status_code=422, detail="Au-delà de la fin du son") from ex
+            raise HTTPException(status_code=500, detail=str(ex)) from ex
+
+    @app.get("/api/analyzer/clip/waveform", response_model=ClipWaveform)
+    async def clip_waveform(
+        first: int = Query(ge=0, description="First frame of the part"),
+        frames: int = Query(ge=1, description="Frames in the part (stopped at the end of the file)"),
+        count: int = Query(ge=1, le=CLIP_WAVEFORM_MAX_PARTS, description="Equal parts, one per pixel column: never more than frames"),
+    ):
+        """The waveform of a part of the loaded file, to draw it zoomed in: lowest and highest sample of each channel per part."""
+        if not core:
+            raise HTTPException(status_code=503, detail="Synthway core library not loaded")
+        if analyzers.clip_name is None:
+            raise HTTPException(status_code=404, detail="Aucun fichier chargé")
+        return await waveform_response(analyzers.clip(), first, frames, count)
+
+    async def finished_recording() -> Analyzer:
+        if not core:
+            raise HTTPException(status_code=503, detail="Synthway core library not loaded")
+        recording = await asyncio.to_thread(analyzers.recording)
+        if recording is None:
+            raise HTTPException(status_code=404, detail="Aucun enregistrement")
+        return recording
+
+    @app.get("/api/analyzer/recording", response_model=Optional[ClipResponse])
+    async def get_recording():
+        """The microphone's last recording, shown like a file; null when none (or while recording)."""
+        if not core:
+            raise HTTPException(status_code=503, detail="Synthway core library not loaded")
+        recording = await asyncio.to_thread(analyzers.recording)
+        if recording is None:
+            return None
+        return await asyncio.to_thread(clip_response, recording, RECORDING_NAME)
+
+    @app.get("/api/analyzer/recording/analysis", response_model=Analysis)
+    async def analyze_recording(
+        time: Optional[float] = Query(default=None, ge=0.0, description="Seconds from the start of the recording"),
+        start: Optional[float] = Query(default=None, ge=0.0, description="Start of a zone, in seconds"),
+        end: Optional[float] = Query(default=None, ge=0.0, description="End of a zone, in seconds"),
+        window_ms: float = Query(default=0.0, ge=0.0, description="Analysis window: 10 to 500 ms; 0, the usual one (about 170 ms)"),
+        noise_gate_db: float = Query(
+            default=NOISE_GATE_OFF, ge=NOISE_GATE_OFF, le=0.0,
+            description="Peaks below this level (dBFS) are ignored as ambient noise; -120: none",
+        ),
+        reference_hz: float = Query(default=0.0, ge=0.0, description="Note the ratios are taken to: 16 to 5000 Hz; 0, the note heard"),
+        harmonic_cents: float = Query(default=0.0, ge=0.0, description="Only partials this close to a whole ratio (up to 100 cents); 0, every partial"),
+    ):
+        """The note, the partials and the spectrum of the last recording, like /api/analyzer/clip/analysis."""
+        recording = await finished_recording()
+        return await analyze_moment_or_zone(
+            recording, time, start, end, window_ms, noise_gate_db, reference_hz, harmonic_cents,
+        )
+
+    @app.get("/api/analyzer/recording/waveform", response_model=ClipWaveform)
+    async def recording_waveform(
+        first: int = Query(ge=0, description="First frame of the part"),
+        frames: int = Query(ge=1, description="Frames in the part (stopped at the end of the recording)"),
+        count: int = Query(ge=1, le=CLIP_WAVEFORM_MAX_PARTS, description="Equal parts, one per pixel column: never more than frames"),
+    ):
+        """The waveform of a part of the last recording, like /api/analyzer/clip/waveform."""
+        recording = await finished_recording()
+        return await waveform_response(recording, first, frames, count)
+
+    @app.get("/api/analyzer/recording.wav")
+    async def recording_wav(request: Request):
+        """The last recording as a mono 16-bit WAV file, written by the core: downloaded
+        (attachment), or played by the browser, which ignores the attachment and seeks with Range."""
+        recording = await finished_recording()
+        name = f"synthway-{datetime.now().strftime('%Y%m%d-%H%M%S')}.wav"
+        return await wav_response(recording, request, f'attachment; filename="{name}"')
 
     @app.websocket("/ws/analyzer")
     async def websocket_analyzer_endpoint(websocket: WebSocket):
         """
         Live analysis of the microphone. The core listens and analyzes; only the
-        results go out, LIVE_INTERVAL_S apart. Nothing is recorded.
+        results go out, LIVE_INTERVAL_S apart. Nothing is recorded unless asked.
         From the page:
           - {"type": "start", "device_index": -1, "sample_rate": 0, "noise_gate_db": -120}
             opens the capture device (-1: the system's; sample rate 0: the device's own)
           - {"type": "set", "noise_gate_db": -70}
             peaks below this level (dBFS) are ignored as ambient noise; -120 (the default): none
+          - {"type": "record"}       records from now on, with no time limit (the microphone must be open)
+          - {"type": "stop_record"}  ends the recording; the microphone stays open
           - {"type": "stop"}
         To the page:
           - {"type": "started", "device_index": -1, "sample_rate": 48000, "exclusive": true}
             (exclusive: without the system's audio effects, which fade a held note; false: shared mode)
-          - {"type": "analysis", "analysis": {...}}   (see the Analysis model)
+          - {"type": "analysis", "analysis": {...}, "recording": {"duration": 1.25, "lost": 0.0}}
+            (see the Analysis model; "recording" only while recording, in seconds,
+            lost: samples the core had no time to take, replaced by silence)
+          - {"type": "recording"}  the recording has started
+          - {"type": "recorded", "duration": 3.5, "lost": 0.0}
+            the recording has ended, also when the microphone closes during it:
+            GET /api/analyzer/recording then shows it
           - {"type": "stopped"}
           - {"type": "error", "error": "..."}
         The microphone closes when the page stops or disconnects. One page listens at a time.
         """
-        await websocket.accept()
+        if not await accept_local(websocket):
+            return
         send_lock = asyncio.Lock()
         stream: Optional[asyncio.Task] = None
 
@@ -386,11 +628,34 @@ if HAS_FASTAPI:
             async with send_lock:
                 await websocket.send_json(message)
 
+        def recording_times(analyzer: Analyzer, sample_rate: int) -> dict:
+            frames, lost = analyzer.recording_info()
+            rate = max(1, sample_rate)
+            return {"duration": round(frames / rate, 3), "lost": round(lost / rate, 3)}
+
+        def analyze_live(analyzer: Analyzer) -> dict:
+            # Each analysis also moves what the microphone heard into the recording
+            analysis = analyzer.analyze_input()
+            message = {"type": "analysis", "analysis": analysis.model_dump()}
+            if analyzer.is_recording():
+                message["recording"] = recording_times(analyzer, analysis.sample_rate)
+            return message
+
+        def finish_recording(analyzer: Analyzer) -> Optional[dict]:
+            """Ends the recording; its times, or None when nothing was recorded."""
+            if not analyzer.stop_recording():
+                return None
+            return recording_times(analyzer, analyzer.clip_info()[1])
+
+        def close_microphone(analyzer: Analyzer) -> Optional[dict]:
+            recorded = finish_recording(analyzer)  # a recording in progress ends first, and is kept
+            analyzer.close_input()
+            return recorded
+
         async def stream_analyses(analyzer: Analyzer):
             try:
                 while True:
-                    analysis = await asyncio.to_thread(analyzer.analyze_input)
-                    await send({"type": "analysis", "analysis": analysis.model_dump()})
+                    await send(await asyncio.to_thread(analyze_live, analyzer))
                     await asyncio.sleep(LIVE_INTERVAL_S)
             except CoreError as ex:
                 await send({"type": "error", "error": str(ex)})
@@ -413,8 +678,16 @@ if HAS_FASTAPI:
                 stream = None
             if analyzers.listener is websocket:
                 analyzers.listener = None
-                await asyncio.to_thread(analyzers.live().close_input)
+                # Shielded: the page's task may be cancelled meanwhile (a page that
+                # leaves, the server stopping), and the microphone must close anyway
+                with anyio.CancelScope(shield=True):
+                    recorded = await anyio.to_thread.run_sync(close_microphone, analyzers.live())
                 logger.info("Microphone closed")
+                if recorded is not None:
+                    try:
+                        await send({"type": "recorded", **recorded})
+                    except Exception:
+                        pass  # the page has left; GET /api/analyzer/recording still shows it
 
         try:
             while True:
@@ -446,6 +719,22 @@ if HAS_FASTAPI:
                     elif action == "set":
                         if "noise_gate_db" in msg:
                             await asyncio.to_thread(analyzers.live().set_noise_gate, float(msg["noise_gate_db"]))
+                    elif action == "record":
+                        if analyzers.listener is not websocket:
+                            await send({"type": "error", "error": "Le micro n’est pas ouvert : rien à enregistrer"})
+                            continue
+                        await asyncio.to_thread(analyzers.live().start_recording)
+                        logger.info("Recording the microphone")
+                        await send({"type": "recording"})
+                    elif action == "stop_record":
+                        recorded = None
+                        if analyzers.listener is websocket:
+                            recorded = await asyncio.to_thread(finish_recording, analyzers.live())
+                        if recorded is None:
+                            await send({"type": "error", "error": "Aucun enregistrement en cours"})
+                            continue
+                        logger.info(f"Recording stopped: {recorded['duration']} s")
+                        await send({"type": "recorded", **recorded})
                     elif action == "stop":
                         await stop_listening()
                         await send({"type": "stopped"})

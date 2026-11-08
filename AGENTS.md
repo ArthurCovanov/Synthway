@@ -36,6 +36,8 @@ Trois contributeurs travaillent dans le même dossier, parfois en même temps : 
   - Distribution `archlinux` (celle par défaut de `wsl`) : `/mnt/c/msys64/home/112165/workspace/synthway`. Elle a `gcc`, `g++` et ALSA ; c'est elle qui sert aux builds Linux.
 - Les builds rangent leurs objets par plateforme (`build/obj/windows`, `build/obj/linux`) : un build WSL et un build Windows ne se mélangent pas.
 - WSL n'a ni vraie carte son ni MIDI : teste l'audio et le MIDI sous Windows.
+- Le serveur tourne sous Windows, avec le Python de MSYS2 UCRT64 (`C:\msys64\ucrt64\bin\python.exe`, dépendances installées par `pacman`, voir le README du serveur) : dans WSL, le son passe par WSLg et arrive avec environ une demi-seconde de retard. Vite reste dans la Debian.
+- Le navigateur appelle le serveur directement (`http://127.0.0.1:18741`, accepté par sa règle CORS) ; Vite ne sert que la page. Ça marche sans réglage réseau de WSL : le réseau « mirrored » a été essayé et refusait de redémarrer (`0x8007054f`).
 
 ## Conventions
 

@@ -79,10 +79,10 @@ synthway/
 │       └── models.py           # Modèles Pydantic / Dataclasses
 │
 └── synthway-ui/                # 3. Interface Graphique Utilisateur (React + Vite)
-    ├── README.md               # Guide dédié de l'UI (composants, proxy, stack)
+    ├── README.md               # Guide dédié de l'UI (composants, connexion au serveur, stack)
     ├── package.json            # Dépendances Node.js (React, Vite, Lucide)
     ├── tsconfig.json           # Configuration TypeScript
-    ├── vite.config.ts          # Configuration Vite avec proxy backend
+    ├── vite.config.ts          # Configuration Vite, adresse du serveur
     ├── index.html              # Page web hôte
     ├── scripts/                # Déclinaisons du logo, serveur factice muet
     └── src/                    # Code source de l'IHM
@@ -132,6 +132,8 @@ uvicorn main:app --reload --port 18741
 ```
 > *Astuce* : Vous pouvez aussi lancer `python main.py` pour un test autonome sans FastAPI.
 
+> **Pour jouer, lancez le serveur sous Windows**, pas dans WSL : le son de WSL passe par WSLg et arrive avec environ une demi-seconde de retard. Commandes et réglages dans le [README du serveur](synthway-server/README.md#3-lancer-le-serveur).
+
 ### Étape 3 : Lancer l'Interface Graphique (`synthway-ui`)
 
 ```bash
@@ -139,7 +141,7 @@ cd synthway-ui
 npm install
 npm run dev
 ```
-Ouvrez [http://localhost:5173](http://localhost:5173) pour utiliser le synthétiseur dans votre navigateur. Si le serveur tourne sur un autre port que 18741, ou pour travailler sans lui avec le serveur factice muet, voir le [README de l'UI](synthway-ui/README.md).
+Ouvrez [http://localhost:5173](http://localhost:5173) pour utiliser le synthétiseur dans votre navigateur. Vite ne sert que la page : le navigateur parle directement au serveur, sur `http://127.0.0.1:18741`. Si le serveur tourne sur un autre port que 18741, ou pour travailler sans lui avec le serveur factice muet, voir le [README de l'UI](synthway-ui/README.md).
 
 ---
 

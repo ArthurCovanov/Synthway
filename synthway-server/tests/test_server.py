@@ -1,13 +1,17 @@
 """Server behaviour checked against fakes of the native core: no audio is ever
 produced, no microphone is ever opened."""
+import time
+
 import pytest
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 import core_bridge
 import main
 from core_bridge import CoreError
 from models import (
-    MAX_PARTIALS, Analysis, AnalysisPartial, ClipTrack, DeviceInfo, DeviceTypeEnum, Envelope, Timbre, WaveformEnum,
+    MAX_PARTIALS, Analysis, AnalysisPartial, ClipTrack, ClipWaveform, DeviceInfo, DeviceTypeEnum, Envelope, Timbre,
+    WaveformEnum,
 )
 
 
@@ -165,6 +169,8 @@ class FakeAnalyzer:
         self.input_open = False
         self.clip = (0, 0)
         self.noise_gate = core_bridge.NOISE_GATE_OFF
+        self.recording = False
+        self.recorded_frames = 0
 
     def set_noise_gate(self, threshold_db):
         # Same range as the core
@@ -179,10 +185,38 @@ class FakeAnalyzer:
         return 44100, device_index != 2  # input 2 refuses the exclusive mode
 
     def close_input(self):
+        self.stop_recording()  # like the core: a recording in progress is kept
         self.input_open = False
 
     def analyze_input(self):
+        self.recording_info()  # takes what the microphone heard, like the core
         return fake_analysis(440.0)
+
+    def start_recording(self):
+        if not self.input_open:
+            raise CoreError("Starting the recording failed: Not running (-6)", core_bridge.RESULT_NOT_RUNNING)
+        self.recording = True
+        self.recorded_frames = 0
+
+    def is_recording(self):
+        return self.recording
+
+    def recording_info(self):
+        if self.recording:
+            self.recorded_frames += 2205  # 50 ms more at 44.1 kHz each time
+        return self.recorded_frames, 0
+
+    def stop_recording(self):
+        if not self.recording:
+            return False
+        self.recording_info()
+        self.recording = False
+        self.clip = (self.recorded_frames, 44100)
+        return True
+
+    def save_clip_wav(self, path):
+        with open(path, "wb") as file:
+            file.write(b"RIFF....WAVEfmt ")
 
     def load_clip_bytes(self, data):
         # RIFF: a WAV file; LONG: too long; anything else is not audio
@@ -199,12 +233,35 @@ class FakeAnalyzer:
     def clip_overview(self, count):
         return [0.5] * count
 
+    def clip_stereo_overview(self, count):
+        return [0.5] * count, [0.25] * count
+
+    def clip_waveform(self, first_frame, frame_count, count):
+        # Like the bridge: stopped at the end, never more parts than frames
+        frames = self.clip[0]
+        if first_frame >= frames:
+            raise CoreError("Waveform failed: Invalid parameter (-2)", core_bridge.RESULT_INVALID_PARAM)
+        covered = min(frame_count, frames - first_frame)
+        count = min(count, covered)
+        return ClipWaveform(
+            first_frame=first_frame, frame_count=covered,
+            left_low=[-0.5] * count, left_high=[0.5] * count, right_low=[-0.25] * count, right_high=[0.25] * count,
+        )
+
     def clip_track(self, count):
         return ClipTrack(frequency=[330.0] * count, clarity=[0.99] * count, level_db=[-9.0] * count)
 
     def analyze_clip(self, time_s, noise_gate_db=None):
         if noise_gate_db is not None:
             self.set_noise_gate(noise_gate_db)
+        self.analyzed = ("moment", time_s)
+        return fake_analysis(330.0)
+
+    def analyze_clip_range(self, start_s, end_s, window_s=0.0, noise_gate_db=None, reference_hz=0.0, harmonic_cents=0.0):
+        if noise_gate_db is not None:
+            self.set_noise_gate(noise_gate_db)
+        self.analyzed = ("zone", round(start_s, 6), round(end_s, 6), window_s)
+        self.reference = (reference_hz, harmonic_cents)
         return fake_analysis(330.0)
 
 
@@ -303,6 +360,21 @@ def test_cors_accepts_local_pages_only(server):
     assert "access-control-allow-origin" not in preflight("https://example.com").headers
 
 
+@pytest.mark.parametrize("path", ["/ws/synth", "/ws/analyzer"])
+def test_websockets_refuse_other_websites(server, path):
+    # CORS does not cover WebSockets: the server checks their origin itself
+    client, fake = server
+    with pytest.raises(WebSocketDisconnect) as refused:
+        with client.websocket_connect(path, headers={"Origin": "https://example.com"}):
+            pass
+    assert refused.value.code == 1008
+    assert fake.calls == [] and fake.analyzers == []
+    # Pages served by this machine, and programs (no Origin header), get in
+    for headers in ({"Origin": "http://127.0.0.1:5173"}, {}):
+        with client.websocket_connect(path, headers=headers):
+            pass
+
+
 def test_health_without_core(monkeypatch):
     monkeypatch.setattr(main, "core", None)
     with TestClient(main.app) as client:
@@ -391,6 +463,15 @@ def receive_until(ws, message_type):
         assert message["type"] == "analysis", message
 
 
+def eventually(condition, timeout=2.0):
+    """Waits for condition: when a page leaves, the test client cancels the
+    server's task, whose cleanup then ends in a worker thread, a little later."""
+    deadline = time.monotonic() + timeout
+    while not condition():
+        assert time.monotonic() < deadline, "condition still false"
+        time.sleep(0.01)
+
+
 def test_clip_upload_shows_waveform_and_note(server):
     client, _ = server
     assert client.get("/api/analyzer/clip").json() is None
@@ -406,6 +487,48 @@ def test_clip_upload_shows_waveform_and_note(server):
     assert analysis["frequency"] == 330.0
     assert analysis["partials"][0]["ratio"] == 1.0
     assert client.get("/api/analyzer/clip/analysis?time=-1").status_code == 422
+
+    wav = client.get("/api/analyzer/clip.wav")
+    assert wav.status_code == 200 and wav.headers["accept-ranges"] == "bytes"
+    assert wav.content.startswith(b"RIFF")
+    ranged = client.get("/api/analyzer/clip.wav", headers={"Range": "bytes=0-3"})
+    assert ranged.status_code == 206
+    assert ranged.headers["content-range"] == f"bytes 0-3/{len(wav.content)}"
+    assert ranged.content == b"RIFF"
+
+
+def test_clip_waveform_of_a_part(server):
+    client, _ = server
+    assert client.get("/api/analyzer/clip/waveform?first=0&frames=10&count=10").status_code == 404
+    client.post("/api/analyzer/clip", content=b"RIFF")  # 72000 frames
+    part = client.get("/api/analyzer/clip/waveform?first=1000&frames=4800&count=800").json()
+    assert (part["first_frame"], part["frame_count"], len(part["left_low"])) == (1000, 4800, 800)
+    assert part["left_high"][0] == 0.5 and part["right_low"][0] == -0.25
+    # Stopped at the end of the file, never more parts than frames
+    end = client.get("/api/analyzer/clip/waveform?first=71990&frames=100&count=800").json()
+    assert (end["frame_count"], len(end["right_high"])) == (10, 10)
+    assert client.get("/api/analyzer/clip/waveform?first=72000&frames=10&count=10").status_code == 422
+    assert client.get("/api/analyzer/clip/waveform?first=0&frames=10&count=0").status_code == 422
+    assert client.get(f"/api/analyzer/clip/waveform?first=0&frames=10&count={main.CLIP_WAVEFORM_MAX_PARTS + 1}").status_code == 422
+
+
+def test_clip_wav_payload_supports_ranges():
+    wav = b"RIFF....WAVEfmt "
+
+    status, headers, body = main.clip_wav_payload(wav, "bytes=4-7")
+    assert status == 206
+    assert headers["Content-Range"] == f"bytes 4-7/{len(wav)}"
+    assert body == b"...."
+
+    status, headers, body = main.clip_wav_payload(wav, "bytes=-4")
+    assert status == 206
+    assert headers["Content-Range"] == f"bytes {len(wav) - 4}-{len(wav) - 1}/{len(wav)}"
+    assert body == wav[-4:]
+
+    status, headers, body = main.clip_wav_payload(wav, f"bytes={len(wav)}-")
+    assert status == 416
+    assert headers["Content-Range"] == f"bytes */{len(wav)}"
+    assert body == b""
 
 
 def test_clip_errors(server):
@@ -441,7 +564,7 @@ def test_microphone_closes_when_the_page_leaves(server):
         ws.send_json({"type": "start"})
         receive_until(ws, "started")
         assert fake.analyzers[0].input_open
-    assert not fake.analyzers[0].input_open
+    eventually(lambda: not fake.analyzers[0].input_open)
     assert main.analyzers.listener is None
 
 
@@ -486,6 +609,42 @@ def test_analysis_numbers_stay_valid_json():
     assert core_bridge._number(440.123456, 2) == 440.12
 
 
+def test_analysis_window_and_zone(server):
+    client, fake = server
+    client.post("/api/analyzer/clip", content=b"RIFF")
+    clip_analyzer = fake.analyzers[-1]
+    url = "/api/analyzer/clip/analysis"
+    assert client.get(f"{url}?time=0.5").status_code == 200
+    assert clip_analyzer.analyzed == ("moment", 0.5)  # the usual window, as before
+    assert client.get(f"{url}?time=0.5&window_ms=50").status_code == 200
+    assert clip_analyzer.analyzed == ("zone", 0.475, 0.525, 0.05)  # the moment through a 50 ms window
+    assert client.get(f"{url}?start=0.2&end=1.0&window_ms=170").json()["frequency"] == 330.0
+    assert clip_analyzer.analyzed == ("zone", 0.2, 1.0, 0.17)
+    assert clip_analyzer.reference == (0.0, 0.0)  # the note heard, every partial
+    assert client.get(f"{url}?start=0.2&end=1.0&window_ms=170&reference_hz=49&harmonic_cents=30").status_code == 200
+    assert clip_analyzer.reference == (49.0, 30.0)
+    # A note given at a moment with the usual window: the zone of 170 ms around it
+    assert client.get(f"{url}?time=0.5&reference_hz=98").status_code == 200
+    assert clip_analyzer.analyzed == ("zone", 0.415, 0.585, 0.0) and clip_analyzer.reference == (98.0, 0.0)
+    for query in (
+        "", "start=0.2", "start=1&end=0.5", "start=1&end=1", "time=0.5&window_ms=5", "time=0.5&window_ms=600",
+        "time=0.5&reference_hz=10", "time=0.5&reference_hz=6000", "time=0.5&harmonic_cents=150", "time=0.5&harmonic_cents=-1",
+    ):
+        assert client.get(f"{url}?{query}").status_code == 422, query
+
+    # The recording, the same way
+    with client.websocket_connect("/ws/analyzer") as ws:
+        ws.send_json({"type": "start"})
+        receive_until(ws, "started")
+        ws.send_json({"type": "record"})
+        receive_until(ws, "recording")
+        ws.send_json({"type": "stop"})
+        receive_until(ws, "recorded")
+        receive_until(ws, "stopped")
+    assert client.get("/api/analyzer/recording/analysis?start=0&end=0.05&window_ms=20").status_code == 200
+    assert fake.analyzers[-1].analyzed == ("zone", 0.0, 0.05, 0.02)  # the microphone's analyzer, created last
+
+
 def test_noise_gate_on_file_analysis(server):
     client, fake = server
     client.post("/api/analyzer/clip", content=b"RIFF")
@@ -496,6 +655,83 @@ def test_noise_gate_on_file_analysis(server):
     assert clip_analyzer.noise_gate == -60.0
     assert client.get("/api/analyzer/clip/analysis?time=0.5&noise_gate_db=5").status_code == 422
     assert client.get("/api/analyzer/clip/analysis?time=0.5&noise_gate_db=-121").status_code == 422
+
+
+def test_recording_the_microphone(server):
+    client, fake = server
+    with client.websocket_connect("/ws/analyzer") as ws:
+        ws.send_json({"type": "start"})
+        receive_until(ws, "started")
+        ws.send_json({"type": "record"})
+        receive_until(ws, "recording")
+        message = ws.receive_json()
+        assert message["type"] == "analysis" and message["recording"]["duration"] > 0
+        assert client.get("/api/analyzer/recording").json() is None  # not while recording
+        ws.send_json({"type": "stop_record"})
+        recorded = receive_until(ws, "recorded")
+        assert recorded["duration"] > 0 and recorded["lost"] == 0
+        live = fake.analyzers[0]
+        assert live.input_open and not live.recording  # the microphone keeps listening
+        ws.send_json({"type": "stop"})
+        receive_until(ws, "stopped")
+
+    recording = client.get("/api/analyzer/recording").json()
+    assert recording["name"] == "Enregistrement" and recording["sample_rate"] == 44100
+    assert recording["duration"] == pytest.approx(recorded["duration"], abs=0.001)
+    assert client.get("/api/analyzer/recording/analysis?time=0.05&noise_gate_db=-60").json()["frequency"] == 330.0
+    assert live.noise_gate == -60.0
+    wav = client.get("/api/analyzer/recording.wav")
+    assert wav.status_code == 200 and wav.headers["content-type"] == "audio/wav"
+    assert wav.content.startswith(b"RIFF")
+    assert wav.headers["content-disposition"].startswith('attachment; filename="synthway-')
+    # The page plays it too, and seeks in it
+    assert wav.headers["accept-ranges"] == "bytes"
+    ranged = client.get("/api/analyzer/recording.wav", headers={"Range": "bytes=4-"})
+    assert ranged.status_code == 206 and ranged.content == wav.content[4:]
+    assert ranged.headers["content-range"] == f"bytes 4-{len(wav.content) - 1}/{len(wav.content)}"
+    waveform = client.get(f"/api/analyzer/recording/waveform?first=0&frames={recording['frame_count']}&count=100").json()
+    assert waveform["frame_count"] == recording["frame_count"] and len(waveform["left_low"]) == 100
+    assert client.get("/api/analyzer/clip").json() is None  # the loaded file is another thing
+
+
+def test_recording_needs_the_microphone(server):
+    client, _ = server
+    assert client.get("/api/analyzer/recording").json() is None
+    assert client.get("/api/analyzer/recording/analysis?time=0").status_code == 404
+    assert client.get("/api/analyzer/recording.wav").status_code == 404
+    assert client.get("/api/analyzer/recording/waveform?first=0&frames=1&count=1").status_code == 404
+    with client.websocket_connect("/ws/analyzer") as ws:
+        ws.send_json({"type": "record"})
+        assert "pas ouvert" in ws.receive_json()["error"]
+        ws.send_json({"type": "stop_record"})
+        assert ws.receive_json()["type"] == "error"
+        ws.send_json({"type": "start"})
+        receive_until(ws, "started")
+        ws.send_json({"type": "stop_record"})  # listening, but not recording
+        receive_until(ws, "error")
+
+
+def test_recording_kept_when_the_microphone_closes(server):
+    client, fake = server
+    with client.websocket_connect("/ws/analyzer") as ws:
+        ws.send_json({"type": "start"})
+        receive_until(ws, "started")
+        ws.send_json({"type": "record"})
+        receive_until(ws, "recording")
+        ws.send_json({"type": "stop"})
+        receive_until(ws, "recorded")
+        receive_until(ws, "stopped")
+    assert not fake.analyzers[0].input_open
+    assert client.get("/api/analyzer/recording").json()["duration"] > 0
+
+    # Also when the page leaves in the middle of a recording
+    with client.websocket_connect("/ws/analyzer") as ws:
+        ws.send_json({"type": "start"})
+        receive_until(ws, "started")
+        ws.send_json({"type": "record"})
+        receive_until(ws, "recording")
+    eventually(lambda: not fake.analyzers[0].input_open)
+    assert client.get("/api/analyzer/recording").json()["duration"] > 0
 
 
 def test_noise_gate_on_microphone(server):

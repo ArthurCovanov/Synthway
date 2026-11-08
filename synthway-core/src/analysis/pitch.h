@@ -12,7 +12,8 @@
    periods, so the lowest note found is sample_rate / (n / 2).
    Returns 0 when no period stands out (silence, noise). out_clarity gets how
    well the signal matches itself one period later, in [0, 1].
-   re and im are scratch buffers of 2 * n floats, nsdf of n / 2 + 1 floats. */
+   n need not be a power of two. re and im are scratch buffers of 2 * n floats
+   rounded up to a power of two, nsdf of n / 2 + 1 floats. */
 float sw_pitch_detect(
     const float* x,
     uint32_t n,
