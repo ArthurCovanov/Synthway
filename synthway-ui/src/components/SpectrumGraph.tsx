@@ -1,4 +1,5 @@
 import { useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react';
+import { useI18n } from '../i18n';
 import type { TimbrePartial } from '../lib/instruments';
 import { HUE_HEX } from '../lib/neon';
 import { activePartials, formatRatio, MAX_RATIO, MIN_RATIO, waveformHarmonics } from '../lib/partials';
@@ -45,6 +46,7 @@ export function SpectrumGraph({
   onMove: (id: string, ratio: number, amplitude: number) => void;
   onAdd: (ratio: number, amplitude: number) => void;
 }) {
+  const { t } = useI18n();
   const [boxRef, { width, height }] = useElementSize<HTMLDivElement>();
   const svgRef = useRef<SVGSVGElement>(null);
   // The axis keeps its scale while a bar is dragged, so the bar stays under the pointer
@@ -130,11 +132,7 @@ export function SpectrumGraph({
             }
           }}
           role="group"
-          aria-label={
-            locked
-              ? 'Spectre de l’instrument verrouillé : un clic choisit un partiel sans le déplacer'
-              : 'Spectre de l’instrument : glisse un partiel pour changer son rapport et son amplitude'
-          }
+          aria-label={locked ? t('graphs.spectrumLocked') : t('graphs.spectrum')}
         >
           <rect className={styles.plot} x={PAD.left} y={PAD.top} width={plotW} height={plotH} />
 
@@ -192,7 +190,12 @@ export function SpectrumGraph({
                 data-locked={partial.locked ? 'true' : undefined}
                 tabIndex={0}
                 role="button"
-                aria-label={`Partiel ${partials.indexOf(partial) + 1}${partial.muted ? ' (inactif)' : ''}${partial.locked ? ' (verrouillé)' : ''} : rapport ${formatRatio(partial.ratio)}, amplitude ${Math.round(partial.amplitude * 100)} %`}
+                aria-label={t('graphs.partial', {
+                  number: partials.indexOf(partial) + 1,
+                  state: `${partial.muted ? t('graphs.partialMuted') : ''}${partial.locked ? t('graphs.partialLocked') : ''}`,
+                  ratio: formatRatio(partial.ratio),
+                  amplitude: Math.round(partial.amplitude * 100),
+                })}
                 aria-pressed={isSelected}
                 onPointerDown={(event) => startDrag(event, partial)}
                 onFocus={() => onSelect(partial.id)}
@@ -221,7 +224,10 @@ export function SpectrumGraph({
               textAnchor="middle"
               fill={HUE_HEX[selected.hue]}
             >
-              {formatRatio(selected.ratio)} · {Math.round(selected.amplitude * 100)} %
+              {t('graphs.partialValue', {
+                ratio: formatRatio(selected.ratio),
+                amplitude: Math.round(selected.amplitude * 100),
+              })}
             </text>
           )}
         </svg>

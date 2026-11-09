@@ -1,5 +1,6 @@
 import { AlertTriangle, CheckCircle2, Info, X, XCircle } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useI18n } from '../i18n';
 import styles from './Notice.module.css';
 
 export type NoticeTone = 'success' | 'info' | 'warning' | 'error';
@@ -40,6 +41,7 @@ const COLORS: Record<NoticeTone, string> = {
  * screen right before the dock, it takes no room and moves nothing.
  */
 export function Notice({ notice, onClose }: { notice: NoticeMessage | null; onClose: () => void }) {
+  const { t } = useI18n();
   if (!notice) return null;
   const Icon = ICONS[notice.tone];
   const urgent = notice.tone === 'warning' || notice.tone === 'error';
@@ -61,7 +63,7 @@ export function Notice({ notice, onClose }: { notice: NoticeMessage | null; onCl
             </ul>
           )}
         </div>
-        <button type="button" className={styles.close} aria-label="Fermer le message" title="Fermer" onClick={onClose}>
+        <button type="button" className={styles.close} aria-label={t('ui.notice.close')} title={t('common.close')} onClick={onClose}>
           <X size={14} />
         </button>
       </div>

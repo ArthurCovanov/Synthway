@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
+import { t } from '../i18n';
 import { loadJson, saveJson } from './storage';
 
 /** Most changes that can be undone in a row */
 export const HISTORY_LIMIT = 200;
 
 export interface ChangeOptions {
-  /** What the change does, shown on the undo and redo buttons ("Déplacer la note") */
+  /** What the change does, shown on the undo and redo buttons ("Move note"), in the language of the moment */
   label?: string;
   /**
    * Changes of the same group in a row make a single step: a whole drag, a name typed.
@@ -90,7 +91,7 @@ export function useUndoablePersistentState<T>(key: string, initial: () => T, kee
       return {
         past: joins
           ? current.past
-          : [...current.past, { value: current.present, label: options.label ?? 'Modification' }].slice(-HISTORY_LIMIT),
+          : [...current.past, { value: current.present, label: options.label ?? t('songFile.defaultChange') }].slice(-HISTORY_LIMIT),
         present,
         future: [],
         group: options.group ?? null,

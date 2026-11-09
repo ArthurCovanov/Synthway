@@ -18,6 +18,7 @@ import {
   type ToneParams,
   type Waveform,
 } from '../types';
+import { t } from '../i18n';
 import { api, SERVER_PORT, SynthSocket } from './api';
 import { usePersistentState } from './storage';
 
@@ -145,7 +146,7 @@ export function SynthServerProvider({ children }: { children: ReactNode }) {
       setDevices(deviceList);
       setEngine(fromStatus(status));
     } catch (e) {
-      setError(`Lecture de l'état du serveur impossible : ${describe(e)}`);
+      setError(t('server.stateFailed', { reason: describe(e) }));
     }
   }, []);
 
@@ -210,7 +211,7 @@ export function SynthServerProvider({ children }: { children: ReactNode }) {
         setEngine(fromStatus(await api.engineStatus()));
         return true;
       } catch (e) {
-        setError(`Impossible de démarrer l'audio : ${describe(e)}`);
+        setError(t('server.startFailed', { reason: describe(e) }));
         return false;
       } finally {
         setBusy(false);
@@ -226,7 +227,7 @@ export function SynthServerProvider({ children }: { children: ReactNode }) {
       await api.stopEngine();
       setEngine((current) => ({ ...current, running: false, enabled: false, sampleRate: null }));
     } catch (e) {
-      setError(`Impossible d'arrêter l'audio : ${describe(e)}`);
+      setError(t('server.stopFailed', { reason: describe(e) }));
     } finally {
       setBusy(false);
     }
@@ -334,13 +335,13 @@ export function useSynthServer(): SynthServerValue {
   return value;
 }
 
-/** Short French explanation of why notes cannot be played, or null if they can */
+/** Short explanation, in the current language, of why notes cannot be played, or null if they can */
 export function playBlocker(server: SynthServerValue): string | null {
-  if (server.connection === 'connecting') return 'Connexion au serveur…';
-  if (server.connection === 'offline') return 'Serveur Synthway hors ligne';
-  if (server.connection === 'foreign') return `Un autre service occupe le port ${SERVER_PORT}`;
-  if (!server.coreLoaded) return 'Le serveur n’a pas chargé synthway-core';
-  if (!server.engine.running) return 'Active l’audio pour jouer';
-  if (!server.socketOpen) return 'Connexion temps réel…';
+  if (server.connection === 'connecting') return t('server.blocker.connecting');
+  if (server.connection === 'offline') return t('server.blocker.offline');
+  if (server.connection === 'foreign') return t('server.blocker.foreign', { port: SERVER_PORT });
+  if (!server.coreLoaded) return t('server.blocker.noCore');
+  if (!server.engine.running) return t('server.blocker.audioOff');
+  if (!server.socketOpen) return t('server.blocker.socket');
   return null;
 }

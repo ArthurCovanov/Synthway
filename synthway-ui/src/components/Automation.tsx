@@ -15,6 +15,7 @@ import {
   type RefObject,
   type WheelEvent,
 } from 'react';
+import { useI18n, type MessageKey } from '../i18n';
 import {
   AUTOMATION_SPECS,
   automationSpec,
@@ -24,6 +25,7 @@ import {
   MAX_AUTOMATION_POINTS,
   toUnit,
   valueAt,
+  withUnit,
   type AutomationSpec,
   type LaneSide,
 } from '../lib/automation';
@@ -42,7 +44,9 @@ export interface AutomationSelection {
 export type LaneChange = (lane: AutomationLane | undefined, options: ChangeOptions) => void;
 
 const SIDE_COLOR: Record<LaneSide, string> = { left: 'var(--neon-orange)', right: 'var(--neon-yellow)' };
-const SIDE_NAME: Record<LaneSide, string> = { left: 'gauche', right: 'droite' };
+/** Texts of each side: its name, and its initial (L or R) */
+const SIDE_NAME: Record<LaneSide, MessageKey> = { left: 'automation.sideName.left', right: 'automation.sideName.right' };
+const SIDE_SHORT: Record<LaneSide, MessageKey> = { left: 'automation.sideShort.left', right: 'automation.sideShort.right' };
 
 const sidePoints = (lane: AutomationLane | undefined, side: LaneSide) =>
   (side === 'right' ? lane?.right : lane?.points) ?? [];
@@ -102,6 +106,7 @@ export function AutomationCard({
   onLaneChange: LaneChange;
   stepLabel: (step: number) => string;
 }) {
+  const { t, formatNumber } = useI18n();
   const spec = automationSpec(param);
   const lane = track.automation?.[param];
   const stereo = isStereo(spec, lane);
@@ -111,8 +116,8 @@ export function AutomationCard({
   const shown = point ? Number(spec.toInput(point.value).toFixed(spec.inputDecimals)) : null;
   const [draft, setDraft] = useState('');
   useEffect(() => {
-    setDraft(shown === null ? '' : shown.toLocaleString('fr-FR', { maximumFractionDigits: spec.inputDecimals, useGrouping: false }));
-  }, [shown, spec.inputDecimals]);
+    setDraft(shown === null ? '' : formatNumber(shown, { maximumFractionDigits: spec.inputDecimals, useGrouping: false }));
+  }, [shown, spec.inputDecimals, formatNumber]);
 
   const commit = () => {
     if (!lane || !selection || !point || locked) return;
@@ -127,33 +132,33 @@ export function AutomationCard({
       return;
     }
     const points = sidePoints(lane, selection.side).map((item, i) => (i === selection.index ? { ...item, value } : item));
-    onLaneChange(withSide(lane, selection.side, points), { label: 'Changer la valeur du point d’automation' });
+    onLaneChange(withSide(lane, selection.side, points), { label: t('automation.undo.setValue') });
   };
 
   const setStereo = (wanted: boolean) => {
     if (!lane || wanted === stereo || locked) return;
     if (wanted) {
       // The right side starts as a copy of the left one
-      onLaneChange({ points: lane.points, right: lane.points.map((item) => ({ ...item })) }, { label: 'Passer l’automation en stéréo' });
+      onLaneChange({ points: lane.points, right: lane.points.map((item) => ({ ...item })) }, { label: t('automation.undo.stereo') });
     } else {
-      onLaneChange({ points: lane.points }, { label: 'Passer l’automation en mono' });
+      onLaneChange({ points: lane.points }, { label: t('automation.undo.mono') });
       if (selection?.side === 'right') onSelect(null);
     }
   };
 
   const hint = locked
-    ? 'Piste verrouillée.'
+    ? t('automation.hint.locked')
     : param === 'detune' && unisonVoices < 2
-      ? 'L’instrument n’a pas d’unisson : le désaccord ne s’entend pas.'
+      ? t('automation.hint.noUnison')
       : lane
-        ? 'Sélectionne un point de la ligne pour taper sa valeur.'
-        : `Double-clic sur la ligne : un point (départ : ${spec.format(base)}).`;
+        ? t('automation.hint.selectPoint')
+        : t('automation.hint.addPoint', { value: spec.format(base) });
 
   return (
     <div className={cx(styles.card, locked && styles.cardLocked)} style={{ '--hue': hue } as CSSProperties}>
       <div className={styles.cardHead}>
-        <span className={styles.cardTitle}>Automation</span>
-        <span className={styles.cardTrack} title={`Piste sélectionnée : ${track.name}`}>
+        <span className={styles.cardTitle}>{t('automation.title')}</span>
+        <span className={styles.cardTrack} title={t('automation.selectedTrack', { name: track.name })}>
           <span className={styles.dot} />
           <span className={styles.cardTrackName}>{track.name}</span>
         </span>
@@ -161,8 +166,8 @@ export function AutomationCard({
 
       <select
         className={styles.select}
-        aria-label="Réglage automatisé"
-        title="Réglage de la piste à faire varier au cours du morceau (● : il a déjà une courbe)"
+        aria-label={t('automation.param')}
+        title={t('automation.paramTitle')}
         value={param}
         onChange={(event) => {
           onParamChange(event.target.value as AutomationParam);
@@ -178,7 +183,7 @@ export function AutomationCard({
       </select>
 
       <div className={styles.row}>
-        <div className={styles.segmented} role="group" aria-label="Mono ou stéréo">
+        <div className={styles.segmented} role="group" aria-label={t('automation.monoOrStereo')}>
           {([false, true] as const).map((wanted) => (
             <button
               key={String(wanted)}
@@ -188,25 +193,25 @@ export function AutomationCard({
               disabled={locked || !lane || !spec.stereo}
               title={
                 !spec.stereo
-                  ? `${spec.label} : une seule courbe pour les deux côtés`
+                  ? t('automation.monoOnly', { param: spec.label })
                   : wanted
-                    ? 'Une courbe pour la gauche (orange) et une pour la droite (jaune)'
-                    : 'Une seule courbe pour les deux côtés'
+                    ? t('automation.stereoTitle')
+                    : t('automation.monoTitle')
               }
               onClick={() => setStereo(wanted)}
             >
-              {wanted ? 'Stéréo' : 'Mono'}
+              {wanted ? t('automation.stereo') : t('automation.mono')}
             </button>
           ))}
         </div>
         <button
           type="button"
           className={styles.iconButton}
-          aria-label="Effacer la courbe"
-          title={`Effacer la courbe : ${spec.label.toLowerCase()} de l’instrument tout le long (${spec.format(base)})`}
+          aria-label={t('automation.clear')}
+          title={t('automation.clearTitle', { param: spec.label.toLowerCase(), value: spec.format(base) })}
           disabled={locked || !lane}
           onClick={() => {
-            onLaneChange(undefined, { label: 'Effacer la courbe d’automation' });
+            onLaneChange(undefined, { label: t('automation.undo.clear') });
             onSelect(null);
           }}
         >
@@ -217,16 +222,19 @@ export function AutomationCard({
       <div className={styles.point}>
         {point && selection ? (
           <>
-            <span className={styles.pointWhere} title="Le point sélectionné : sa position (mesure.temps.pas)">
-              {stereo ? `${selection.side === 'left' ? 'G' : 'D'} · ` : ''}
+            <span className={styles.pointWhere} title={t('automation.pointWhere')}>
+              {stereo ? `${t(SIDE_SHORT[selection.side])} · ` : ''}
               {stepLabel(Math.floor(point.at))}
               {point.at % 1 ? `+${Math.round((point.at % 1) * 100)}%` : ''}
             </span>
             <input
               className={styles.input}
               inputMode="decimal"
-              aria-label={`Valeur du point. ${spec.help}`}
-              title={`Valeur du point, de ${spec.toInput(spec.min)} à ${spec.toInput(spec.max)} ${spec.unit} (Entrée pour valider)`}
+              aria-label={t('automation.pointValue', { help: spec.help })}
+              title={t('automation.pointRange', {
+                min: spec.toInput(spec.min),
+                max: withUnit(spec.toInput(spec.max), spec.unit),
+              })}
               value={draft}
               disabled={locked}
               onChange={(event) => setDraft(event.target.value)}
@@ -307,6 +315,7 @@ export function AutomationLaneView({
   onLaneChange: LaneChange;
   stepLabel: (step: number) => string;
 }) {
+  const { t } = useI18n();
   const spec = automationSpec(param);
   const lane = track.automation?.[param];
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -370,7 +379,7 @@ export function AutomationLaneView({
     if (!lane) {
       // A new curve starts at the instrument's own value, at the score's start
       const points = at > 0 ? [{ at: 0, value: rounded(spec, base) }, { at, value }] : [{ at: 0, value }];
-      onLaneChange({ points }, { label: `Ajouter une courbe d’automation (${spec.label.toLowerCase()})` });
+      onLaneChange({ points }, { label: t('automation.undo.addCurve', { param: spec.label.toLowerCase() }) });
       onSelect({ side: 'left', index: points.length - 1 });
       return;
     }
@@ -382,13 +391,13 @@ export function AutomationLaneView({
     const after = points.findIndex((point) => point.at > at);
     const index = after < 0 ? points.length : after;
     const next = [...points.slice(0, index), { at, value }, ...points.slice(index)];
-    onLaneChange(withSide(lane, side, next), { label: 'Ajouter un point d’automation' });
+    onLaneChange(withSide(lane, side, next), { label: t('automation.undo.addPoint') });
     onSelect({ side, index });
   };
 
   const removePoint = (side: LaneSide, index: number) => {
     if (!lane || locked) return;
-    onLaneChange(withoutPoint(lane, side, index), { label: 'Retirer un point d’automation' });
+    onLaneChange(withoutPoint(lane, side, index), { label: t('automation.undo.removePoint') });
     onSelect(null);
   };
 
@@ -419,7 +428,7 @@ export function AutomationLaneView({
     const current = points[drag.index];
     if (!current || (current.at === moved.at && current.value === moved.value)) return;
     const next = points.map((point, i) => (i === drag.index ? moved : point));
-    onLaneChange(withSide(lane, drag.side, next), { label: 'Déplacer un point d’automation', group: drag.group });
+    onLaneChange(withSide(lane, drag.side, next), { label: t('automation.undo.movePoint'), group: drag.group });
   };
 
   const onHandlePointerUp = (event: PointerEvent<SVGCircleElement>) => {
@@ -478,7 +487,7 @@ export function AutomationLaneView({
       : `${stepLabel(Math.min(totalSteps - 1, Math.floor(hover)))} · ${
           lane
             ? sides
-                .map((side) => `${stereo ? (side === 'left' ? 'G ' : 'D ') : ''}${spec.format(valueAt(spec, sidePoints(lane, side), hover))}`)
+                .map((side) => `${stereo ? `${t(SIDE_SHORT[side])} ` : ''}${spec.format(valueAt(spec, sidePoints(lane, side), hover))}`)
                 .join('  ')
             : spec.format(base)
         }`;
@@ -486,9 +495,9 @@ export function AutomationLaneView({
   return (
     <div className={styles.lane}>
       <div className={styles.gutter} aria-hidden="true">
-        <span>{spec.id === 'pan' ? 'D' : spec.format(spec.max)}</span>
+        <span>{spec.id === 'pan' ? t(SIDE_SHORT.right) : spec.format(spec.max)}</span>
         <span className={styles.gutterName}>{spec.label}</span>
-        <span>{spec.id === 'pan' ? 'G' : spec.format(spec.min)}</span>
+        <span>{spec.id === 'pan' ? t(SIDE_SHORT.left) : spec.format(spec.min)}</span>
       </div>
       <div className={styles.viewport} ref={viewportRef} onWheel={onWheel}>
         <div className={styles.content} ref={contentRef} style={{ width }}>
@@ -499,7 +508,7 @@ export function AutomationLaneView({
             height={height}
             tabIndex={0}
             role="application"
-            aria-label={`Courbe d’automation : ${spec.label} de ${track.name}`}
+            aria-label={t('automation.laneLabel', { param: spec.label, track: track.name })}
             onKeyDown={onKeyDown}
             onPointerDown={(event) => {
               if (event.button !== 0) return;
@@ -549,8 +558,8 @@ export function AutomationLaneView({
                         }}
                       >
                         <title>
-                          {`${stereo ? `${SIDE_NAME[side]} · ` : ''}${stepLabel(Math.floor(point.at))} · ${spec.format(point.value)}`}
-                          {locked ? '' : '\nGlisser pour déplacer (Maj : librement) · double-clic pour retirer'}
+                          {`${stereo ? `${t(SIDE_NAME[side])} · ` : ''}${stepLabel(Math.floor(point.at))} · ${spec.format(point.value)}`}
+                          {locked ? '' : `\n${t('automation.pointHelp')}`}
                         </title>
                       </circle>
                     );
@@ -563,9 +572,7 @@ export function AutomationLaneView({
         </div>
         {readout && <span className={styles.readout}>{readout}</span>}
         {!lane && !locked && (
-          <span className={styles.empty}>
-            {spec.label} de l’instrument tout le long ({spec.format(base)}) · double-clic pour poser un point
-          </span>
+          <span className={styles.empty}>{t('automation.emptyLane', { param: spec.label, value: spec.format(base) })}</span>
         )}
       </div>
     </div>

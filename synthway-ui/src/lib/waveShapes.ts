@@ -1,3 +1,4 @@
+import { formatNumber, t } from '../i18n';
 import { WAVE_SHAPE, type ShapeFit, type WaveformFit, type WaveShape } from '../types';
 
 /*
@@ -6,21 +7,42 @@ import { WAVE_SHAPE, type ShapeFit, type WaveformFit, type WaveShape } from '../
  * made of one of them. Same formulas as synthway-core/src/analysis/waveform.c.
  */
 
+// Getters: the texts are read in the current language each time
 export const SHAPE_LABELS: Record<WaveShape, string> = {
-  [WAVE_SHAPE.Sine]: 'Sinus',
-  [WAVE_SHAPE.Square]: 'Carré',
-  [WAVE_SHAPE.Triangle]: 'Triangle',
-  [WAVE_SHAPE.Sawtooth]: 'Dent de scie',
-  [WAVE_SHAPE.Pulse]: 'Impulsion',
+  get [WAVE_SHAPE.Sine]() {
+    return t('waveShapes.label.sine');
+  },
+  get [WAVE_SHAPE.Square]() {
+    return t('waveShapes.label.square');
+  },
+  get [WAVE_SHAPE.Triangle]() {
+    return t('waveShapes.label.triangle');
+  },
+  get [WAVE_SHAPE.Sawtooth]() {
+    return t('waveShapes.label.sawtooth');
+  },
+  get [WAVE_SHAPE.Pulse]() {
+    return t('waveShapes.label.pulse');
+  },
 };
 
 /** What makes each shape, in a few words */
 export const SHAPE_HINTS: Record<WaveShape, string> = {
-  [WAVE_SHAPE.Sine]: 'la fondamentale seule',
-  [WAVE_SHAPE.Square]: 'harmoniques impaires, en 1/n',
-  [WAVE_SHAPE.Triangle]: 'harmoniques impaires, en 1/n²',
-  [WAVE_SHAPE.Sawtooth]: 'toutes les harmoniques, en 1/n',
-  [WAVE_SHAPE.Pulse]: 'toutes les harmoniques, avec un trou régulier',
+  get [WAVE_SHAPE.Sine]() {
+    return t('waveShapes.hint.sine');
+  },
+  get [WAVE_SHAPE.Square]() {
+    return t('waveShapes.hint.square');
+  },
+  get [WAVE_SHAPE.Triangle]() {
+    return t('waveShapes.hint.triangle');
+  },
+  get [WAVE_SHAPE.Sawtooth]() {
+    return t('waveShapes.hint.sawtooth');
+  },
+  get [WAVE_SHAPE.Pulse]() {
+    return t('waveShapes.hint.pulse');
+  },
 };
 
 /** What the trial instrument is made of: the partials measured, the closest shape, or one shape */
@@ -34,15 +56,16 @@ export const BUILD_FROM_SHAPE: Record<Exclude<BuildFrom, 'measured' | 'auto'>, W
   pulse: WAVE_SHAPE.Pulse,
 };
 
-export const BUILD_FROM_OPTIONS: { value: BuildFrom; label: string }[] = [
-  { value: 'measured', label: 'Partiels mesurés' },
-  { value: 'auto', label: 'Forme la plus proche' },
-  { value: 'sawtooth', label: 'Dent de scie' },
-  { value: 'square', label: 'Carré' },
-  { value: 'triangle', label: 'Triangle' },
-  { value: 'pulse', label: 'Impulsion' },
-  { value: 'sine', label: 'Sinus' },
-];
+export const BUILD_FROM_OPTIONS: { value: BuildFrom; label: string }[] = (
+  ['measured', 'auto', 'sawtooth', 'square', 'triangle', 'pulse', 'sine'] as const
+).map((value) => ({
+  value,
+  get label() {
+    if (value === 'measured') return t('waveShapes.measured');
+    if (value === 'auto') return t('waveShapes.auto');
+    return SHAPE_LABELS[BUILD_FROM_SHAPE[value]];
+  },
+}));
 
 /** The fit a choice takes: the closest one for « auto », that shape's otherwise; null for the partials measured */
 export function chosenFit(fit: WaveformFit | null, from: BuildFrom): ShapeFit | null {
@@ -122,14 +145,17 @@ export function shapePartials(shape: ShapeFit, noteHz: number): { ratio: number;
 }
 
 export function formatHz(hz: number): string {
-  return hz >= 1000 ? `${(hz / 1000).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} kHz` : `${Math.round(hz)} Hz`;
+  return hz >= 1000 ? `${formatNumber(hz / 1000, { maximumFractionDigits: 1 })} kHz` : `${Math.round(hz)} Hz`;
 }
 
-/** « Dent de scie, passe-bas 5,6 kHz », « Impulsion 25 % », « Carré » */
+/** "Sawtooth, low-pass 5.6 kHz", "Pulse 25%", "Square", in the current language */
 export function describeShape(shape: ShapeFit): string {
+  const label = SHAPE_LABELS[shape.shape];
   const name =
-    shape.shape === WAVE_SHAPE.Pulse ? `${SHAPE_LABELS[shape.shape]} ${Math.round(shape.duty * 100)} %` : SHAPE_LABELS[shape.shape];
+    shape.shape === WAVE_SHAPE.Pulse ? t('waveShapes.pulse', { name: label, percent: Math.round(shape.duty * 100) }) : label;
   if (!(shape.cutoff > 0)) return name;
-  const resonance = shape.resonance > 0 ? `, résonance ${Math.round(shape.resonance * 100)} %` : '';
-  return `${name}, passe-bas ${formatHz(shape.cutoff)}${resonance}`;
+  const cutoff = formatHz(shape.cutoff);
+  return shape.resonance > 0
+    ? t('waveShapes.lowpassResonance', { name, cutoff, resonance: Math.round(shape.resonance * 100) })
+    : t('waveShapes.lowpass', { name, cutoff });
 }

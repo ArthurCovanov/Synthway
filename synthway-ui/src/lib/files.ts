@@ -4,9 +4,11 @@
  * input, in every browser. The formats themselves are in compositionFile.ts and instrumentFile.ts.
  */
 
+import { t } from '../i18n';
+
 /** A kind of file the UI writes */
 export interface FileKind {
-  /** Shown in the dialog's list of types: "Morceau Synthway" */
+  /** Shown in the dialog's list of types: "Synthway song" */
   description: string;
   /** With its dot: ".swsong" */
   extension: string;
@@ -151,7 +153,7 @@ export function fileNameOf(name: string, extension: string, fallback: string): s
   return `${(cleaned || fallback).slice(0, 120)}${extension}`;
 }
 
-/** A file that cannot be read as what it should be: `message` says why, in French, for the user */
+/** A file that cannot be read as what it should be: `message` says why, in the current language, for the user */
 export class FileFormatError extends Error {}
 
 /** The object a file holds, or a FileFormatError */
@@ -160,9 +162,9 @@ export function parseJsonObject(text: string): Record<string, unknown> {
   try {
     data = JSON.parse(text);
   } catch {
-    throw new FileFormatError('le fichier n’est pas lisible (ce n’est pas du JSON).');
+    throw new FileFormatError(t('files.notJson'));
   }
-  if (!isRecord(data)) throw new FileFormatError('le fichier n’est pas lisible (pas d’objet JSON).');
+  if (!isRecord(data)) throw new FileFormatError(t('files.notObject'));
   return data;
 }
 
@@ -173,12 +175,10 @@ export function parseJsonObject(text: string): Record<string, unknown> {
 export function formatVersion(data: Record<string, unknown>, current: number): number {
   const { version } = data;
   if (typeof version !== 'number' || !Number.isInteger(version) || version < 1) {
-    throw new FileFormatError('le fichier n’indique pas la version de son format.');
+    throw new FileFormatError(t('files.noVersion'));
   }
   if (version > current) {
-    throw new FileFormatError(
-      `il a été écrit par une version plus récente de Synthway (format ${version}, celle-ci lit jusqu’au ${current}). Mets l’interface à jour pour l’ouvrir.`,
-    );
+    throw new FileFormatError(t('files.newerVersion', { version, current }));
   }
   return version;
 }

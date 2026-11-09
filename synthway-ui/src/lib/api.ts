@@ -21,6 +21,7 @@ import type {
   ToneParams,
   WaveformFit,
 } from '../types';
+import { t } from '../i18n';
 
 // The browser calls synthway-server directly, at the address given to Vite
 // (see vite.config.ts): the server accepts pages served by this machine (its
@@ -54,7 +55,7 @@ async function request<T>(path: string, init: RequestInit = {}, timeoutMs = 4000
       headers: init.body ? { 'Content-Type': 'application/json' } : undefined,
     });
     if (!res.ok) {
-      throw new Error(`${init.method ?? 'GET'} ${path} : HTTP ${res.status}`);
+      throw new Error(t('server.httpError', { method: init.method ?? 'GET', path, status: res.status }));
     }
     return (await res.json()) as T;
   } finally {
@@ -203,7 +204,7 @@ export const api = {
     });
     if (!res.ok) throw await refusal(res);
     const info = JSON.parse(res.headers.get('X-Synthway-Render') ?? 'null') as ScoreRenderInfo | null;
-    if (!info) throw new Error('le serveur n’a pas dit ce qu’il a rendu (en-tête X-Synthway-Render absent)');
+    if (!info) throw new Error(t('server.renderInfoMissing'));
     return { file: await res.blob(), info };
   },
 };
@@ -255,7 +256,7 @@ async function postExplained<T>(path: string, body?: unknown, timeoutMs = 15000)
   return (await res.json()) as T;
 }
 
-/** The server's message for a refused request (its detail), or else its HTTP status */
+/** The server's message for a refused request (its detail, in French: not translated), or else its HTTP status */
 async function refusal(res: Response): Promise<Error> {
   let detail = `HTTP ${res.status}`;
   try {

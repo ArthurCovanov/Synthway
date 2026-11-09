@@ -3,6 +3,7 @@
  * the engine slot of each track, the glides of each note, and the request that has synthway-server
  * render the whole score offline (/api/render/score) exactly as playback plays it.
  */
+import { t } from '../i18n';
 import { AUDIO_FILE_FORMAT, MAX_INSTRUMENTS, type NoteGlide, type ScoreNote, type ScoreRamp, type ScoreRenderRequest } from '../types';
 import { playedCurves, scoreCurveRamps } from './automation';
 import { bendLine, STEPS_PER_BEAT, type Composition, type Note, type Track } from './composition';
@@ -55,9 +56,24 @@ export const MAX_EXPORT_SILENCE = 10;
 /** Longest score, first beat to the end of the last bar, as synthway-server accepts it (MAX_SCORE_SECONDS) */
 export const MAX_EXPORT_SECONDS = 3600;
 
+/** Their descriptions in the current language, read when the save dialog opens */
 export const AUDIO_FILES: Record<AudioExportFormat, FileKind> = {
-  wav: { description: 'Audio WAV', extension: '.wav', pickerId: 'synthway-audio', mime: 'audio/wav' },
-  ogg: { description: 'Audio Ogg Vorbis', extension: '.ogg', pickerId: 'synthway-audio', mime: 'audio/ogg' },
+  wav: {
+    get description() {
+      return t('songFile.audioWav');
+    },
+    extension: '.wav',
+    pickerId: 'synthway-audio',
+    mime: 'audio/wav',
+  },
+  ogg: {
+    get description() {
+      return t('songFile.audioOgg');
+    },
+    extension: '.ogg',
+    pickerId: 'synthway-audio',
+    mime: 'audio/ogg',
+  },
 };
 
 /** Ogg Vorbis quality: about 190 kbit/s in stereo, hard to tell from the WAV */

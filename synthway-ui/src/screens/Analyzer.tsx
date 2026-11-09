@@ -26,6 +26,9 @@ import { ScreenHeader } from '../components/ScreenHeader';
 import { Badge, Button, Field, Panel, Section, Segmented, Slider, Toggle, inputClass, selectClass } from '../components/ui';
 import { Tuner } from '../components/Tuner';
 import { WaveformFitCard } from '../components/WaveformFitCard';
+// translateNow: the module t, for messages made in callbacks and requests, which
+// must not run again when the language changes
+import { t, t as translateNow, useI18n } from '../i18n';
 import {
   ANALYSIS_WINDOW_DEFAULT_MS,
   ANALYSIS_WINDOW_MAX_MS,
@@ -110,8 +113,8 @@ interface Draft {
   referenceMidi: number | null;
   /** The volume was set by hand: « Mettre à jour » keeps it */
   volumeSet: boolean;
-  /** The waveform it was made of (« Dent de scie, passe-bas 5,6 kHz »), null: the partials measured */
-  profile: string | null;
+  /** The waveform it was made of (described at display: « Dent de scie, passe-bas 5,6 kHz »), null: the partials measured */
+  shape: ShapeFit | null;
 }
 
 /** The zone a waveform fit looks at: the zone, or the moment's window */
@@ -153,8 +156,11 @@ const OTHER_NOTES_SHARE = 0.25;
 const GATE_SLIDER_ZERO_DB = -100;
 const GATE_SLIDER_MAX = 80;
 
+// The helpers below that write text use the module's t(): they are called while
+// the Analyzer renders, which follows the language through useI18n()
+
 function formatNoiseGate(gate: number): string {
-  if (gate <= NOISE_GATE_OFF) return 'Désactivé';
+  if (gate <= NOISE_GATE_OFF) return t('common.off');
   const level = Number((-gate).toFixed(1));
   return level === 0 ? '0 dBFS' : `−${level} dBFS`;
 }
@@ -179,7 +185,11 @@ function formatDuration(seconds: number): string {
 }
 
 function describeZone(zone: ClipSelection): string {
-  return `Zone de ${zone.start.toFixed(2)} s à ${zone.end.toFixed(2)} s (${formatDuration(zone.end - zone.start)}), lue en boucle par « Lire » et analysée en entier (médiane de ses moments). Un clic ou Échap la retire.`;
+  return t('analyzer.zone', {
+    start: zone.start.toFixed(2),
+    end: zone.end.toFixed(2),
+    duration: formatDuration(zone.end - zone.start),
+  });
 }
 
 /** The zone if there is one (playback moving the cursor does not change it), else the cursor's moment */
@@ -224,9 +234,9 @@ function useAnalysisRequests(
 
 /** What the analysis shown looks at, in words */
 function describeAnalyzed(target: AnalysisTarget | null, windowMs: number): string {
-  if (!target) return 'en direct, au micro (fenêtre habituelle, environ 170 ms)';
-  if ('time' in target) return `l’instant ${target.time.toFixed(2)} s, à travers une fenêtre de ${windowMs} ms`;
-  return `la zone de ${target.start.toFixed(2)} s à ${target.end.toFixed(2)} s : médiane de ses moments, par fenêtres de ${windowMs} ms`;
+  if (!target) return t('analyzer.analyzed.live');
+  if ('time' in target) return t('analyzer.analyzed.moment', { time: target.time.toFixed(2), window: windowMs });
+  return t('analyzer.analyzed.zone', { start: target.start.toFixed(2), end: target.end.toFixed(2), window: windowMs });
 }
 
 function midiFrequency(midi: number, a4: number): number {
@@ -298,7 +308,7 @@ function useClipPlayer(
     });
     audio.addEventListener('error', () => {
       setPlaying(false);
-      onError('La lecture a échoué.');
+      onError(t('analyzer.playback.failed'));
     });
     // Polled rather than on 'timeupdate' (4 times a second), and only while playing:
     // a pause can come from placing the cursor elsewhere, which then wins
@@ -339,7 +349,9 @@ function useClipPlayer(
       audio.currentTime = from >= start && from < end - 0.01 ? from : start;
       audio.play().catch((error: unknown) => {
         // AbortError: paused or replaced before it could start
-        if (!(error instanceof DOMException && error.name === 'AbortError')) onError(`Lecture impossible : ${describe(error)}`);
+        if (!(error instanceof DOMException && error.name === 'AbortError')) {
+          onError(t('analyzer.playback.impossible', { error: describe(error) }));
+        }
       });
     },
     [clip, onTime, onError],
@@ -350,6 +362,7 @@ function useClipPlayer(
 }
 
 export function Analyzer({ onSaveInstrument }: { onSaveInstrument: (instrument: Instrument) => void }) {
+  const { t, formatNumber } = useI18n();
   const server = useSynthServer();
   const online = server.connection === 'online' && server.coreLoaded;
   const [source, setSource] = usePersistentState<Source>('synthway.analyzer.source.v1', () => 'micro');
@@ -433,7 +446,7 @@ export function Analyzer({ onSaveInstrument }: { onSaveInstrument: (instrument: 
   }, []);
 
   const onSocketClose = useCallback(() => {
-    if (listeningRef.current !== 'off') setLiveError('Connexion au serveur perdue : le micro est fermé.');
+    if (listeningRef.current !== 'off') setLiveError(translateNow('analyzer.mic.connectionLost'));
     setListening('off');
     setRecording('off');
   }, []);
@@ -574,7 +587,7 @@ export function Analyzer({ onSaveInstrument }: { onSaveInstrument: (instrument: 
     try {
       showClip(await api.uploadClip(file));
     } catch (error) {
-      setClipError(`${file.name} : ${describe(error)}`);
+      setClipError(t('analyzer.file.uploadError', { name: file.name, error: describe(error) }));
     } finally {
       setUploading(false);
     }
@@ -699,7 +712,7 @@ export function Analyzer({ onSaveInstrument }: { onSaveInstrument: (instrument: 
       .catch((error) => {
         if (cancelled) return;
         setWaveFit(null);
-        setWaveFitError(`Mesure de la forme d’onde impossible : ${describe(error)}`);
+        setWaveFitError(translateNow('analyzer.build.waveformError', { error: describe(error) }));
       })
       .finally(() => {
         if (!cancelled) setWaveFitLoading(false);
@@ -750,13 +763,24 @@ export function Analyzer({ onSaveInstrument }: { onSaveInstrument: (instrument: 
    * envelope, measured on the note (synthway_analyzer_measure_envelopes); a
    * moment gives one envelope for all. null: none (createError says why).
    */
-  const makeInstrument = async (): Promise<{ instrument: Instrument; noteMidi: number | null; profile: string | null } | null> => {
+  const makeInstrument = async (): Promise<{ instrument: Instrument; noteMidi: number | null; shape: ShapeFit | null } | null> => {
     if (!analysis || !canCreate || creating) return null;
     const target = analyzedTarget;
+    // Its name and description are written in the language of the moment, and stay so
     const described = describeAnalyzed(target, windowMs);
-    const origin = source === 'micro' ? (onRecording ? 'l’enregistrement du micro' : 'le micro, en direct') : clip?.name ?? 'un fichier';
-    const prefix = source === 'micro' ? (onRecording ? 'Enregistrement' : 'Micro') : clip?.name ?? 'Son';
-    const harmonics = harmonicsOnly && target ? ', harmoniques seulement' : '';
+    const origin =
+      source === 'micro'
+        ? onRecording
+          ? t('analyzer.build.originRecording')
+          : t('analyzer.build.originLive')
+        : clip?.name ?? t('analyzer.build.originFile');
+    const prefix =
+      source === 'micro'
+        ? onRecording
+          ? t('analyzer.build.prefixRecording')
+          : t('analyzer.build.prefixLive')
+        : clip?.name ?? t('analyzer.build.prefixFile');
+    const harmonics = harmonicsOnly && target ? t('analyzer.build.harmonicsOnly') : '';
     let found = analysis;
     let partialsMade: { ratio: number; amplitude: number; envelope?: EnvelopeParams }[] = measured;
     setCreateError(null);
@@ -770,13 +794,13 @@ export function Analyzer({ onSaveInstrument }: { onSaveInstrument: (instrument: 
           .map((partial, i) => ({ ratio: partial.ratio, amplitude: partial.amplitude, envelope: result.envelopes[i] }))
           .filter((partial) => partial.ratio > 0 && partial.envelope);
       } catch (error) {
-        setCreateError(`Mesure des enveloppes impossible : ${describe(error)}`);
+        setCreateError(t('analyzer.build.envelopesError', { error: describe(error) }));
         return null;
       } finally {
         setCreating(false);
       }
       if (found.frequency <= 0 || partialsMade.length === 0) {
-        setCreateError('La mesure des enveloppes n’a trouvé ni note ni partiel dans cette zone.');
+        setCreateError(t('analyzer.build.envelopesEmpty'));
         return null;
       }
     }
@@ -792,14 +816,12 @@ export function Analyzer({ onSaveInstrument }: { onSaveInstrument: (instrument: 
         shape = chosenFit(fitted, buildFrom);
         if (!shape) {
           setCreateError(
-            fitted.frequency > 0 && fitted.moments === 0
-              ? 'Cette note n’est jamais entendue seule ici : choisis une note dans les puces, ou « Partiels mesurés ».'
-              : 'Pas de forme d’onde mesurée ici : choisis « Partiels mesurés ».',
+            fitted.frequency > 0 && fitted.moments === 0 ? t('analyzer.build.neverAlone') : t('analyzer.build.noShape'),
           );
           return null;
         }
       } catch (error) {
-        setCreateError(`Mesure de la forme d’onde impossible : ${describe(error)}`);
+        setCreateError(t('analyzer.build.waveformError', { error: describe(error) }));
         return null;
       } finally {
         setCreating(false);
@@ -815,19 +837,27 @@ export function Analyzer({ onSaveInstrument }: { onSaveInstrument: (instrument: 
     const noteName = note ? `${note.name}${note.octave}` : '';
     const count = partialsMade.length;
     const zoneTarget = target !== null && 'start' in target;
-    const envelopes = zoneTarget
-      ? 'une enveloppe mesurée par partiel (exponentielle)'
-      : 'une seule enveloppe (une zone d’une seule note donne celle de chaque partiel)';
     const made = shape
-      ? `Forme ${describeShape(shape)} (écart ${shape.error_db.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} dB) : ${count} harmonique${
-          count > 1 ? 's' : ''
-        } en sinusoïdes, ${shape.cutoff > 0 ? 'son passe-bas dans le filtre' : 'sans passe-bas'}, ${
-          zoneTarget ? 'l’enveloppe mesurée sur son partiel le plus fort pour toutes' : 'une seule enveloppe'
-        }.`
-      : `${count} partiel${count > 1 ? 's' : ''} mesuré${count > 1 ? 's' : ''}, sinusoïdes, ${envelopes}.`;
+      ? t('analyzer.build.shape', {
+          count,
+          shape: describeShape(shape),
+          gap: formatNumber(shape.error_db, { maximumFractionDigits: 1 }),
+          filter: shape.cutoff > 0 ? t('analyzer.build.shapeFilter') : t('analyzer.build.shapeNoFilter'),
+          envelope: zoneTarget ? t('analyzer.build.shapeEnvelopeZone') : t('analyzer.build.shapeEnvelopeMoment'),
+        })
+      : t('analyzer.build.partials', {
+          count,
+          envelopes: zoneTarget ? t('analyzer.build.envelopePerPartial') : t('analyzer.build.envelopeSingle'),
+        });
     const instrument = instrumentFromPartials(
       `${prefix}${noteName ? ` · ${noteName}` : ''}${shape ? ` · ${describeShape({ ...shape, cutoff: 0 })}` : ''}`,
-      `Créé dans l’Analyzer depuis ${origin} : ${described}, rapports à ${noteName || 'la note'}${harmonics}. ${made}`,
+      t('analyzer.build.description', {
+        origin,
+        analyzed: described,
+        note: noteName || t('analyzer.build.theNote'),
+        harmonics,
+        made,
+      }),
       partialsMade,
       // Its keyboard starts at the note's octave: C2 analyzed, octave 2
       note?.octave,
@@ -844,7 +874,7 @@ export function Analyzer({ onSaveInstrument }: { onSaveInstrument: (instrument: 
           }
         : instrument,
       noteMidi: note?.midi ?? null,
-      profile: shape ? describeShape(shape) : null,
+      shape,
     };
   };
 
@@ -859,7 +889,7 @@ export function Analyzer({ onSaveInstrument }: { onSaveInstrument: (instrument: 
       instrument: previous?.volumeSet ? { ...result.instrument, volume: previous.instrument.volume } : result.instrument,
       noteMidi: result.noteMidi,
       volumeSet: previous?.volumeSet ?? false,
-      profile: result.profile,
+      shape: result.shape,
     }));
   };
 
@@ -918,17 +948,27 @@ export function Analyzer({ onSaveInstrument }: { onSaveInstrument: (instrument: 
     <div className={layout.screen}>
       <ScreenHeader
         index="02"
-        eyebrow="Analyse sonore"
+        eyebrow={t('analyzer.eyebrow')}
         title="Analyzer"
-        subtitle="La note jouée et les partiels d’un son, au micro ou depuis un fichier."
+        subtitle={t('analyzer.subtitle')}
       >
         <Segmented
-          label="Source du son"
+          label={t('analyzer.source.label')}
           value={source}
           onChange={setSource}
           options={[
-            { value: 'micro', label: 'Micro', icon: <Mic size={14} />, title: 'Analyse en direct de ce que le micro entend' },
-            { value: 'file', label: 'Fichier', icon: <FileAudio size={14} />, title: 'Analyse d’un fichier WAV, FLAC ou MP3' },
+            {
+              value: 'micro',
+              label: t('analyzer.source.micro'),
+              icon: <Mic size={14} />,
+              title: t('analyzer.source.microTitle'),
+            },
+            {
+              value: 'file',
+              label: t('analyzer.source.file'),
+              icon: <FileAudio size={14} />,
+              title: t('analyzer.source.fileTitle'),
+            },
           ]}
         />
       </ScreenHeader>
@@ -938,30 +978,29 @@ export function Analyzer({ onSaveInstrument }: { onSaveInstrument: (instrument: 
           {source === 'micro' ? (
             <>
               <Section
-                title="Micro"
+                title={t('analyzer.mic.title')}
                 badge={
                   listening === 'on' ? (
-                    <Badge tone="live">À l’écoute</Badge>
+                    <Badge tone="live">{t('analyzer.mic.listening')}</Badge>
                   ) : listening === 'starting' ? (
-                    <Badge>Ouverture…</Badge>
+                    <Badge>{t('analyzer.opening')}</Badge>
                   ) : (
-                    <Badge>Coupé</Badge>
+                    <Badge>{t('analyzer.mic.off')}</Badge>
                   )
                 }
               >
                 <div className={styles.micRow}>
-                  <Field label="Entrée">
+                  <Field label={t('analyzer.mic.input')}>
                     <select
                       className={selectClass}
                       value={inputDevice}
                       disabled={listening !== 'off'}
                       onChange={(event) => setInputDevice(Number(event.target.value))}
                     >
-                      <option value={-1}>Entrée par défaut du système</option>
+                      <option value={-1}>{t('analyzer.mic.defaultInput')}</option>
                       {captureDevices.map((device) => (
                         <option key={device.index} value={device.index}>
-                          {device.name}
-                          {device.is_default ? ' (défaut)' : ''}
+                          {device.is_default ? t('analyzer.mic.defaultDevice', { name: device.name }) : device.name}
                         </option>
                       ))}
                     </select>
@@ -972,41 +1011,34 @@ export function Analyzer({ onSaveInstrument }: { onSaveInstrument: (instrument: 
                     onClick={listening === 'off' ? startListening : stopListening}
                   >
                     {listening === 'off' ? <Mic size={15} /> : <MicOff size={15} />}
-                    {listening === 'off' ? 'Écouter' : 'Arrêter'}
+                    {listening === 'off' ? t('analyzer.mic.listen') : t('analyzer.mic.stop')}
                   </Button>
                 </div>
                 <p className={styles.note}>
                   {listening === 'on'
-                    ? `À l’écoute à ${((inputRate ?? 0) / 1000).toFixed(1)} kHz. ${
-                        recording === 'on' ? 'Enregistrement en cours.' : 'Rien n’est enregistré : seules la note et les partiels s’affichent.'
+                    ? `${t('analyzer.mic.listeningAt', { rate: ((inputRate ?? 0) / 1000).toFixed(1) })} ${
+                        recording === 'on' ? t('analyzer.mic.recordingNow') : t('analyzer.mic.nothingRecorded')
                       }`
-                    : 'synthway-core ouvre le micro quand tu cliques sur Écouter ou Enregistrer, et le ferme quand tu arrêtes ou quittes l’onglet.'}
+                    : t('analyzer.mic.idle')}
                 </p>
                 {listening === 'on' &&
                   (inputExclusive ? (
-                    <p className={styles.note}>
-                      Mode exclusif : le son arrive sans les effets audio de Windows (réduction de bruit, gain automatique).
-                      Pendant l’écoute, les autres applications ne peuvent pas utiliser ce micro.
-                    </p>
+                    <p className={styles.note}>{t('analyzer.mic.exclusive')}</p>
                   ) : (
-                    <p className={styles.warning}>
-                      Mode partagé : Windows a refusé le mode exclusif, ses effets audio s’appliquent. La réduction de bruit
-                      peut étouffer une note tenue. Désactive les « Améliorations audio » du micro dans les Paramètres de
-                      Windows (Système › Son).
-                    </p>
+                    <p className={styles.warning}>{t('analyzer.mic.shared')}</p>
                   ))}
-                {!online && <p className={styles.note}>Le serveur n’est pas connecté (voir les Réglages).</p>}
+                {!online && <p className={styles.note}>{t('analyzer.offline')}</p>}
                 {liveError && <p className={styles.error}>{liveError}</p>}
               </Section>
 
               <Section
-                title="Enregistrement"
+                title={t('analyzer.record.title')}
                 className={styles.recordSection}
                 badge={
                   recording === 'on' ? (
                     <Badge tone="danger">● {(recordTimes?.duration ?? 0).toFixed(1)} s</Badge>
                   ) : recording === 'starting' ? (
-                    <Badge>Ouverture…</Badge>
+                    <Badge>{t('analyzer.opening')}</Badge>
                   ) : recordClip ? (
                     <Badge>{formatDuration(recordClip.duration)}</Badge>
                   ) : undefined
@@ -1019,14 +1051,14 @@ export function Analyzer({ onSaveInstrument }: { onSaveInstrument: (instrument: 
                           size="small"
                           disabled={!online}
                           onClick={playOrPauseRecording}
-                          title={recordPlaying ? 'Met la lecture en pause (Espace)' : 'Lit l’enregistrement à partir du curseur, qui le suit (coupe l’écoute). Espace : lecture / pause'}
+                          title={recordPlaying ? t('analyzer.playback.pauseTitle') : t('analyzer.record.playTitle')}
                         >
                           {recordPlaying ? <Pause size={13} /> : <Play size={13} />}
-                          {recordPlaying ? 'Pause' : 'Lire'}
+                          {recordPlaying ? t('analyzer.playback.pause') : t('analyzer.playback.play')}
                         </Button>
-                        <Button size="small" onClick={downloadRecording} title="Télécharge l’enregistrement en WAV (mono, 16 bits)">
+                        <Button size="small" onClick={downloadRecording} title={t('analyzer.record.downloadTitle')}>
                           <Download size={13} />
-                          Télécharger .wav
+                          {t('analyzer.record.download')}
                         </Button>
                       </>
                     )}
@@ -1035,10 +1067,10 @@ export function Analyzer({ onSaveInstrument }: { onSaveInstrument: (instrument: 
                       variant={recording === 'off' ? 'primary' : 'default'}
                       disabled={!online || recording === 'starting'}
                       onClick={recording === 'off' ? startRecording : () => socketRef.current?.stopRecord()}
-                      title={recording === 'off' ? 'Enregistre ce que le micro entend, sans limite de durée' : undefined}
+                      title={recording === 'off' ? t('analyzer.record.startTitle') : undefined}
                     >
                       {recording === 'off' ? <Circle size={13} /> : <Square size={13} />}
-                      {recording === 'off' ? 'Enregistrer' : 'Arrêter l’enregistrement'}
+                      {recording === 'off' ? t('analyzer.record.start') : t('analyzer.record.stop')}
                     </Button>
                   </>
                 }
@@ -1056,40 +1088,36 @@ export function Analyzer({ onSaveInstrument }: { onSaveInstrument: (instrument: 
                       selection={recordSelection}
                       onSelect={selectByHand(setRecordSelection)}
                       windowSeconds={windowMs / 1000}
-                      label="Moment analysé dans l’enregistrement"
+                      label={t('analyzer.record.waveformLabel')}
                     />
                   ) : (
                     <div className={styles.dropHint} data-recording={recording === 'on' ? 'true' : undefined}>
                       <Circle size={28} />
                       {recording === 'on' ? (
-                        <span>Enregistrement… {(recordTimes?.duration ?? 0).toFixed(1)} s. Arrête quand tu veux.</span>
+                        <span>{t('analyzer.record.inProgress', { seconds: (recordTimes?.duration ?? 0).toFixed(1) })}</span>
                       ) : (
-                        <span>Clique sur « Enregistrer » : le micro s’ouvre et tout ce qu’il entend est gardé, sans limite de durée.</span>
+                        <span>{t('analyzer.record.hint')}</span>
                       )}
-                      <span className={styles.note}>La forme d’onde de l’enregistrement s’affichera ici. Rien n’est joué.</span>
+                      <span className={styles.note}>{t('analyzer.record.placeholder')}</span>
                     </div>
                   )}
                 </div>
                 {recordClip && recording === 'off' && (
                   <p className={styles.note}>
                     {(recordClip.sample_rate / 1000).toFixed(1)} kHz ·{' '}
-                    {recordTime === null
-                      ? 'clique sur l’enregistrement pour analyser un moment, glisse pour choisir une zone à lire en boucle, ou « Lire » : l’écoute s’arrête.'
-                      : 'un clic choisit le moment analysé et le départ de « Lire » (flèches : ±10 ms), un glissé une zone à lire en boucle. « Écouter » reprend le direct et retire le curseur.'}
+                    {recordTime === null ? t('analyzer.record.noCursor') : t('analyzer.record.withCursor')}
                   </p>
                 )}
                 {recordClip && recordSelection && <p className={styles.note}>{describeZone(recordSelection)}</p>}
                 {recordTimes && recordTimes.lost > 0 && (
-                  <p className={styles.warning}>
-                    {recordTimes.lost.toFixed(2)} s perdues pendant l’enregistrement (le serveur n’a pas suivi), remplacées par du silence.
-                  </p>
+                  <p className={styles.warning}>{t('analyzer.record.lost', { seconds: recordTimes.lost.toFixed(2) })}</p>
                 )}
                 {recordError && <p className={styles.error}>{recordError}</p>}
               </Section>
             </>
           ) : (
             <Section
-              title="Fichier"
+              title={t('analyzer.file.title')}
               badge={clip ? <Badge>{clip.name}</Badge> : undefined}
               actions={
                 <>
@@ -1099,24 +1127,24 @@ export function Analyzer({ onSaveInstrument }: { onSaveInstrument: (instrument: 
                         size="small"
                         disabled={!online}
                         onClick={() => toggleClipPlayback(clipTime)}
-                        title={clipPlaying ? 'Met la lecture en pause (Espace)' : 'Lit le fichier à partir du curseur, qui le suit. Espace : lecture / pause'}
+                        title={clipPlaying ? t('analyzer.playback.pauseTitle') : t('analyzer.file.playTitle')}
                       >
                         {clipPlaying ? <Pause size={13} /> : <Play size={13} />}
-                        {clipPlaying ? 'Pause' : 'Lire'}
+                        {clipPlaying ? t('analyzer.playback.pause') : t('analyzer.playback.play')}
                       </Button>
                       <Button
                         size="small"
                         onClick={() => seekClip(clearestMoment(clip))}
-                        title="Place le curseur sur le moment où la note est la plus nette"
+                        title={t('analyzer.file.clearestTitle')}
                       >
                         <Crosshair size={13} />
-                        Moment le plus net
+                        {t('analyzer.file.clearest')}
                       </Button>
                     </>
                   )}
                   <Button size="small" variant="primary" disabled={!online || uploading} onClick={() => fileInput.current?.click()}>
                     <Upload size={13} />
-                    {uploading ? 'Chargement…' : 'Importer un son'}
+                    {uploading ? t('analyzer.file.loading') : t('analyzer.file.import')}
                   </Button>
                   <input
                     ref={fileInput}
@@ -1159,20 +1187,21 @@ export function Analyzer({ onSaveInstrument }: { onSaveInstrument: (instrument: 
                 ) : (
                   <div className={styles.dropHint}>
                     <FileAudio size={28} />
-                    <span>Dépose un fichier WAV, FLAC ou MP3 ici, ou clique sur « Importer un son ».</span>
-                    <span className={styles.note}>Une note tenue donne la lecture la plus nette. Rien n’est joué.</span>
+                    <span>{t('analyzer.file.drop')}</span>
+                    <span className={styles.note}>{t('analyzer.file.dropNote')}</span>
                   </div>
                 )}
               </div>
               {clip && (
                 <p className={styles.note}>
-                  {formatDuration(clip.duration)} · {(clip.sample_rate / 1000).toFixed(1)} kHz · les points roses suivent la
-                  note le long du fichier. Un clic choisit le moment analysé et le départ de « Lire » (flèches : ±10 ms), un
-                  glissé une zone à lire en boucle.
+                  {t('analyzer.file.info', {
+                    duration: formatDuration(clip.duration),
+                    rate: (clip.sample_rate / 1000).toFixed(1),
+                  })}
                 </p>
               )}
               {clip && clipSelection && <p className={styles.note}>{describeZone(clipSelection)}</p>}
-              {!online && <p className={styles.note}>Le serveur n’est pas connecté (voir les Réglages).</p>}
+              {!online && <p className={styles.note}>{t('analyzer.offline')}</p>}
               {clipError && <p className={styles.error}>{clipError}</p>}
             </Section>
           )}
@@ -1180,10 +1209,10 @@ export function Analyzer({ onSaveInstrument }: { onSaveInstrument: (instrument: 
 
         <Panel className={styles.tunerPanel}>
           <Section
-            title="Note"
+            title={t('analyzer.note.title')}
             actions={
-              <label className={styles.a4} title="Fréquence de référence du La 4">
-                La4 =
+              <label className={styles.a4} title={t('analyzer.note.a4Title')}>
+                {t('analyzer.note.a4')}
                 <input
                   className={inputClass}
                   type="number"
@@ -1202,24 +1231,24 @@ export function Analyzer({ onSaveInstrument }: { onSaveInstrument: (instrument: 
           >
             <Tuner analysis={analysis} a4={a4} hold={source === 'micro' && !onRecording} />
             <div className={styles.referenceRow}>
-              <span className={styles.referenceLabel}>Note de référence</span>
+              <span className={styles.referenceLabel}>{t('analyzer.note.reference')}</span>
               <Segmented
                 compact
-                label="Note de référence"
+                label={t('analyzer.note.reference')}
                 value={referenceMidi === null ? 'auto' : 'fixed'}
                 onChange={(mode) =>
                   mode === 'auto' ? setReferenceMidi(null) : setReference(shownNote?.midi ?? 43)
                 }
                 options={[
-                  { value: 'auto', label: 'Auto', title: 'La note entendue (sur une zone, la plus basse de ses notes nettes)' },
-                  { value: 'fixed', label: 'Fixée', title: 'Les rapports sont pris à la note choisie, dans son octave' },
+                  { value: 'auto', label: t('analyzer.note.auto'), title: t('analyzer.note.autoTitle') },
+                  { value: 'fixed', label: t('analyzer.note.fixed'), title: t('analyzer.note.fixedTitle') },
                 ]}
               />
               {referenceMidi !== null && (
                 <span className={styles.referencePicker}>
                   <select
                     className={selectClass}
-                    aria-label="Nom de la note de référence"
+                    aria-label={t('analyzer.note.referenceName')}
                     value={referencePitchClass}
                     onChange={(event) => setReference(referenceMidi - referencePitchClass + Number(event.target.value))}
                   >
@@ -1229,13 +1258,13 @@ export function Analyzer({ onSaveInstrument }: { onSaveInstrument: (instrument: 
                       </option>
                     ))}
                   </select>
-                  <Button size="small" iconOnly title="Une octave plus bas" onClick={() => setReference(referenceMidi - 12)}>
+                  <Button size="small" iconOnly title={t('analyzer.note.octaveDown')} onClick={() => setReference(referenceMidi - 12)}>
                     <Minus size={13} />
                   </Button>
                   <span className={styles.mono}>
                     {midiLabel(referenceMidi)} · {referenceHz.toFixed(1)} Hz
                   </span>
-                  <Button size="small" iconOnly title="Une octave plus haut" onClick={() => setReference(referenceMidi + 12)}>
+                  <Button size="small" iconOnly title={t('analyzer.note.octaveUp')} onClick={() => setReference(referenceMidi + 12)}>
                     <Plus size={13} />
                   </Button>
                 </span>
@@ -1243,20 +1272,23 @@ export function Analyzer({ onSaveInstrument }: { onSaveInstrument: (instrument: 
             </div>
             <p className={styles.note}>
               {referenceMidi === null
-                ? 'Les rapports sont pris à la note entendue. Sur une zone, c’est la plus basse de ses notes nettes : une fondamentale qui s’éteint avant ses harmoniques ne la fait pas monter d’une octave. Fixe-la si tu connais la note jouée.'
-                : `Les rapports sont pris à ${midiLabel(referenceMidi)}, accordée sur ce que l’Analyzer entend de cette note dans n’importe quelle octave. Les moments sur une autre note ne comptent pas. Ne vaut pas pour l’écoute en direct.`}
+                ? t('analyzer.note.autoNote')
+                : t('analyzer.note.fixedNote', { note: midiLabel(referenceMidi) })}
             </p>
           </Section>
         </Panel>
 
         <Panel className={styles.spectrumPanel}>
-          <Section title="Spectre" badge={analysis ? <Badge>{(analysis.sample_rate / 1000).toFixed(1)} kHz</Badge> : undefined}>
+          <Section
+            title={t('analyzer.spectrum.title')}
+            badge={analysis ? <Badge>{(analysis.sample_rate / 1000).toFixed(1)} kHz</Badge> : undefined}
+          >
             <div className={styles.spectrum}>
               <AnalysisSpectrum analysis={analysis} noiseGateDb={noiseGate > NOISE_GATE_OFF ? noiseGate : undefined} />
             </div>
             <div className={styles.gateRow}>
               <Slider
-                label="Anti-bruit"
+                label={t('analyzer.spectrum.gate')}
                 value={Math.max(0, Math.min(GATE_SLIDER_MAX, noiseGate - GATE_SLIDER_ZERO_DB))}
                 min={0}
                 max={GATE_SLIDER_MAX}
@@ -1278,22 +1310,20 @@ export function Analyzer({ onSaveInstrument }: { onSaveInstrument: (instrument: 
                         disabled={noiseGate <= NOISE_GATE_OFF}
                         onClick={() => setNoiseGate(NOISE_GATE_OFF)}
                       >
-                        Désactiver
+                        {t('analyzer.spectrum.gateDisable')}
                       </Button>
-                      <span>{NOISE_GATE_OFF} : désactivé</span>
+                      <span>{t('analyzer.spectrum.gateOffValue', { value: NOISE_GATE_OFF })}</span>
                     </div>
                   ),
                 }}
               />
               <p className={styles.note}>
-                {noiseGate > NOISE_GATE_OFF
-                  ? 'Les pics sous la ligne jaune sont ignorés : ce ne sont plus des partiels, et sans partiel au-dessus, pas de note.'
-                  : 'Monte-le juste au-dessus du bruit de fond (ventilateur, souffle) pour que l’analyse l’ignore.'}
+                {noiseGate > NOISE_GATE_OFF ? t('analyzer.spectrum.gateOn') : t('analyzer.spectrum.gateHint')}
               </p>
             </div>
             <div className={styles.gateRow}>
               <Slider
-                label="Fenêtre d’analyse"
+                label={t('analyzer.spectrum.window')}
                 value={Math.max(ANALYSIS_WINDOW_MIN_MS, Math.min(ANALYSIS_WINDOW_MAX_MS, windowMs))}
                 min={ANALYSIS_WINDOW_MIN_MS}
                 max={ANALYSIS_WINDOW_MAX_MS}
@@ -1316,23 +1346,28 @@ export function Analyzer({ onSaveInstrument }: { onSaveInstrument: (instrument: 
                       >
                         {ANALYSIS_WINDOW_DEFAULT_MS} ms
                       </Button>
-                      <span>la fenêtre habituelle</span>
+                      <span>{t('analyzer.spectrum.windowDefault')}</span>
                     </div>
                   ),
                 }}
               />
               <p className={styles.note}>
                 {analyzedTarget === null
-                  ? 'Pour le curseur et les zones. En direct, au micro, l’analyse garde sa fenêtre habituelle (environ 170 ms).'
+                  ? t('analyzer.spectrum.windowLive')
                   : zoneMode
-                    ? 'Avec une zone, l’analyse passe des fenêtres de cette durée sur toute la zone (jusqu’à 100, au moins 10 ms d’écart) et garde la médiane de chaque partiel.'
-                    : 'Le curseur analyse cette durée autour de lui (les bornes vertes sur la forme d’onde). Plus courte : plus précise dans le temps ; plus longue : plus fine en fréquence, et meilleure pour les notes graves.'}
+                    ? t('analyzer.spectrum.windowZone')
+                    : t('analyzer.spectrum.windowMoment')}
               </p>
               {windowTooShort && (
                 <p className={styles.warning}>
                   {minWindowMs <= ANALYSIS_WINDOW_MAX_MS
-                    ? `Pour ${shownNoteName} (${analysis?.frequency.toFixed(1)} Hz), il faut au moins ${minWindowMs} ms pour séparer ses harmoniques : à ${windowMs} ms, elles se mélangent.`
-                    : `${shownNoteName} est trop grave pour séparer ses harmoniques, même à ${ANALYSIS_WINDOW_MAX_MS} ms.`}
+                    ? t('analyzer.spectrum.windowTooShort', {
+                        note: shownNoteName,
+                        frequency: analysis?.frequency.toFixed(1) ?? '',
+                        min: minWindowMs,
+                        window: windowMs,
+                      })
+                    : t('analyzer.spectrum.windowTooLow', { note: shownNoteName, max: ANALYSIS_WINDOW_MAX_MS })}
                 </p>
               )}
             </div>
@@ -1341,7 +1376,7 @@ export function Analyzer({ onSaveInstrument }: { onSaveInstrument: (instrument: 
 
         <Panel className={styles.partialsPanel}>
           <Section
-            title="Partiels"
+            title={t('analyzer.partials.title')}
             badge={<Badge>{partials.length}</Badge>}
             actions={
               <Button
@@ -1351,28 +1386,39 @@ export function Analyzer({ onSaveInstrument }: { onSaveInstrument: (instrument: 
                 onClick={() => void tryInstrument()}
                 title={
                   !canCreate
-                    ? 'Il faut une note et ses partiels : place le curseur ou choisis une zone sur un son'
-                    : `${draft ? 'Refait l’instrument à l’essai' : 'Fait un instrument à l’essai'} avec ces partiels${
-                        zoneMode ? ' et l’enveloppe de chacun, mesurée sur la zone' : ' (rapports et amplitudes)'
-                      }, joué au clavier en bas. Rien n’est sauvegardé.`
+                    ? t('analyzer.partials.needNote')
+                    : draft
+                      ? zoneMode
+                        ? t('analyzer.partials.remakeZone')
+                        : t('analyzer.partials.remakeMoment')
+                      : zoneMode
+                        ? t('analyzer.partials.makeZone')
+                        : t('analyzer.partials.makeMoment')
                 }
               >
                 {draft ? <RefreshCw size={13} /> : <Sparkles size={13} />}
-                {creating ? 'Mesure des enveloppes…' : draft ? 'Mettre à jour l’essai' : 'Essayer l’instrument'}
+                {creating
+                  ? t('analyzer.partials.measuringEnvelopes')
+                  : draft
+                    ? t('analyzer.partials.updateTrial')
+                    : t('analyzer.partials.try')}
               </Button>
             }
           >
             <div className={styles.partialsHead}>
               <p className={styles.note}>
-                {analysis
-                  ? `Analyse de ${describeAnalyzed(analyzedTarget, windowMs)}${
-                      analyzedTarget && shownNoteName ? `, rapports à ${shownNoteName}` : ''
-                    }.`
-                  : 'Place le curseur ou choisis une zone sur un son.'}
+                {!analysis
+                  ? t('analyzer.partials.empty')
+                  : analyzedTarget && shownNoteName
+                    ? t('analyzer.partials.analysisOfRatios', {
+                        what: describeAnalyzed(analyzedTarget, windowMs),
+                        note: shownNoteName,
+                      })
+                    : t('analyzer.partials.analysisOf', { what: describeAnalyzed(analyzedTarget, windowMs) })}
               </p>
               <Toggle
-                label="Harmoniques seulement"
-                hint={`À ${HARMONIC_CENTS} cents d’un rapport entier : écarte les autres instruments d’un mix (pas en direct)`}
+                label={t('analyzer.partials.harmonicsOnly')}
+                hint={t('analyzer.partials.harmonicsOnlyHint', { cents: HARMONIC_CENTS })}
                 checked={harmonicsOnly}
                 onChange={setHarmonicsOnly}
               />
@@ -1381,12 +1427,12 @@ export function Analyzer({ onSaveInstrument }: { onSaveInstrument: (instrument: 
               <div className={styles.zoneNotes}>
                 <p className={strongNotes.length > 1 && !notesZone ? styles.warning : styles.note}>
                   {notesZone
-                    ? 'Une note seule, sur son temps dans la zone : les rapports sont pris à elle, les autres notes sont écartées (leurs harmoniques communes restent mêlées).'
+                    ? t('analyzer.zoneNotes.single')
                     : strongNotes.length > 1
-                      ? `Plusieurs notes jouées ensemble ou à la suite : l’analyse de la zone les prend pour une seule${
-                          shownNoteName ? `, ${shownNoteName}` : ''
-                        }. Choisis-en une pour son timbre seul, ou garde la zone entière pour un instrument qui joue tout l’accord sur une seule touche.`
-                      : 'Notes entendues dans la zone : un clic en analyse une seule.'}
+                      ? shownNoteName
+                        ? t('analyzer.zoneNotes.severalNamed', { note: shownNoteName })
+                        : t('analyzer.zoneNotes.several')
+                      : t('analyzer.zoneNotes.heard')}
                 </p>
                 <div className={styles.noteChips}>
                   {zoneNotes.map((span, index) => {
@@ -1400,7 +1446,13 @@ export function Analyzer({ onSaveInstrument }: { onSaveInstrument: (instrument: 
                         data-weak={span.strength < STRONG_NOTE ? 'true' : undefined}
                         disabled={!online}
                         onClick={() => analyzeNote(span)}
-                        title={`Analyser ${name} seule, de ${span.start.toFixed(2)} à ${span.end.toFixed(2)} s : rapports pris à ${name} (${span.frequency.toFixed(1)} Hz). Force ${Math.round(span.strength * 100)} % de la plus forte.`}
+                        title={t('analyzer.zoneNotes.chipTitle', {
+                          name,
+                          start: span.start.toFixed(2),
+                          end: span.end.toFixed(2),
+                          frequency: span.frequency.toFixed(1),
+                          strength: Math.round(span.strength * 100),
+                        })}
                       >
                         <span className={styles.noteChipName}>{name}</span>
                         <span className={styles.noteChipTime}>
@@ -1413,8 +1465,8 @@ export function Analyzer({ onSaveInstrument }: { onSaveInstrument: (instrument: 
                     );
                   })}
                   {notesZone && (
-                    <Button size="small" onClick={backToNotesZone} title="Revient à la zone choisie et à la note de référence automatique">
-                      Toute la zone
+                    <Button size="small" onClick={backToNotesZone} title={t('analyzer.zoneNotes.wholeZoneTitle')}>
+                      {t('analyzer.zoneNotes.wholeZone')}
                     </Button>
                   )}
                 </div>
@@ -1422,8 +1474,7 @@ export function Analyzer({ onSaveInstrument }: { onSaveInstrument: (instrument: 
             )}
             {zoneOtherNotes > OTHER_NOTES_SHARE && (
               <p className={styles.warning}>
-                La zone contient d’autres notes que {shownNoteName} ({Math.round(zoneOtherNotes * 100)} % du temps). Elles sont
-                écartées, mais une zone sur une seule note, de son attaque à la suivante, donne le résultat le plus net.
+                {t('analyzer.zoneNotes.others', { note: shownNoteName, percent: Math.round(zoneOtherNotes * 100) })}
               </p>
             )}
             {analyzedTarget !== null && (
@@ -1439,15 +1490,13 @@ export function Analyzer({ onSaveInstrument }: { onSaveInstrument: (instrument: 
             )}
             {canCreate && (
               <p className={styles.note}>
-                {zoneMode
-                  ? 'L’instrument à l’essai reçoit aussi l’enveloppe de chaque partiel, mesurée sur la zone : qu’elle aille de l’attaque de la note à la suivante.'
-                  : 'Avec une zone d’une seule note, de son attaque à la suivante, l’instrument à l’essai reçoit aussi l’enveloppe de chaque partiel.'}
+                {zoneMode ? t('analyzer.partials.envelopeZone') : t('analyzer.partials.envelopeMoment')}
               </p>
             )}
             {createError && !draft && <p className={styles.warning}>{createError}</p>}
             {partials.length === 0 ? (
               <p className={styles.note}>
-                {analysis ? 'Aucun pic ne se détache du bruit.' : 'Les partiels du son analysé s’affichent ici, du plus grave au plus aigu.'}
+                {analysis ? t('analyzer.partials.noPeak') : t('analyzer.partials.placeholder')}
               </p>
             ) : (
               <div className={styles.tableWrap}>
@@ -1455,11 +1504,11 @@ export function Analyzer({ onSaveInstrument }: { onSaveInstrument: (instrument: 
                   <thead>
                     <tr>
                       <th>#</th>
-                      <th>Fréquence</th>
-                      <th>Note</th>
-                      <th>Rapport</th>
-                      <th>Harmonique</th>
-                      <th>Amplitude</th>
+                      <th>{t('analyzer.partials.frequency')}</th>
+                      <th>{t('analyzer.partials.note')}</th>
+                      <th>{t('analyzer.partials.ratio')}</th>
+                      <th>{t('analyzer.partials.harmonic')}</th>
+                      <th>{t('analyzer.partials.amplitude')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1480,7 +1529,11 @@ export function Analyzer({ onSaveInstrument }: { onSaveInstrument: (instrument: 
                           </td>
                           <td className={styles.mono}>{partial.ratio > 0 ? `×${partial.ratio.toFixed(3)}` : '—'}</td>
                           <td className={styles.mono} data-kind={harmonic ? 'harmonic' : 'inharmonic'}>
-                            {!gap ? 'sous la note' : harmonic ? `n°${gap.harmonic} ${formatCents(gap.cents)} c` : 'inharmonique'}
+                            {!gap
+                              ? t('analyzer.partials.belowNote')
+                              : harmonic
+                                ? t('analyzer.partials.harmonicNumber', { number: gap.harmonic, cents: formatCents(gap.cents) })
+                                : t('analyzer.partials.inharmonic')}
                           </td>
                           <td>
                             <span className={styles.amplitude}>
@@ -1505,57 +1558,54 @@ export function Analyzer({ onSaveInstrument }: { onSaveInstrument: (instrument: 
         <Panel as="div" className={styles.trial}>
           <div className={styles.trialInfo}>
             <span className={styles.trialHead}>
-              <span className={styles.trialEyebrow}>Instrument à l’essai</span>
+              <span className={styles.trialEyebrow}>{t('analyzer.trial.eyebrow')}</span>
               <span className={styles.trialName} title={draft.instrument.description}>
                 {draft.instrument.name}
               </span>
             </span>
             <span className={styles.note}>
-              {draft.instrument.partials.length} partiel{draft.instrument.partials.length > 1 ? 's' : ''}
-              {draft.noteMidi !== null ? ` · rapports à ${midiLabel(draft.noteMidi)}` : ''}
-              {draft.profile
-                ? ` · ${draft.profile}`
-                : draft.target && 'start' in draft.target
-                  ? ' · une enveloppe mesurée par partiel'
-                  : ' · une seule enveloppe'}
+              {[
+                t('analyzer.trial.partials', { count: draft.instrument.partials.length }),
+                draft.noteMidi !== null ? t('analyzer.trial.ratiosTo', { note: midiLabel(draft.noteMidi) }) : null,
+                draft.shape
+                  ? describeShape(draft.shape)
+                  : draft.target && 'start' in draft.target
+                    ? t('analyzer.trial.envelopePerPartial')
+                    : t('analyzer.trial.envelopeSingle'),
+              ]
+                .filter((part) => part !== null)
+                .join(' · ')}
             </span>
             {createError ? (
               <span className={styles.warning}>{createError}</span>
             ) : draftStale ? (
-              <span className={styles.warning}>
-                La sélection ou les réglages ont changé depuis : l’instrument reste tel quel, « Mettre à jour » le refait avec eux.
-              </span>
+              <span className={styles.warning}>{t('analyzer.trial.stale')}</span>
             ) : draft.target === null ? (
-              <span className={styles.note}>
-                Fait sur ce que le micro entendait au clic : « Mettre à jour » reprend ce qu’il entend.
-              </span>
+              <span className={styles.note}>{t('analyzer.trial.live')}</span>
             ) : (
               <span className={styles.note}>
-                {draft.noteMidi !== null ? `Joue ${midiLabel(draft.noteMidi)} (le point vert) et` : 'Joue-le et'} compare avec
-                l’original. Rien n’est gardé avant « Sauvegarder ».
+                {draft.noteMidi !== null
+                  ? t('analyzer.trial.compareNote', { note: midiLabel(draft.noteMidi) })
+                  : t('analyzer.trial.compare')}
               </span>
             )}
           </div>
           <div className={styles.trialVolume}>
             <Slider
-              label="Volume"
+              label={t('analyzer.trial.volume')}
               value={draft.instrument.volume}
               min={0}
               max={1}
               step={0.01}
-              format={(volume) => `${Math.round(volume * 100)} %`}
+              format={(volume) => t('analyzer.trial.percent', { value: Math.round(volume * 100) })}
               onChange={setDraftVolume}
             />
           </div>
           <div className={styles.trialActions}>
             {draftSelectionBack && (
-              <Button
-                size="small"
-                onClick={backToDraftSelection}
-                title="Remet la zone (ou le moment) et la note de référence d’où vient l’instrument à l’essai"
-              >
+              <Button size="small" onClick={backToDraftSelection} title={t('analyzer.trial.backTitle')}>
                 <Undo2 size={13} />
-                Revenir à sa sélection
+                {t('analyzer.trial.back')}
               </Button>
             )}
             <Button
@@ -1563,40 +1613,27 @@ export function Analyzer({ onSaveInstrument }: { onSaveInstrument: (instrument: 
               variant={draftStale ? 'primary' : 'default'}
               disabled={!canCreate || creating}
               onClick={() => void tryInstrument()}
-              title={
-                canCreate
-                  ? 'Refait l’instrument à l’essai depuis la sélection et les réglages affichés'
-                  : 'Il faut une note et ses partiels : place le curseur ou choisis une zone sur un son'
-              }
+              title={canCreate ? t('analyzer.trial.updateTitle') : t('analyzer.partials.needNote')}
             >
               <RefreshCw size={13} />
-              {creating ? 'Mesure…' : 'Mettre à jour'}
+              {creating ? t('analyzer.trial.measuring') : t('analyzer.trial.update')}
             </Button>
             <Button
               size="small"
               disabled={!online || !originalZone}
               onClick={playOriginal}
-              title={
-                originalZone
-                  ? 'Lit en boucle la zone sélectionnée, pour comparer'
-                  : 'Choisis une zone sur le son pour la réécouter en boucle'
-              }
+              title={originalZone ? t('analyzer.trial.playOriginalTitle') : t('analyzer.trial.playOriginalNoZone')}
             >
               {originalPlaying ? <Pause size={13} /> : <Play size={13} />}
-              {originalPlaying ? 'Pause' : 'Lire l’original'}
+              {originalPlaying ? t('analyzer.playback.pause') : t('analyzer.trial.playOriginal')}
             </Button>
-            <Button size="small" onClick={() => setDraft(null)} title="Ferme l’essai sans rien garder">
+            <Button size="small" onClick={() => setDraft(null)} title={t('analyzer.trial.discardTitle')}>
               <X size={13} />
-              Abandonner
+              {t('analyzer.trial.discard')}
             </Button>
-            <Button
-              size="small"
-              variant="primary"
-              onClick={saveDraft}
-              title="Ajoute l’instrument à la bibliothèque et l’ouvre dans l’Instrument Creator"
-            >
+            <Button size="small" variant="primary" onClick={saveDraft} title={t('analyzer.trial.saveTitle')}>
               <Save size={13} />
-              Sauvegarder
+              {t('analyzer.trial.save')}
             </Button>
           </div>
         </Panel>
@@ -1607,9 +1644,7 @@ export function Analyzer({ onSaveInstrument }: { onSaveInstrument: (instrument: 
           onOctaveChange={setDraftOctave}
           markedNote={draft.noteMidi ?? undefined}
           markedTitle={
-            draft.noteMidi !== null
-              ? `${midiLabel(draft.noteMidi)} : la note analysée, qui doit sonner comme l’original`
-              : undefined
+            draft.noteMidi !== null ? t('analyzer.trial.markedNote', { note: midiLabel(draft.noteMidi) }) : undefined
           }
         />
       )}

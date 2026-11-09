@@ -1,5 +1,6 @@
 import { AlertTriangle, FileAudio, Loader2, X } from 'lucide-react';
 import { useEffect, useRef, type FormEvent } from 'react';
+import { useI18n, type MessageKey } from '../i18n';
 import {
   MAX_EXPORT_SECONDS,
   MAX_EXPORT_SILENCE,
@@ -11,18 +12,11 @@ import { FALLBACK_INSTRUMENT } from '../lib/instruments';
 import styles from './ExportDialog.module.css';
 import { Button, Segmented, inputClass } from './ui';
 
-const FORMATS: { value: AudioExportFormat; label: string; title: string }[] = [
-  { value: 'wav', label: 'WAV', title: 'Sans perte, 16 bits : le plus fidèle, et le plus lourd' },
-  { value: 'ogg', label: 'OGG', title: 'Ogg Vorbis, compressé : environ 7 fois plus léger, presque impossible à distinguer' },
+/** The formats offered, with the keys of their tooltip and of the hint under them */
+const FORMATS: { value: AudioExportFormat; label: string; title: MessageKey; hint: MessageKey }[] = [
+  { value: 'wav', label: 'WAV', title: 'exportDialog.formats.wavTitle', hint: 'exportDialog.formats.wavHint' },
+  { value: 'ogg', label: 'OGG', title: 'exportDialog.formats.oggTitle', hint: 'exportDialog.formats.oggHint' },
 ];
-
-const FORMAT_HINT: Record<AudioExportFormat, string> = {
-  wav: 'Sans perte (16 bits) : pour garder, retravailler ou graver. Environ 10 Mo par minute.',
-  ogg: 'Ogg Vorbis (~190 kbit/s) : pour partager, ou pour un jeu. Environ 1,4 Mo par minute.',
-};
-
-const seconds = (value: number) => `${value.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} s`;
-const quoted = (tracks: { name: string }[]) => tracks.map((track) => `« ${track.name} »`).join(', ');
 
 /** A number of seconds typed, kept between 0 and MAX_EXPORT_SILENCE */
 function SecondsField({ label, value, onChange, disabled }: {
@@ -77,7 +71,11 @@ export function ExportDialog({
   onExport: () => void;
   onClose: () => void;
 }) {
+  const { t, tr, formatNumber } = useI18n();
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const seconds = (value: number) => `${formatNumber(value, { maximumFractionDigits: 1 })} s`;
+  const quoted = (tracks: { name: string }[]) => tracks.map((track) => t('exportDialog.quoted', { name: track.name })).join(', ');
+  const format = FORMATS.find((item) => item.value === settings.format) ?? FORMATS[0];
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -110,80 +108,92 @@ export function ExportDialog({
         <header className={styles.head}>
           <FileAudio size={18} className={styles.headIcon} aria-hidden="true" />
           <div className={styles.headText}>
-            <h2 id="export-dialog-title" className={styles.title}>Exporter en audio</h2>
-            <p className={styles.subtitle}>« {documentName} », tel que la lecture le joue</p>
+            <h2 id="export-dialog-title" className={styles.title}>{t('exportDialog.title')}</h2>
+            <p className={styles.subtitle}>{t('exportDialog.subtitle', { name: documentName })}</p>
           </div>
-          <button type="button" className={styles.close} aria-label="Fermer" title="Fermer (Échap)" disabled={busy} onClick={onClose}>
+          <button
+            type="button"
+            className={styles.close}
+            aria-label={t('common.close')}
+            title={t('exportDialog.closeTitle')}
+            disabled={busy}
+            onClick={onClose}
+          >
             <X size={15} />
           </button>
         </header>
 
         <div className={styles.row}>
-          <span className={styles.label}>Format</span>
+          <span className={styles.label}>{t('exportDialog.format')}</span>
           <div className={styles.field}>
             <Segmented
-              label="Format du fichier"
-              options={FORMATS}
+              label={t('exportDialog.fileFormat')}
+              options={FORMATS.map((item) => ({ value: item.value, label: item.label, title: t(item.title) }))}
               value={settings.format}
               disabled={busy}
-              onChange={(format) => update({ format })}
+              onChange={(value) => update({ format: value })}
             />
-            <p className={styles.hint}>{FORMAT_HINT[settings.format]}</p>
+            <p className={styles.hint}>{t(format.hint)}</p>
           </div>
         </div>
 
         <div className={styles.row}>
-          <span className={styles.label}>Avant</span>
+          <span className={styles.label}>{t('exportDialog.before')}</span>
           <div className={styles.field}>
             <div className={styles.inline}>
-              <SecondsField label="Secondes de silence avant le morceau" value={settings.leadIn} disabled={busy} onChange={(leadIn) => update({ leadIn })} />
-              <span>s de silence avant le premier temps</span>
+              <SecondsField label={t('exportDialog.leadInLabel')} value={settings.leadIn} disabled={busy} onChange={(leadIn) => update({ leadIn })} />
+              <span>{t('exportDialog.leadInUnit')}</span>
             </div>
           </div>
         </div>
 
         <div className={styles.row}>
-          <span className={styles.label}>Après</span>
+          <span className={styles.label}>{t('exportDialog.after')}</span>
           <div className={styles.field}>
-            <p className={styles.hint}>
-              Le son continue après la dernière mesure jusqu’à ce que les dernières notes et leur réverbération se soient
-              éteintes, puis :
-            </p>
+            <p className={styles.hint}>{t('exportDialog.tailHint')}</p>
             <div className={styles.inline}>
-              <SecondsField label="Secondes de silence après la fin du son" value={settings.tailMargin} disabled={busy} onChange={(tailMargin) => update({ tailMargin })} />
-              <span>s de silence, en fondu</span>
+              <SecondsField label={t('exportDialog.tailLabel')} value={settings.tailMargin} disabled={busy} onChange={(tailMargin) => update({ tailMargin })} />
+              <span>{t('exportDialog.tailUnit')}</span>
             </div>
           </div>
         </div>
 
         <div className={styles.summary}>
           <p>
-            <strong>{seconds(summary.seconds)}</strong> de partition, plus {seconds(settings.leadIn)} avant, la fin du son et{' '}
-            {seconds(settings.tailMargin)} après · {(sampleRate / 1000).toLocaleString('fr-FR')} kHz, stéréo
+            {tr('exportDialog.length', {
+              strong: (inner) => <strong>{inner}</strong>,
+              score: seconds(summary.seconds),
+              leadIn: seconds(settings.leadIn),
+              tail: seconds(settings.tailMargin),
+              rate: formatNumber(sampleRate / 1000),
+            })}
           </p>
           <p>
-            {summary.heard.length} piste{summary.heard.length > 1 ? 's' : ''} sur {summary.heard.length + summary.muted.length},{' '}
-            {summary.notes} note{summary.notes > 1 ? 's' : ''}
+            {t('exportDialog.tracks', { count: summary.heard.length, total: summary.heard.length + summary.muted.length })},{' '}
+            {t('exportDialog.notes', { count: summary.notes })}
             {summary.muted.length > 0 &&
-              ` · ${summary.muted.length > 1 ? 'muettes, laissées de côté' : 'muette, laissée de côté'} : ${quoted(summary.muted)}`}
+              ` · ${t('exportDialog.mutedLeftOut', { count: summary.muted.length, names: quoted(summary.muted) })}`}
           </p>
           {summary.fallback.length > 0 && (
             <p className={styles.warning}>
               <AlertTriangle size={13} aria-hidden="true" />
-              {quoted(summary.fallback)} : instrument introuvable, joué{summary.fallback.length > 1 ? 'es' : 'e'} avec{' '}
-              {FALLBACK_INSTRUMENT.name}, comme à la lecture
+              {t('exportDialog.fallback', {
+                count: summary.fallback.length,
+                names: quoted(summary.fallback),
+                fallback: FALLBACK_INSTRUMENT.name,
+              })}
             </p>
           )}
           {tooLong && (
             <p className={styles.warning}>
               <AlertTriangle size={13} aria-hidden="true" />
-              Le serveur n’exporte pas plus d’une heure de partition : retire des mesures ou accélère le tempo.
+              {t('exportDialog.tooLong')}
             </p>
           )}
           {nothingHeard && (
             <p className={styles.warning}>
               <AlertTriangle size={13} aria-hidden="true" />
-              Aucune note à entendre : le fichier ne contiendra que du silence.
+              {t('exportDialog.nothingHeard')}
             </p>
           )}
         </div>
@@ -191,17 +201,17 @@ export function ExportDialog({
         {error && (
           <p className={styles.error} role="alert">
             <AlertTriangle size={14} aria-hidden="true" />
-            L’export a échoué : {error}
+            {t('exportDialog.failed', { error })}
           </p>
         )}
 
         <footer className={styles.actions}>
           <Button type="button" disabled={busy} onClick={onClose}>
-            Annuler
+            {t('common.cancel')}
           </Button>
           <Button type="submit" variant="primary" disabled={busy || tooLong} aria-busy={busy}>
             {busy ? <Loader2 size={15} className={styles.spin} aria-hidden="true" /> : <FileAudio size={15} aria-hidden="true" />}
-            {busy ? 'Rendu en cours…' : `Exporter en ${settings.format.toUpperCase()}`}
+            {busy ? t('exportDialog.rendering') : t('exportDialog.exportAs', { format: settings.format.toUpperCase() })}
           </Button>
         </footer>
       </form>

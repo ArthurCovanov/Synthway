@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
+import { useI18n } from '../i18n';
 import { frequencyToNote } from '../lib/music';
 import { useElementSize } from '../lib/useElementSize';
 import type { ClipInfo, ClipWaveformPart } from '../types';
@@ -81,7 +82,7 @@ export function ClipWaveform({
   playing = false,
   loadWaveform,
   windowSeconds,
-  label = 'Moment analysé dans le fichier',
+  label,
 }: {
   clip: ClipInfo;
   time: number | null;
@@ -95,8 +96,10 @@ export function ClipWaveform({
   /** Must be stable */
   loadWaveform?: (first: number, frames: number, count: number) => Promise<ClipWaveformPart>;
   windowSeconds?: number;
+  /** Accessible name of the waveform; by default, the moment analyzed in the file */
   label?: string;
 }) {
+  const { t } = useI18n();
   const [boxRef, { width, height }] = useElementSize<HTMLDivElement>();
   const svgRef = useRef<SVGSVGElement>(null);
   const clipPathId = `clip-waveform-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`;
@@ -382,7 +385,11 @@ export function ClipWaveform({
 
   return (
     <div ref={boxRef} className={styles.box}>
-      {zoomable && <span className={styles.zoomIndicator} title="Roulette (ou Ctrl + roulette) : zoomer autour du pointeur, jusqu’aux échantillons · clic milieu maintenu : déplacer l’affichage">×{zoomText} · roulette</span>}
+      {zoomable && (
+        <span className={styles.zoomIndicator} title={t('clipWaveform.zoomTitle')}>
+          {t('clipWaveform.zoomIndicator', { zoom: zoomText })}
+        </span>
+      )}
       {width > 0 && (
         <svg
           ref={svgRef}
@@ -393,17 +400,17 @@ export function ClipWaveform({
           data-panning={panning ? 'true' : undefined}
           tabIndex={0}
           role="slider"
-          aria-label={label}
+          aria-label={label ?? t('clipWaveform.label')}
           aria-valuemin={0}
           aria-valuemax={Number(clip.duration.toFixed(2))}
           aria-valuenow={time === null ? undefined : Number(time.toFixed(2))}
-          aria-valuetext={time === null ? 'Aucun moment choisi' : formatTime(time)}
+          aria-valuetext={time === null ? t('clipWaveform.noMoment') : formatTime(time)}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={finishPointer}
           onPointerCancel={finishPointer}
           onKeyDown={onKeyDown}
-          aria-description={zoomable ? `Zoom ×${zoomText}. Roulette pour zoomer, clic milieu maintenu pour déplacer.` : undefined}
+          aria-description={zoomable ? t('clipWaveform.zoomDescription', { zoom: zoomText }) : undefined}
         >
           <defs>
             <clipPath id={clipPathId}>

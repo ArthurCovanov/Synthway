@@ -39,6 +39,7 @@ import layout from '../components/layout.module.css';
 import { Notice, useNotice, type NoticeMessage } from '../components/Notice';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { Badge, Button, Panel, Segmented, cx, inputClass, selectClass } from '../components/ui';
+import { useI18n, type MessageKey } from '../i18n';
 import { api } from '../lib/api';
 import {
   AUDIO_FILES,
@@ -172,21 +173,12 @@ function durationLabel(seconds: number): string {
   return `${rest} s`;
 }
 
-/** What the bars field says of the score's length at its tempo */
-function barsTitle(bars: number, beatsPerBar: number, bpm: number): string {
-  const bar = (beatsPerBar * 60) / bpm;
-  return (
-    `Durée du morceau : ${durationLabel(bars * bar)} à ${bpm} BPM ` +
-    `(${bar.toLocaleString('fr-FR', { maximumFractionDigits: 2 })} s par mesure de ${beatsPerBar} temps) · ` +
-    'Entrée pour valider, Échap pour annuler'
-  );
-}
-
-const NOTE_LENGTHS = [
-  { value: 1, label: '1/16', title: 'Double croche' },
-  { value: 2, label: '1/8', title: 'Croche' },
-  { value: 4, label: '1/4', title: 'Noire' },
-  { value: 8, label: '1/2', title: 'Blanche' },
+/** The lengths of new notes, with the key of their name (« Croche », "Eighth note") */
+const NOTE_LENGTHS: { value: number; label: string; title: MessageKey }[] = [
+  { value: 1, label: '1/16', title: 'composer.noteLengths.sixteenth' },
+  { value: 2, label: '1/8', title: 'composer.noteLengths.eighth' },
+  { value: 4, label: '1/4', title: 'composer.noteLengths.quarter' },
+  { value: 8, label: '1/2', title: 'composer.noteLengths.half' },
 ];
 
 function audibleTracks(tracks: Track[]): Track[] {
@@ -212,11 +204,9 @@ const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(naviga
 const UNDO_KEYS = IS_MAC ? '⌘Z' : 'Ctrl+Z';
 const REDO_KEYS = IS_MAC ? '⇧⌘Z' : 'Ctrl+Y';
 const SAVE_KEYS = IS_MAC ? '⌘S' : 'Ctrl+S';
-const SAVE_AS_KEYS = IS_MAC ? '⇧⌘S' : 'Ctrl+Maj+S';
+/** Save as, on a Mac; elsewhere Ctrl+Shift+S, whose key names are written in the language (composer.keys.saveAs) */
+const SAVE_AS_KEYS_MAC = '⇧⌘S';
 const OPEN_KEYS = IS_MAC ? '⌘O' : 'Ctrl+O';
-
-/** Name of a score never saved nor opened */
-const UNTITLED = 'Sans titre';
 
 /**
  * The file the score was last saved in, that Save writes again without a dialog. Kept while the page
@@ -229,12 +219,6 @@ let savedFile: SavedFileHandle | null = null;
  * back its file too (the history keeps these very objects)
  */
 const documentOf = new WeakMap<Composition, { name: string | null; handle: SavedFileHandle | null }>();
-
-/** « a », « a » et « b », « a », « b » et « c » */
-function quotedList(names: string[]): string {
-  const quoted = names.map((name) => `« ${name} »`);
-  return quoted.length > 1 ? `${quoted.slice(0, -1).join(', ')} et ${quoted[quoted.length - 1]}` : quoted.join('');
-}
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
@@ -262,6 +246,28 @@ export function Composer({
     coreLoaded,
     socketOpen,
   } = useSynthServer();
+  const { t, formatNumber } = useI18n();
+  /** Name of a score never saved nor opened */
+  const untitled = t('composer.untitled');
+  const saveAsKeys = IS_MAC ? SAVE_AS_KEYS_MAC : t('composer.keys.saveAs');
+  const quoted = (name: string) => t('composer.quoted', { name });
+  /** « a », « a » et « b », « a », « b » et « c » */
+  const quotedList = (names: string[]) => {
+    const items = names.map(quoted);
+    return items.length > 1
+      ? t('composer.listAnd', { list: items.slice(0, -1).join(', '), last: items[items.length - 1] })
+      : items.join('');
+  };
+  /** What the bars field says of the score's length at its tempo */
+  const barsTitle = (barCount: number, beatsPerBar: number, bpm: number) => {
+    const bar = (beatsPerBar * 60) / bpm;
+    return t('composer.barsTitle', {
+      duration: durationLabel(barCount * bar),
+      bpm,
+      seconds: formatNumber(bar, { maximumFractionDigits: 2 }),
+      count: beatsPerBar,
+    });
+  };
   // The score, with what can be undone (Ctrl+Z) and redone (Ctrl+Y)
   const history = useUndoablePersistentState<Composition>('synthway.composition.v1', defaultComposition, keepView);
   const composition = history.value;
@@ -410,7 +416,11 @@ export function Composer({
   loopRef.current = activeLoop;
   /** A step as bar.beat.step, counted from 1 */
   const stepLabel = (step: number) =>
-    `M${Math.floor(step / stepsPerBar) + 1}.${Math.floor((step % stepsPerBar) / STEPS_PER_BEAT) + 1}.${(step % STEPS_PER_BEAT) + 1}`;
+    t('composer.stepLabel', {
+      bar: Math.floor(step / stepsPerBar) + 1,
+      beat: Math.floor((step % stepsPerBar) / STEPS_PER_BEAT) + 1,
+      step: (step % STEPS_PER_BEAT) + 1,
+    });
 
   /** The selected point of the curve shown: of the selected track and the edited setting */
   const laneSelection =
@@ -457,7 +467,10 @@ export function Composer({
   };
   /** Semitones of a point of a curve, as shown in its tooltip */
   const formatSemitones = (semitones: number) =>
-    `${semitones > 0 ? '+' : semitones < 0 ? '−' : ''}${Math.abs(semitones).toLocaleString('fr-FR', { maximumFractionDigits: 2 })} demi-ton${Math.abs(semitones) >= 2 ? 's' : ''}`;
+    t('composer.semitones', {
+      count: Math.round(Math.abs(semitones) * 100) / 100,
+      value: `${semitones > 0 ? '+' : semitones < 0 ? '−' : ''}${formatNumber(Math.abs(semitones), { maximumFractionDigits: 2 })}`,
+    });
 
   /** Releases the score notes sounding: playback paused, ended or moved, or the loop starting again */
   const releasePlaying = useCallback(() => {
@@ -714,7 +727,7 @@ export function Composer({
     if (text.trim() === '' || !Number.isFinite(typed)) return;
     const value = Math.max(1, Math.min(MAX_BARS, typed));
     if (value !== composition.bars) {
-      setComposition((current) => ({ ...current, bars: value }), { label: 'Changer le nombre de mesures', group: fieldGroup.current });
+      setComposition((current) => ({ ...current, bars: value }), { label: t('composer.undo.bars'), group: fieldGroup.current });
     }
   };
 
@@ -744,21 +757,21 @@ export function Composer({
         next.splice(to, 0, next.splice(from, 1)[0]);
         return next;
       },
-      { label: 'Réordonner les pistes' },
+      { label: t('composer.undo.reorderTracks') },
     );
   };
 
   const addTrack = () => {
     const instrument = instruments[tracks.length % instruments.length];
     const created = createTrack(tracks.length + 1, instrument, HUES[tracks.length % HUES.length]);
-    setTracks((list) => [...list, created], { label: 'Ajouter une piste' });
+    setTracks((list) => [...list, created], { label: t('composer.undo.addTrack') });
     selectTrack(created);
   };
 
   const removeTrack = (id: string) => {
     if (tracks.length <= 1 || lockedTracks[id]) return;
     const next = tracks.filter((item) => item.id !== id);
-    setTracks(() => next, { label: 'Supprimer la piste' });
+    setTracks(() => next, { label: t('composer.undo.deleteTrack') });
     setSelectedNoteId(null);
     if (id === track.id) selectTrack(next[0]);
   };
@@ -777,7 +790,7 @@ export function Composer({
 
   const deleteSelectedNote = () => {
     if (!selectedNote || !track || lockedTracks[track.id]) return;
-    updateNotes(track.id, track.notes.filter((item) => item.id !== selectedNote.id), 'Supprimer la note');
+    updateNotes(track.id, track.notes.filter((item) => item.id !== selectedNote.id), t('composer.undo.deleteNote'));
     setSelectedNoteId(null);
   };
 
@@ -824,7 +837,7 @@ export function Composer({
     updateNotes(
       track.id,
       track.notes.map((n) => (n.id === selectedNote.id ? updated : n)),
-      patch.pitch !== undefined ? 'Transposer la note' : patch.start !== undefined ? 'Déplacer la note' : 'Changer la durée de la note',
+      t(patch.pitch !== undefined ? 'composer.undo.transposeNote' : patch.start !== undefined ? 'composer.undo.moveNote' : 'composer.undo.noteLength'),
       group,
     );
 
@@ -926,7 +939,7 @@ export function Composer({
     if (!draw || draw.pointerId !== event.pointerId) return;
     const length = draw.moved ? draw.length : Math.min(noteLength, draw.maxLength);
     const note: Note = { id: newId(), pitch: draw.pitch, start: draw.start, length };
-    updateNotes(draw.trackId, [...track.notes, note], 'Ajouter une note');
+    updateNotes(draw.trackId, [...track.notes, note], t('composer.undo.addNote'));
     noteDrawRef.current = null;
     setDraftNote(null);
     setSelectedNoteId(note.id);
@@ -992,7 +1005,7 @@ export function Composer({
     updateNotes(
       track.id,
       track.notes.map((item) => (item.id === note.id ? { ...item, start, pitch } : item)),
-      'Déplacer la note',
+      t('composer.undo.moveNote'),
       move.group,
     );
     if (pitch !== move.lastPitch) {
@@ -1028,7 +1041,7 @@ export function Composer({
     const at = event.shiftKey ? Math.round(raw * 100) / 100 : Math.round(raw * 4) / 4;
     if (at <= 0 || at > note.length || points.some((point) => Math.abs(point.at - at) < 0.01)) return;
     const semitones = Math.round(bendAt(note, at) * 100) / 100;
-    setBend(note.id, [...points, { at, semitones }].sort((a, b) => a.at - b.at), 'Ajouter un point de glissé');
+    setBend(note.id, [...points, { at, semitones }].sort((a, b) => a.at - b.at), t('composer.undo.addGlidePoint'));
     setSelectedNoteId(note.id);
   };
 
@@ -1077,7 +1090,7 @@ export function Composer({
     setBend(
       note.id,
       points.map((item, i) => (i === drag.index ? { at, semitones } : item)),
-      'Déplacer un point de glissé',
+      t('composer.undo.moveGlidePoint'),
       drag.group,
     );
     // Heard at every semitone, or every quarter of one when free
@@ -1098,7 +1111,7 @@ export function Composer({
   const onBendDoubleClick = (event: MouseEvent<Element>, note: Note, index: number) => {
     event.stopPropagation();
     if (!track || lockedTracks[track.id] || !note.bend) return;
-    setBend(note.id, note.bend.filter((_, i) => i !== index), 'Retirer un point de glissé');
+    setBend(note.id, note.bend.filter((_, i) => i !== index), t('composer.undo.removeGlidePoint'));
   };
 
   const onResizePointerDown = (event: PointerEvent<HTMLDivElement>, note: Note, edge: 'start' | 'end') => {
@@ -1161,7 +1174,7 @@ export function Composer({
     updateNotes(
       track.id,
       track.notes.map((n) => (n.id === resize.noteId ? { ...n, start, length, ...(bend ? { bend } : {}) } : n)),
-      'Redimensionner la note',
+      t('composer.undo.resizeNote'),
       resize.group,
     );
   };
@@ -1322,14 +1335,15 @@ export function Composer({
 
   /** Tracks played by FALLBACK_INSTRUMENT, as told to the user: « Basse » (Rain City Bass) */
   const missingDetails = (missing: Track[]) =>
-    missing.map(
-      (item) =>
-        `${item.instrumentName ? `${item.instrumentName}, introuvable` : 'Instrument introuvable'} : la piste « ${item.name} » est jouée avec ${FALLBACK_INSTRUMENT.name}.`,
+    missing.map((item) =>
+      item.instrumentName
+        ? t('composer.missing.named', { instrument: item.instrumentName, track: item.name, fallback: FALLBACK_INSTRUMENT.name })
+        : t('composer.missing.unnamed', { track: item.name, fallback: FALLBACK_INSTRUMENT.name }),
     );
 
   const newComposition = () => {
-    replaceComposition(emptyComposition(instruments[0] ?? FALLBACK_INSTRUMENT, 'pink'), 'Nouveau morceau', null);
-    showNotice({ tone: 'success', title: `Nouveau morceau. ${UNDO_KEYS} pour retrouver le précédent.` });
+    replaceComposition(emptyComposition(instruments[0] ?? FALLBACK_INSTRUMENT, 'pink'), t('composer.undo.newSong'), null);
+    showNotice({ tone: 'success', title: t('composer.notices.newSong', { keys: UNDO_KEYS }) });
   };
 
   /**
@@ -1338,10 +1352,10 @@ export function Composer({
    */
   const saveComposition = async (chooseLocation: boolean) => {
     const handle = !chooseLocation && savedFile && baseName(savedFile.name) === documentName ? savedFile : null;
-    let name = documentName ?? UNTITLED;
+    let name = documentName ?? untitled;
     if (!handle && !canChooseSaveLocation() && (chooseLocation || documentName === null)) {
       // Downloaded: the name is asked here, the browser will not
-      const typed = window.prompt('Nom du morceau', name);
+      const typed = window.prompt(t('composer.songNamePrompt'), name);
       if (typed === null) return;
       name = typed;
     }
@@ -1350,29 +1364,29 @@ export function Composer({
       const result = await saveTextFile(
         compositionFileText(composition, instruments),
         COMPOSITION_FILE,
-        fileNameOf(name, COMPOSITION_FILE.extension, UNTITLED),
+        fileNameOf(name, COMPOSITION_FILE.extension, untitled),
         handle,
       );
       if (!result.saved) return;
       savedFile = result.handle;
       setDocumentName(baseName(result.name));
       documentOf.set(composition, { name: baseName(result.name), handle: result.handle });
-      const where = result.handle ? `enregistré dans « ${result.name} »` : `téléchargé : « ${result.name} »`;
+      const file = { name: result.name, count: missing.length };
       showNotice(
         missing.length
           ? {
               tone: 'warning',
-              title: `Morceau ${where}, sans ${missing.length > 1 ? 'des instruments introuvables' : 'un instrument introuvable'}.`,
+              title: result.handle ? t('composer.saved.toFileMissing', file) : t('composer.saved.downloadedMissing', file),
               details: missingDetails(missing),
             }
-          : { tone: 'success', title: `Morceau ${where}.` },
+          : { tone: 'success', title: result.handle ? t('composer.saved.toFile', file) : t('composer.saved.downloaded', file) },
       );
     } catch (error) {
       // The file could not be written (permission withdrawn, file moved): the next save asks again
       if (handle) savedFile = null;
       showNotice({
         tone: 'error',
-        title: handle ? `Le morceau n’a pas pu être enregistré dans « ${handle.name} ».` : 'Le morceau n’a pas pu être enregistré.',
+        title: handle ? t('composer.saved.failedIn', { name: handle.name }) : t('composer.saved.failed'),
         details: [errorText(error)],
       });
     }
@@ -1392,34 +1406,44 @@ export function Composer({
     } catch (error) {
       showNotice({
         tone: 'error',
-        title: `« ${file.name} » n’a pas pu être ouvert : ${error instanceof FileFormatError ? error.message : errorText(error)}`,
+        title: t('composer.opened.failed', {
+          name: file.name,
+          reason: error instanceof FileFormatError ? error.message : errorText(error),
+        }),
       });
       return;
     }
     const check = checkInstruments(opened, instruments);
     if (check.added.length) onAddInstruments(check.added);
     const name = baseName(file.name);
-    replaceComposition(opened.composition, `Ouvrir « ${name} »`, name);
+    replaceComposition(opened.composition, t('composer.undo.open', { name }), name);
     const details: string[] = [];
     if (check.added.length) {
       details.push(
-        `${check.added.length > 1 ? `${check.added.length} instruments ajoutés` : 'Instrument ajouté'} à ta bibliothèque, verrouillé${check.added.length > 1 ? 's' : ''} : ${quotedList(check.added.map((item) => item.name))}.`,
+        t('composer.opened.added', { count: check.added.length, list: quotedList(check.added.map((item) => item.name)) }),
       );
     }
     if (check.changed.length) {
       details.push(
-        `${check.changed.length > 1 ? 'Modifiés depuis l’enregistrement du morceau, joués tels qu’ils sont' : 'Modifié depuis l’enregistrement du morceau, joué tel qu’il est'} dans ta bibliothèque : ${quotedList(check.changed.map((item) => item.name))}.`,
+        t('composer.opened.changed', { count: check.changed.length, list: quotedList(check.changed.map((item) => item.name)) }),
       );
     }
     details.push(...missingDetails(check.missing));
-    const trackCount = `${opened.composition.tracks.length} piste${opened.composition.tracks.length > 1 ? 's' : ''}`;
     const message: NoticeMessage = check.missing.length
       ? {
           tone: 'warning',
-          title: `« ${name} » ouvert, mais ${check.missing.length > 1 ? `${check.missing.length} pistes n’ont pas leur instrument` : 'une piste n’a pas son instrument'}.`,
+          title: t('composer.opened.missing', { name, count: check.missing.length }),
           details,
         }
-      : { tone: details.length ? 'info' : 'success', title: `« ${name} » ouvert (${trackCount}). ${UNDO_KEYS} pour revenir au morceau précédent.`, details };
+      : {
+          tone: details.length ? 'info' : 'success',
+          title: t('composer.opened.done', {
+            name,
+            tracks: t('composer.trackCount', { count: opened.composition.tracks.length }),
+            keys: UNDO_KEYS,
+          }),
+          details,
+        };
     showNotice(message);
   };
 
@@ -1440,7 +1464,7 @@ export function Composer({
     setExportBusy(true);
     setExportError(null);
     try {
-      const result = await saveFile(kind, fileNameOf(documentName ?? UNTITLED, kind.extension, UNTITLED), async () => {
+      const result = await saveFile(kind, fileNameOf(documentName ?? untitled, kind.extension, untitled), async () => {
         const { file, info } = await api.renderScore(request);
         render.info = info;
         return file;
@@ -1451,22 +1475,26 @@ export function Composer({
       const details: string[] = [];
       if (rendered.clipped_samples > 0) {
         details.push(
-          `Saturation : ${rendered.clipped_samples.toLocaleString('fr-FR')} échantillons écrêtés (crête à ${Math.round(rendered.peak * 100)} %), comme à la lecture. Baisse le volume des instruments pour l’éviter.`,
+          t('composer.exported.clipped', {
+            count: rendered.clipped_samples,
+            samples: formatNumber(rendered.clipped_samples),
+            peak: Math.round(rendered.peak * 100),
+          }),
         );
       }
       if (rendered.cut) {
-        details.push(`Le son sonnait encore ${Math.round(rendered.tail)} s après la dernière mesure : il a été coupé en fondu.`);
+        details.push(t('composer.exported.cut', { seconds: Math.round(rendered.tail) }));
       }
       details.push(...missingDetails(summary.fallback));
       if (summary.muted.length) {
         details.push(
-          `${summary.muted.length > 1 ? 'Pistes muettes laissées' : 'Piste muette laissée'} de côté : ${quotedList(summary.muted.map((item) => item.name))}.`,
+          t('composer.exported.muted', { count: summary.muted.length, list: quotedList(summary.muted.map((item) => item.name)) }),
         );
       }
-      const length = `${rendered.seconds.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} s`;
+      const exported = { name: result.name, length: `${formatNumber(rendered.seconds, { maximumFractionDigits: 1 })} s` };
       showNotice({
         tone: rendered.clipped_samples > 0 || rendered.cut || summary.fallback.length ? 'warning' : 'success',
-        title: `« ${result.name} » ${result.handle ? 'exporté' : 'téléchargé'} : ${length}.`,
+        title: result.handle ? t('composer.exported.saved', exported) : t('composer.exported.downloaded', exported),
         details,
       });
     } catch (error) {
@@ -1608,42 +1636,46 @@ export function Composer({
     <div className={layout.screen}>
       <ScreenHeader
         index="04"
-        eyebrow="Arrangement"
+        eyebrow={t('composer.eyebrow')}
         title="Composer"
-        subtitle="Écris tes motifs piste par piste, chacune jouée par un de tes instruments."
+        subtitle={t('composer.subtitle')}
       >
-        <div className={styles.fileGroup} role="group" aria-label="Fichier du morceau">
+        <div className={styles.fileGroup} role="group" aria-label={t('composer.file.group')}>
           <span
             className={cx(styles.documentName, documentName === null && styles.documentUntitled)}
-            title={documentName === null ? 'Morceau jamais enregistré' : `Morceau : ${documentName}${COMPOSITION_FILE.extension}`}
+            title={
+              documentName === null
+                ? t('composer.file.neverSaved')
+                : t('composer.file.name', { file: `${documentName}${COMPOSITION_FILE.extension}` })
+            }
           >
-            {documentName ?? UNTITLED}
+            {documentName ?? untitled}
           </span>
           <Button
             iconOnly
-            aria-label="Nouveau morceau"
-            title={`Nouveau morceau, avec une piste vide (${UNDO_KEYS} pour retrouver celui-ci)`}
+            aria-label={t('composer.file.new')}
+            title={t('composer.file.newTitle', { keys: UNDO_KEYS })}
             onClick={newComposition}
           >
             <FilePlus size={15} />
           </Button>
           <Button
             iconOnly
-            aria-label="Ouvrir un morceau"
-            title={`Ouvrir un morceau ${COMPOSITION_FILE.extension} (${OPEN_KEYS})`}
+            aria-label={t('composer.file.open')}
+            title={t('composer.file.openTitle', { extension: COMPOSITION_FILE.extension, keys: OPEN_KEYS })}
             onClick={() => void openComposition()}
           >
             <FolderOpen size={15} />
           </Button>
           <Button
             iconOnly
-            aria-label="Enregistrer le morceau"
+            aria-label={t('composer.file.save')}
             title={
               savedFile && baseName(savedFile.name) === documentName
-                ? `Enregistrer dans « ${savedFile.name} » (${SAVE_KEYS}) · Maj+clic : enregistrer sous… (${SAVE_AS_KEYS})`
+                ? t('composer.file.saveAgainTitle', { file: savedFile.name, keys: SAVE_KEYS, saveAsKeys })
                 : canChooseSaveLocation()
-                  ? `Enregistrer le morceau dans un fichier ${COMPOSITION_FILE.extension} (${SAVE_KEYS})`
-                  : `Télécharger le morceau en fichier ${COMPOSITION_FILE.extension} (${SAVE_KEYS})`
+                  ? t('composer.file.saveTitle', { extension: COMPOSITION_FILE.extension, keys: SAVE_KEYS })
+                  : t('composer.file.downloadTitle', { extension: COMPOSITION_FILE.extension, keys: SAVE_KEYS })
             }
             onClick={(event) => void saveComposition(event.shiftKey)}
           >
@@ -1651,13 +1683,9 @@ export function Composer({
           </Button>
           <Button
             iconOnly
-            aria-label="Exporter en audio"
+            aria-label={t('composer.file.export')}
             disabled={!canExport}
-            title={
-              canExport
-                ? 'Exporter en audio (WAV ou OGG), tel que la lecture le joue'
-                : 'Exporter en audio : il faut le serveur, c’est le moteur qui fait le rendu'
-            }
+            title={canExport ? t('composer.file.exportTitle') : t('composer.file.exportOffline')}
             onClick={() => {
               setExportError(null);
               setExportOpen(true);
@@ -1666,12 +1694,16 @@ export function Composer({
             <FileAudio size={15} />
           </Button>
         </div>
-        <div className={styles.historyButtons} role="group" aria-label="Historique des modifications">
+        <div className={styles.historyButtons} role="group" aria-label={t('composer.history.group')}>
           <Button
             iconOnly
             disabled={!history.undoStep}
-            aria-label={history.undoStep ? `Annuler : ${history.undoStep.label}` : 'Annuler'}
-            title={history.undoStep ? `Annuler : ${history.undoStep.label} (${UNDO_KEYS})` : `Rien à annuler (${UNDO_KEYS})`}
+            aria-label={history.undoStep ? t('composer.history.undo', { label: history.undoStep.label }) : t('common.undo')}
+            title={
+              history.undoStep
+                ? t('composer.history.undoTitle', { label: history.undoStep.label, keys: UNDO_KEYS })
+                : t('composer.history.nothingToUndo', { keys: UNDO_KEYS })
+            }
             onClick={undo}
           >
             <Undo2 size={15} />
@@ -1679,8 +1711,12 @@ export function Composer({
           <Button
             iconOnly
             disabled={!history.redoStep}
-            aria-label={history.redoStep ? `Rétablir : ${history.redoStep.label}` : 'Rétablir'}
-            title={history.redoStep ? `Rétablir : ${history.redoStep.label} (${REDO_KEYS})` : `Rien à rétablir (${REDO_KEYS})`}
+            aria-label={history.redoStep ? t('composer.history.redo', { label: history.redoStep.label }) : t('common.redo')}
+            title={
+              history.redoStep
+                ? t('composer.history.redoTitle', { label: history.redoStep.label, keys: REDO_KEYS })
+                : t('composer.history.nothingToRedo', { keys: REDO_KEYS })
+            }
             onClick={redo}
           >
             <Redo2 size={15} />
@@ -1688,17 +1724,17 @@ export function Composer({
         </div>
         <Segmented
           compact
-          label="Longueur des nouvelles notes"
-          options={NOTE_LENGTHS}
+          label={t('composer.newNoteLength')}
+          options={NOTE_LENGTHS.map((length) => ({ value: length.value, label: length.label, title: t(length.title) }))}
           value={noteLength}
           onChange={setNoteLength}
         />
         <label className={styles.rangeField}>
-          Note de base
+          {t('composer.baseNote.label')}
           <input
             className={inputClass}
-            aria-label="Note de base de la piste"
-            title="Saisir une note comme C0, B10 ou A-3"
+            aria-label={t('composer.baseNote.field')}
+            title={t('composer.baseNote.fieldTitle')}
             value={baseNoteDraft}
             disabled={!track || !!lockedTracks[track.id]}
             onChange={(event) => setBaseNoteDraft(event.target.value)}
@@ -1710,7 +1746,13 @@ export function Composer({
               }
             }}
           />
-          <Button size="small" iconOnly aria-label="Recentrer le piano roll sur la note de base" title={`Recentrer sur ${baseNoteDraft || midiToName(selectedBasePitch)}`} onClick={recenterPitchRoll}>
+          <Button
+            size="small"
+            iconOnly
+            aria-label={t('composer.baseNote.recenter')}
+            title={t('composer.baseNote.recenterTitle', { note: baseNoteDraft || midiToName(selectedBasePitch) })}
+            onClick={recenterPitchRoll}
+          >
             <Crosshair size={15} />
           </Button>
         </label>
@@ -1726,20 +1768,20 @@ export function Composer({
             onChange={(event) => {
               const value = Number(event.target.value);
               if (value >= 40 && value <= 240) {
-                setComposition((current) => ({ ...current, bpm: value }), { label: 'Changer le tempo', group: fieldGroup.current });
+                setComposition((current) => ({ ...current, bpm: value }), { label: t('composer.undo.tempo'), group: fieldGroup.current });
               }
             }}
           />
         </label>
         <label className={styles.bpmField} title={barsTitle(bars, beatsPerBar, bpm)}>
-          Mesures
+          {t('composer.bars')}
           <input
             className={inputClass}
             type="number"
             min={1}
             max={MAX_BARS}
             value={barsDraft ?? bars}
-            aria-label="Nombre de mesures"
+            aria-label={t('composer.barsField')}
             onFocus={() => (fieldGroup.current = newGroup('bars'))}
             onChange={(event) => {
               // The arrows and the spin buttons change it at once; typed digits wait for Enter or the field's exit,
@@ -1763,13 +1805,13 @@ export function Composer({
         <Button
           disabled={!track || track.notes.length === 0 || !!lockedTracks[track?.id ?? '']}
           onClick={() => {
-            updateNotes(track.id, [], 'Effacer la piste');
+            updateNotes(track.id, [], t('composer.clearTrack'));
             setSelectedNoteId(null);
           }}
-          title={`Effacer toutes les notes de la piste sélectionnée (${UNDO_KEYS} pour les retrouver)`}
+          title={t('composer.clearTrackTitle', { keys: UNDO_KEYS })}
         >
           <Eraser size={15} />
-          Effacer la piste
+          {t('composer.clearTrack')}
         </Button>
       </ScreenHeader>
 
@@ -1777,9 +1819,9 @@ export function Composer({
         <Panel className={styles.tracks}>
           <div className={styles.tracksHead}>
             <h2 className={styles.panelTitle}>
-              Pistes <span className={styles.count}>{tracks.length}</span>
+              {t('composer.tracks')} <span className={styles.count}>{tracks.length}</span>
             </h2>
-            <Button size="small" iconOnly aria-label="Ajouter une piste" title="Ajouter une piste" onClick={addTrack}>
+            <Button size="small" iconOnly aria-label={t('composer.addTrack')} title={t('composer.addTrack')} onClick={addTrack}>
               <Plus size={15} />
             </Button>
           </div>
@@ -1814,8 +1856,8 @@ export function Composer({
                     <button
                       type="button"
                       className={styles.dragHandle}
-                      aria-label={`Déplacer ${item.name}`}
-                      title="Glisser pour réordonner les pistes"
+                      aria-label={t('composer.track.move', { name: item.name })}
+                      title={t('composer.track.moveTitle')}
                       onClick={(event) => event.stopPropagation()}
                       onPointerDown={(event) => {
                         if (event.button !== 0) return;
@@ -1863,19 +1905,19 @@ export function Composer({
                       value={item.name}
                       readOnly={!!lockedTracks[item.id]}
                       maxLength={24}
-                      aria-label="Nom de la piste"
+                      aria-label={t('composer.track.name')}
                       onClick={(event) => event.stopPropagation()}
                       onFocus={() => (fieldGroup.current = newGroup('name'))}
                       onChange={(event) =>
-                        updateTrack(item.id, { name: event.target.value }, { label: 'Renommer la piste', group: fieldGroup.current })
+                        updateTrack(item.id, { name: event.target.value }, { label: t('composer.undo.renameTrack'), group: fieldGroup.current })
                       }
                     />
                     <button
                       type="button"
                       className={styles.trackLock}
-                      aria-label={lockedTracks[item.id] ? `Déverrouiller ${item.name}` : `Verrouiller ${item.name}`}
+                      aria-label={t(lockedTracks[item.id] ? 'composer.track.unlock' : 'composer.track.lock', { name: item.name })}
                       aria-pressed={!!lockedTracks[item.id]}
-                      title={lockedTracks[item.id] ? 'Déverrouiller la piste' : 'Verrouiller la piste contre les modifications'}
+                      title={lockedTracks[item.id] ? t('composer.track.unlockTitle') : t('composer.track.lockTitle')}
                       onClick={(event) => {
                         event.stopPropagation();
                         setLockedTracks((current) => ({ ...current, [item.id]: !current[item.id] }));
@@ -1888,25 +1930,25 @@ export function Composer({
                       className={styles.ms}
                       data-kind="mute"
                       aria-pressed={item.muted}
-                      title={item.muted ? 'Activer le son de la piste' : 'Couper le son de la piste (Muet)'}
+                      title={item.muted ? t('composer.track.unmuteTitle') : t('composer.track.muteTitle')}
                       disabled={!!lockedTracks[item.id]}
                       onClick={(event) => {
                         event.stopPropagation();
                         updateTrack(
                           item.id,
                           { muted: !item.muted },
-                          { label: item.muted ? 'Rendre le son à la piste' : 'Couper le son de la piste' },
+                          { label: item.muted ? t('composer.undo.unmuteTrack') : t('composer.undo.muteTrack') },
                         );
                       }}
                     >
-                      M
+                      {t('composer.track.muteShort')}
                     </button>
                     <button
                       type="button"
                       className={styles.trackVisibility}
-                      aria-label={item.hidden ? `Afficher ${item.name} sur le piano roll` : `Masquer ${item.name} du piano roll`}
+                      aria-label={t(item.hidden ? 'composer.track.show' : 'composer.track.hide', { name: item.name })}
                       aria-pressed={!item.hidden}
-                      title={item.hidden ? 'Afficher les notes sur le piano roll' : 'Masquer les notes sur le piano roll'}
+                      title={item.hidden ? t('composer.track.showTitle') : t('composer.track.hideTitle')}
                       onClick={(event) => {
                         event.stopPropagation();
                         updateTrack(item.id, { hidden: !item.hidden });
@@ -1917,12 +1959,15 @@ export function Composer({
                   </div>
                   <select
                     className={cx(selectClass, styles.trackInstrument, !instrument && styles.trackInstrumentMissing)}
-                    aria-label="Instrument de la piste"
+                    aria-label={t('composer.track.instrument')}
                     aria-invalid={!instrument}
                     title={
                       instrument
                         ? undefined
-                        : `${item.instrumentName ?? 'Cet instrument'} n’est plus dans ta bibliothèque : la piste est jouée avec ${FALLBACK_INSTRUMENT.name}. Choisis un autre instrument, ou importe le sien dans l’Instrument Creator.`
+                        : t('composer.track.instrumentGone', {
+                            instrument: item.instrumentName ?? t('composer.track.thisInstrument'),
+                            fallback: FALLBACK_INSTRUMENT.name,
+                          })
                     }
                     value={item.instrumentId}
                     disabled={!!lockedTracks[item.id]}
@@ -1933,12 +1978,14 @@ export function Composer({
                       updateTrack(
                         item.id,
                         { instrumentId: chosen.id, instrumentName: chosen.name },
-                        { label: 'Changer l’instrument de la piste' },
+                        { label: t('composer.undo.trackInstrument') },
                       );
                     }}
                   >
                     {!instrument && (
-                      <option value={item.instrumentId}>⚠ {item.instrumentName ?? 'Instrument'} · introuvable</option>
+                      <option value={item.instrumentId}>
+                        {t('composer.track.instrumentMissing', { name: item.instrumentName ?? t('composer.track.instrumentFallbackName') })}
+                      </option>
                     )}
                     {instruments.map((option) => (
                       <option key={option.id} value={option.id}>
@@ -1948,20 +1995,18 @@ export function Composer({
                   </select>
                   <div className={styles.trackMeta}>
                     {instrument ? (
-                      <span>
-                        {item.notes.length} note{item.notes.length > 1 ? 's' : ''}
-                      </span>
+                      <span>{t('composer.track.notes', { count: item.notes.length })}</span>
                     ) : (
                       <span className={styles.trackFallback}>
                         <AlertTriangle size={11} aria-hidden="true" />
-                        joué avec {FALLBACK_INSTRUMENT.name}
+                        {t('composer.track.playedWith', { fallback: FALLBACK_INSTRUMENT.name })}
                       </span>
                     )}
                     <button
                       type="button"
                       className={styles.miniBtn}
-                      aria-label={`Supprimer ${item.name}`}
-                      title={tracks.length > 1 ? 'Supprimer la piste' : 'Il faut garder au moins une piste'}
+                      aria-label={t('composer.track.delete', { name: item.name })}
+                      title={tracks.length > 1 ? t('composer.track.deleteTitle') : t('composer.track.keepOne')}
                       disabled={tracks.length <= 1 || !!lockedTracks[item.id]}
                       onClick={(event) => {
                         event.stopPropagation();
@@ -1997,13 +2042,10 @@ export function Composer({
             <h2 className={styles.rollTitle}>
               {track?.name}
             </h2>
-            <span
-              className={styles.rollHint}
-              title="Règle : clic = curseur, glisser = zone en boucle · Molette : défiler · Ctrl + molette : zoom horizontal · clic milieu : déplacer · clic : ajouter une note · glisser une note : la déplacer · bords : redimensionner · double-clic sur une note : point de glissé, à glisser (Maj : librement) · clic sur une note : sélectionner (Suppr pour effacer)"
-            >
-              Règle : clic = curseur, glisser = zone en boucle · Molette : défiler · Ctrl + molette : zoom horizontal · clic milieu : déplacer · clic : ajouter une note · glisser une note : la déplacer · bords : redimensionner · double-clic sur une note : point de glissé, à glisser (Maj : librement) · clic sur une note : sélectionner (Suppr pour effacer)
-              {lockedTracks[track?.id ?? ''] ? ' · piste verrouillée' : ''}
-              {canPlay ? ' · aperçu sonore actif' : ''}
+            <span className={styles.rollHint} title={t('composer.rollHint')}>
+              {t('composer.rollHint')}
+              {lockedTracks[track?.id ?? ''] ? ` · ${t('composer.rollLocked')}` : ''}
+              {canPlay ? ` · ${t('composer.rollPreview')}` : ''}
             </span>
           </div>
 
@@ -2017,17 +2059,17 @@ export function Composer({
                   <span className={styles.noteInspectorFreq}>({Math.round(midiToFrequency(selectedNote.pitch) * 10) / 10} Hz)</span>
                 </>
               ) : (
-                <span className={styles.noteInspectorFreq}>Aucune note</span>
+                <span className={styles.noteInspectorFreq}>{t('composer.inspector.noNote')}</span>
               )}
             </div>
 
             <div className={styles.noteInspectorGroup}>
-              <span className={styles.noteInspectorLabel}>Hauteur</span>
+              <span className={styles.noteInspectorLabel}>{t('composer.inspector.pitch')}</span>
               <Button
                 size="small"
                 disabled={!noteEditable || selectedNote.pitch <= 11}
                 onClick={() => selectedNote && updateSelectedNote({ pitch: selectedNote.pitch - 12 })}
-                title="Descendre d'une octave (Maj + Bas)"
+                title={t('composer.inspector.octaveDown')}
               >
                 -12
               </Button>
@@ -2035,7 +2077,7 @@ export function Composer({
                 size="small"
                 disabled={!noteEditable || selectedNote.pitch <= 0}
                 onClick={() => selectedNote && updateSelectedNote({ pitch: selectedNote.pitch - 1 })}
-                title="Descendre d'un demi-ton (Bas)"
+                title={t('composer.inspector.semitoneDown')}
               >
                 -1
               </Button>
@@ -2043,7 +2085,7 @@ export function Composer({
                 size="small"
                 disabled={!noteEditable || selectedNote.pitch >= 127}
                 onClick={() => selectedNote && updateSelectedNote({ pitch: selectedNote.pitch + 1 })}
-                title="Monter d'un demi-ton (Haut)"
+                title={t('composer.inspector.semitoneUp')}
               >
                 +1
               </Button>
@@ -2051,14 +2093,14 @@ export function Composer({
                 size="small"
                 disabled={!noteEditable || selectedNote.pitch >= 116}
                 onClick={() => selectedNote && updateSelectedNote({ pitch: selectedNote.pitch + 12 })}
-                title="Monter d'une octave (Maj + Haut)"
+                title={t('composer.inspector.octaveUp')}
               >
                 +12
               </Button>
             </div>
 
             <div className={styles.noteInspectorGroup}>
-              <span className={styles.noteInspectorLabel}>Durée</span>
+              <span className={styles.noteInspectorLabel}>{t('composer.inspector.length')}</span>
               {NOTE_LENGTHS.map((opt) => (
                 <Button
                   key={opt.value}
@@ -2066,61 +2108,54 @@ export function Composer({
                   disabled={!noteEditable}
                   variant={selectedNote?.length === opt.value ? 'primary' : undefined}
                   onClick={() => updateSelectedNote({ length: opt.value })}
-                  title={`${opt.title} (${opt.value} pas)`}
+                  title={t('composer.inspector.lengthTitle', { name: t(opt.title), count: opt.value })}
                 >
                   {opt.label}
                 </Button>
               ))}
               <span
                 className={styles.noteInspectorPosText}
-                title={selectedNote ? `${selectedNote.length} double${selectedNote.length > 1 ? 's' : ''} croche${selectedNote.length > 1 ? 's' : ''} (pas)` : undefined}
+                title={selectedNote ? t('composer.inspector.sixteenths', { count: selectedNote.length }) : undefined}
               >
                 {selectedNote ? `${selectedNote.length}/16` : '–'}
               </span>
             </div>
 
             <div className={styles.noteInspectorGroup}>
-              <span className={styles.noteInspectorLabel}>Position</span>
+              <span className={styles.noteInspectorLabel}>{t('composer.inspector.position')}</span>
               <Button
                 size="small"
                 iconOnly
                 disabled={!noteEditable || selectedNote.start <= 0}
                 onClick={() => selectedNote && updateSelectedNote({ start: selectedNote.start - 1 })}
-                title="Reculer d'un pas (Gauche)"
+                title={t('composer.inspector.stepBack')}
               >
                 <ArrowLeft size={13} />
               </Button>
-              <span className={styles.noteInspectorPosText}>
-                {selectedNote
-                  ? `M${Math.floor(selectedNote.start / stepsPerBar) + 1}.${Math.floor((selectedNote.start % stepsPerBar) / STEPS_PER_BEAT) + 1}.${(selectedNote.start % STEPS_PER_BEAT) + 1}`
-                  : '–'}
-              </span>
+              <span className={styles.noteInspectorPosText}>{selectedNote ? stepLabel(selectedNote.start) : '–'}</span>
               <Button
                 size="small"
                 iconOnly
                 disabled={!noteEditable || selectedNote.start + selectedNote.length >= totalSteps}
                 onClick={() => selectedNote && updateSelectedNote({ start: selectedNote.start + 1 })}
-                title="Avancer d'un pas (Droite)"
+                title={t('composer.inspector.stepForward')}
               >
                 <ArrowRight size={13} />
               </Button>
             </div>
 
             <div className={styles.noteInspectorGroup}>
-              <span className={styles.noteInspectorLabel}>Glissé</span>
-              <span
-                className={styles.noteInspectorPosText}
-                title="Points de la courbe de hauteur : double-clic sur la note pour en ajouter un, puis le glisser"
-              >
-                {selectedNote?.bend?.length ? `${selectedNote.bend.length} pt${selectedNote.bend.length > 1 ? 's' : ''}` : '–'}
+              <span className={styles.noteInspectorLabel}>{t('composer.inspector.glide')}</span>
+              <span className={styles.noteInspectorPosText} title={t('composer.inspector.glideTitle')}>
+                {selectedNote?.bend?.length ? t('composer.inspector.points', { count: selectedNote.bend.length }) : '–'}
               </span>
               <Button
                 size="small"
                 disabled={!noteEditable || !selectedNote.bend?.length}
-                onClick={() => selectedNote && setBend(selectedNote.id, [], 'Aplatir la note')}
-                title="Retirer la courbe : la note reste à sa hauteur de départ"
+                onClick={() => selectedNote && setBend(selectedNote.id, [], t('composer.undo.flattenNote'))}
+                title={t('composer.inspector.flattenTitle')}
               >
-                Aplatir
+                {t('composer.inspector.flatten')}
               </Button>
             </div>
 
@@ -2130,17 +2165,17 @@ export function Composer({
                 disabled={!noteEditable}
                 className={styles.deleteNoteBtn}
                 onClick={deleteSelectedNote}
-                title="Supprimer la note sélectionnée (Touche Suppr ou Retour arrière)"
+                title={t('composer.inspector.deleteTitle')}
               >
                 <Trash2 size={13} />
-                Supprimer
+                {t('common.delete')}
               </Button>
               <Button
                 size="small"
                 iconOnly
                 disabled={!selectedNote}
                 onClick={() => setSelectedNoteId(null)}
-                title="Désélectionner (Échap)"
+                title={t('composer.inspector.deselect')}
               >
                 <X size={14} />
               </Button>
@@ -2164,7 +2199,7 @@ export function Composer({
                 onPointerMove={onRulerPointerMove}
                 onPointerUp={onRulerPointerUp}
                 onPointerCancel={onRulerPointerUp}
-                title="Cliquer pour placer le curseur de lecture · glisser pour choisir une zone lue en boucle (un clic ou Échap la retire)"
+                title={t('composer.rulerTitle')}
               >
                 {Array.from({ length: bars }, (_, bar) => (
                   <div key={bar} className={styles.rulerBar} style={{ width: cell * stepsPerBar }}>
@@ -2205,7 +2240,7 @@ export function Composer({
                   setDraftNote(null);
                 }}
                 role="grid"
-                aria-label="Grille de notes"
+                aria-label={t('composer.noteGrid')}
               >
                 {pitches.map((pitch) => (
                   <div
@@ -2298,7 +2333,11 @@ export function Composer({
                               onDoubleClick={(event) => onNoteDoubleClick(event, note)}
                             >
                               <title>
-                                {`${midiToName(note.pitch)} qui glisse (${note.length} pas, ${note.bend.length} point${note.bend.length > 1 ? 's' : ''}) · glisser pour déplacer · double-clic : ajouter un point · Suppr pour effacer`}
+                                {t('composer.note.bentTitle', {
+                                  note: midiToName(note.pitch),
+                                  steps: t('composer.note.steps', { count: note.length }),
+                                  points: t('composer.note.points', { count: note.bend.length }),
+                                })}
                               </title>
                             </path>
                             {isSelected &&
@@ -2317,7 +2356,7 @@ export function Composer({
                                     onPointerCancel={endBendDrag}
                                     onDoubleClick={(event) => onBendDoubleClick(event, note, index)}
                                   >
-                                    <title>{`${formatSemitones(point.semitones)} · glisser pour déplacer (Maj : librement) · double-clic : retirer`}</title>
+                                    <title>{t('composer.note.bendPointTitle', { semitones: formatSemitones(point.semitones) })}</title>
                                   </circle>
                                 ),
                               )}
@@ -2325,7 +2364,7 @@ export function Composer({
                           <div
                             className={cx(styles.resizeHandle, styles.resizeHandleLeft)}
                             style={{ top: first.y - handleHeight / 2, height: handleHeight, bottom: 'auto' }}
-                            title="Glisser pour ajuster le début"
+                            title={t('composer.note.resizeStart')}
                             onPointerDown={(event) => onResizePointerDown(event, note, 'start')}
                             onPointerMove={onResizePointerMove}
                             onPointerUp={onResizePointerUp}
@@ -2334,7 +2373,7 @@ export function Composer({
                           <div
                             className={cx(styles.resizeHandle, styles.resizeHandleRight)}
                             style={{ top: last.y - handleHeight / 2, height: handleHeight, bottom: 'auto' }}
-                            title="Glisser pour ajuster la durée"
+                            title={t('composer.note.resizeEnd')}
                             onPointerDown={(event) => onResizePointerDown(event, note, 'end')}
                             onPointerMove={onResizePointerMove}
                             onPointerUp={onResizePointerUp}
@@ -2353,7 +2392,10 @@ export function Composer({
                           lockedTracks[track.id] && styles.noteLocked,
                         )}
                         data-note-id={note.id}
-                        title={`${midiToName(note.pitch)} (${note.length} pas) · glisser pour déplacer · glisser les bords pour redimensionner · double-clic : ajouter un point pour la faire glisser · Suppr pour effacer`}
+                        title={t('composer.note.title', {
+                          note: midiToName(note.pitch),
+                          steps: t('composer.note.steps', { count: note.length }),
+                        })}
                         style={
                           {
                             '--hue': HUE_VAR[hueOf(track)],
@@ -2370,7 +2412,7 @@ export function Composer({
                       >
                         <div
                           className={cx(styles.resizeHandle, styles.resizeHandleLeft)}
-                          title="Glisser pour ajuster le début"
+                          title={t('composer.note.resizeStart')}
                           onPointerDown={(event) => onResizePointerDown(event, note, 'start')}
                           onPointerMove={onResizePointerMove}
                           onPointerUp={onResizePointerUp}
@@ -2378,7 +2420,7 @@ export function Composer({
                         />
                         <div
                           className={cx(styles.resizeHandle, styles.resizeHandleRight)}
-                          title="Glisser pour ajuster la durée"
+                          title={t('composer.note.resizeEnd')}
                           onPointerDown={(event) => onResizePointerDown(event, note, 'end')}
                           onPointerMove={onResizePointerMove}
                           onPointerUp={onResizePointerUp}
@@ -2427,7 +2469,7 @@ export function Composer({
 
       <ExportDialog
         open={exportOpen}
-        documentName={documentName ?? UNTITLED}
+        documentName={documentName ?? untitled}
         settings={exportSettings}
         onSettingsChange={setExportSettings}
         summary={exportSummary(composition, instruments)}
@@ -2444,25 +2486,40 @@ export function Composer({
             type="button"
             className={styles.play}
           disabled={busy || connection !== 'online' || !coreLoaded || !socketOpen}
-            aria-label={playing ? 'Pause' : 'Lecture'}
-            title={playing ? 'Mettre en pause (Espace)' : canPlay ? 'Lire la partition depuis la tête de lecture (Espace)' : 'Démarrer l’audio et lire la partition depuis la tête de lecture (Espace)'}
+            aria-label={playing ? t('composer.transport.pause') : t('composer.transport.play')}
+            title={
+              playing
+                ? t('composer.transport.pauseTitle')
+                : canPlay
+                  ? t('composer.transport.playTitle')
+                  : t('composer.transport.startAudioTitle')
+            }
             onClick={playing ? pausePlayback : startPlayback}
           >
             {playing ? <Pause size={18} fill="currentColor" /> : <Play size={20} fill="currentColor" />}
           </button>
-          <Button iconOnly disabled={!playing && playStep === 0} aria-label="Stop" title="Revenir au début" onClick={() => { pausePlayback(); setPlayStep(0); }}>
+          <Button
+            iconOnly
+            disabled={!playing && playStep === 0}
+            aria-label={t('composer.transport.stop')}
+            title={t('composer.transport.stopTitle')}
+            onClick={() => {
+              pausePlayback();
+              setPlayStep(0);
+            }}
+          >
             <Square size={14} />
           </Button>
           <Button
             iconOnly
             variant={activeLoop ? 'primary' : undefined}
             disabled={!activeLoop}
-            aria-label="Boucle"
+            aria-label={t('composer.transport.loop')}
             aria-pressed={!!activeLoop}
             title={
               activeLoop
-                ? `Lecture en boucle de ${stepLabel(activeLoop.start)} à ${stepLabel(activeLoop.end)} · cliquer pour retirer la boucle (Échap)`
-                : 'Glisse sur la règle du piano roll pour choisir une zone lue en boucle'
+                ? t('composer.transport.loopTitle', { from: stepLabel(activeLoop.start), to: stepLabel(activeLoop.end) })
+                : t('composer.transport.noLoopTitle')
             }
             onClick={() => setLoop(null)}
           >
@@ -2473,7 +2530,7 @@ export function Composer({
           <span className={styles.positionValue}>
             {`${String(Math.floor(displayStep / stepsPerBar) + 1).padStart(3, '0')}.${Math.floor((displayStep % stepsPerBar) / STEPS_PER_BEAT) + 1}.${Math.floor(displayStep % STEPS_PER_BEAT) + 1}`}
           </span>
-          <span className={styles.positionLabel}>Mesure · temps · pas</span>
+          <span className={styles.positionLabel}>{t('composer.transport.position')}</span>
         </div>
         <div ref={overviewRef} className={styles.overview} aria-hidden="true">
           {density.map((count, column) => (
@@ -2492,8 +2549,11 @@ export function Composer({
           <span className={styles.tempoValue}>{bpm}</span>
           <span className={styles.positionLabel}>BPM · {beatsPerBar}/4</span>
         </div>
-        <Badge tone={canPlay ? 'live' : 'soon'} title={canPlay ? 'Lecture par le moteur Synthway' : 'Active l’audio pour lire'}>
-          {canPlay ? 'Lecture disponible' : 'Active l’audio'}
+        <Badge
+          tone={canPlay ? 'live' : 'soon'}
+          title={canPlay ? t('composer.transport.readyTitle') : t('composer.transport.needAudioTitle')}
+        >
+          {canPlay ? t('composer.transport.ready') : t('composer.transport.needAudio')}
         </Badge>
       </Panel>
     </div>

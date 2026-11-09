@@ -44,8 +44,9 @@ Puis ouvre http://localhost:4174. N'utilise jamais le port 5173 : c'est celui de
 Vérifie :
 1. La console du navigateur ne montre aucune erreur.
 2. Les trois écrans s'ouvrent depuis la barre latérale.
-3. Le point d'état en bas de la barre latérale est vert ; dans les Réglages, « Serveur connecté ».
-4. Après « Activer l'audio », le journal du serveur factice montre `POST /api/engine/start`, puis `POST /api/synth/tone` avec `"enabled":false`. Une touche du clavier envoie `note_on`, et son relâchement `note_off`.
+3. Le point d'état en bas de la barre latérale est vert ; dans les Réglages, « Server connected » (« Serveur connecté » en français).
+4. L'interface s'ouvre en anglais, la langue par défaut. Dans les Réglages, carte « Language », « Français » passe tout en français, et « English » revient à l'anglais. Un texte ajouté ou modifié se vérifie dans les deux langues ; une clé qui affiche son nom (`composer.xxx`) au lieu d'un texte manque dans les fichiers de langue.
+5. Après « Enable audio » (« Activer l’audio »), le journal du serveur factice montre `POST /api/engine/start`, puis `POST /api/synth/tone` avec `"enabled":false`. Une touche du clavier envoie `note_on`, et son relâchement `note_off`.
 
 Après un nouveau build, recharge vraiment la page : changer seulement l'ancre de l'URL (`#/composer`) ne recharge rien.
 
@@ -59,4 +60,4 @@ Les crochets empêchent `pkill` de reconnaître, et donc de tuer, son propre she
 
 ## Son
 
-Face au vrai synthway-server lancé sous Windows, « Activer l'audio », le clavier et les notes posées dans le Composer jouent du son sur la sortie de l'utilisateur. Ne les déclenche pas sans son accord ; utilise le serveur factice.
+Face au vrai synthway-server lancé sous Windows, « Enable audio » (« Activer l’audio »), le clavier et les notes posées dans le Composer jouent du son sur la sortie de l'utilisateur. Ne les déclenche pas sans son accord ; utilise le serveur factice.

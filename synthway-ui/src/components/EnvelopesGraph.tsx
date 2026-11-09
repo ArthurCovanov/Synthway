@@ -1,3 +1,4 @@
+import { useI18n } from '../i18n';
 import { envelopeLevel, envelopeTimes, type TimbrePartial } from '../lib/instruments';
 import { HUE_HEX } from '../lib/neon';
 import styles from './EnvelopesGraph.module.css';
@@ -19,6 +20,7 @@ function formatSeconds(seconds: number): string {
  * drawn on top.
  */
 export function EnvelopesGraph({ partials, selectedId }: { partials: TimbrePartial[]; selectedId: string | null }) {
+  const { t } = useI18n();
   const attackDecay = Math.min(MAX_HELD, Math.max(0.001, ...partials.map((p) => p.envelope.attack + p.envelope.decay)));
   const noteOff = attackDecay + Math.max(0.15, attackDecay * 0.3);
   const total = noteOff + Math.max(0.001, ...partials.map((p) => p.envelope.release));
@@ -34,7 +36,7 @@ export function EnvelopesGraph({ partials, selectedId }: { partials: TimbreParti
         preserveAspectRatio="none"
         className={styles.svg}
         role="img"
-        aria-label="Enveloppes des partiels, chacune dans sa couleur"
+        aria-label={t('graphs.envelopes')}
       >
         {[0.25, 0.5, 0.75].map((level) => (
           <line key={level} x1={PAD} x2={W - PAD} y1={y(level)} y2={y(level)} className={styles.grid} />
@@ -62,7 +64,7 @@ export function EnvelopesGraph({ partials, selectedId }: { partials: TimbreParti
         })}
       </svg>
       <span className={styles.noteOffLabel} style={{ left: `${(x(noteOff) / W) * 100}%` }}>
-        relâchée
+        {t('graphs.released')}
       </span>
       <span className={styles.duration}>{formatSeconds(total)}</span>
     </div>

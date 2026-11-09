@@ -1,4 +1,5 @@
 import { useEffect, useRef, type PointerEvent } from 'react';
+import { useI18n } from '../i18n';
 import { isBlackKey, midiToName } from '../lib/music';
 import { cx } from './ui';
 import styles from './PianoKeyboard.module.css';
@@ -29,6 +30,7 @@ export function PianoKeyboard({
   markedNote?: number;
   markedTitle?: string;
 }) {
+  const { t } = useI18n();
   const pointerNote = useRef<number | null>(null);
 
   const notes = Array.from({ length: octaves * 12 + 1 }, (_, i) => startMidi + i);
@@ -77,7 +79,7 @@ export function PianoKeyboard({
 
   let whiteIndex = 0;
   return (
-    <div className={styles.keyboard} aria-disabled={disabled} role="group" aria-label="Clavier">
+    <div className={styles.keyboard} aria-disabled={disabled} role="group" aria-label={t('keyboard.keyboard')}>
       {notes.map((midi) => {
         const active = activeNotes.includes(midi);
         const label = keyLabels.get(midi);

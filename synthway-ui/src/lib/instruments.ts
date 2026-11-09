@@ -1,3 +1,4 @@
+import { LANGUAGES, t, translate, type MessageKey } from '../i18n';
 import { ATTACK_CURVE, ENVELOPE_CURVE, WAVEFORM, type AttackCurve, type EnvelopeCurve, type UnisonParams, type Waveform } from '../types';
 import { HUES, PARTIAL_HUES, type NeonHue } from './neon';
 import { loadJson, newId, saveJson } from './storage';
@@ -59,12 +60,23 @@ export interface FilterSettings {
 
 export type InstrumentCategory = 'lead' | 'bass' | 'pad' | 'pluck' | 'fx';
 
+/** Each label is read in the current language each time */
 export const CATEGORY_LABEL: Record<InstrumentCategory, string> = {
-  lead: 'Lead',
-  bass: 'Basse',
-  pad: 'Nappe',
-  pluck: 'Pluck',
-  fx: 'FX',
+  get lead() {
+    return t('instruments.category.lead');
+  },
+  get bass() {
+    return t('instruments.category.bass');
+  },
+  get pad() {
+    return t('instruments.category.pad');
+  },
+  get pluck() {
+    return t('instruments.category.pluck');
+  },
+  get fx() {
+    return t('instruments.category.fx');
+  },
 };
 
 /** One partial: its own oscillator and envelope (synthway_partial_t) */
@@ -169,11 +181,14 @@ const shadowChordEnvelope: Envelope = {
   release_curve: ENVELOPE_CURVE.Exponential,
 };
 
+/** Their descriptions are read in the current language each time: a copy keeps the one of when it was made */
 export const PRESET_INSTRUMENTS: Instrument[] = [
   {
     id: 'hologram-sine',
     name: 'Hologram Sine',
-    description: 'Sinusoïde pure et cristalline, sans une harmonique de trop.',
+    get description() {
+      return t('presets.hologramSine');
+    },
     category: 'lead',
     hue: 'magenta',
     volume: 0.35,
@@ -183,7 +198,9 @@ export const PRESET_INSTRUMENTS: Instrument[] = [
   {
     id: 'rain-city-bass',
     name: 'Rain City Bass',
-    description: 'Carré profond et sombre, pour poser le groove.',
+    get description() {
+      return t('presets.rainCityBass');
+    },
     category: 'bass',
     hue: 'blue',
     volume: 0.35,
@@ -193,7 +210,9 @@ export const PRESET_INSTRUMENTS: Instrument[] = [
   {
     id: 'siren-fx',
     name: 'Siren FX',
-    description: 'Carré strident pour les alarmes et les effets.',
+    get description() {
+      return t('presets.sirenFx');
+    },
     category: 'fx',
     hue: 'pink',
     volume: 0.2,
@@ -203,7 +222,9 @@ export const PRESET_INSTRUMENTS: Instrument[] = [
   {
     id: 'haze-pad',
     name: 'Haze Pad',
-    description: 'Nappe triangulaire lente, comme une brume au néon.',
+    get description() {
+      return t('presets.hazePad');
+    },
     category: 'pad',
     hue: 'violet',
     volume: 0.25,
@@ -213,7 +234,9 @@ export const PRESET_INSTRUMENTS: Instrument[] = [
   {
     id: 'chrome-pluck',
     name: 'Chrome Pluck',
-    description: 'Attaque sèche et déclin court, pour les arpèges.',
+    get description() {
+      return t('presets.chromePluck');
+    },
     category: 'pluck',
     hue: 'blue',
     volume: 0.3,
@@ -223,7 +246,9 @@ export const PRESET_INSTRUMENTS: Instrument[] = [
   {
     id: 'neon-lead',
     name: 'Neon Lead',
-    description: 'Dent de scie tranchante, taillée pour les mélodies.',
+    get description() {
+      return t('presets.neonLead');
+    },
     category: 'lead',
     hue: 'pink',
     volume: 0.3,
@@ -233,7 +258,9 @@ export const PRESET_INSTRUMENTS: Instrument[] = [
   {
     id: 'glass-organ',
     name: 'Glass Organ',
-    description: 'Six harmoniques tenues, comme les tirettes d’un orgue.',
+    get description() {
+      return t('presets.glassOrgan');
+    },
     category: 'pad',
     hue: 'cyan',
     volume: 0.28,
@@ -250,7 +277,9 @@ export const PRESET_INSTRUMENTS: Instrument[] = [
   {
     id: 'plucked-string',
     name: 'Plucked String',
-    description: 'Huit harmoniques en 1/n : les aiguës s’éteignent d’abord.',
+    get description() {
+      return t('presets.pluckedString');
+    },
     category: 'pluck',
     hue: 'yellow',
     volume: 0.28,
@@ -262,7 +291,9 @@ export const PRESET_INSTRUMENTS: Instrument[] = [
   {
     id: 'neon-bell',
     name: 'Neon Bell',
-    description: 'Partiels inharmoniques de cloche, chacun avec sa propre durée.',
+    get description() {
+      return t('presets.neonBell');
+    },
     category: 'fx',
     hue: 'green',
     volume: 0.3,
@@ -281,9 +312,9 @@ export const PRESET_INSTRUMENTS: Instrument[] = [
   {
     id: 'shadow-supersaw',
     name: 'Shadow Supersaw',
-    description:
-      'Mesurée sur « Chasing Shadows » (piste other, 96,2 s) : douze harmoniques de scie adoucie, 7 voix ' +
-      'désaccordées de ±15 cents étalées en stéréo, attaque convexe de 90 ms. Le morceau la joue en La5 + Ré6.',
+    get description() {
+      return t('presets.shadowSupersaw');
+    },
     category: 'lead',
     hue: 'violet',
     volume: 0.23,
@@ -298,9 +329,9 @@ export const PRESET_INSTRUMENTS: Instrument[] = [
   {
     id: 'shadow-chord',
     name: 'Shadow Chord',
-    description:
-      'L’accord La5 + Ré6 de « Chasing Shadows » (piste other, 116,3 s) sur une seule touche : joue Ré4. Ses deux ' +
-      'notes sont les harmoniques 3 et 4 de Ré4, mesurées avec les leurs. 5 voix à ±8 cents, attaque convexe de 90 ms.',
+    get description() {
+      return t('presets.shadowChord');
+    },
     category: 'pad',
     hue: 'magenta',
     volume: 0.14,
@@ -311,6 +342,44 @@ export const PRESET_INSTRUMENTS: Instrument[] = [
     octave: 4,
   },
 ];
+
+/** Descriptions that come with Synthway: the presets', and a new instrument's */
+const KNOWN_DESCRIPTION_KEYS: MessageKey[] = [
+  'presets.hologramSine',
+  'presets.rainCityBass',
+  'presets.sirenFx',
+  'presets.hazePad',
+  'presets.chromePluck',
+  'presets.neonLead',
+  'presets.glassOrgan',
+  'presets.pluckedString',
+  'presets.neonBell',
+  'presets.shadowSupersaw',
+  'presets.shadowChord',
+  'instruments.newDescription',
+];
+
+/** Each of them, in every language, to its key */
+const KNOWN_DESCRIPTIONS = new Map(
+  KNOWN_DESCRIPTION_KEYS.flatMap((key) => LANGUAGES.map(({ id }) => [translate(id, key), key] as const)),
+);
+
+/**
+ * The key of a description that came with Synthway and was left as it is, in whichever language it
+ * was saved; undefined for one the user wrote or changed
+ */
+export function knownDescriptionKey(description: string): MessageKey | undefined {
+  return KNOWN_DESCRIPTIONS.get(description);
+}
+
+/**
+ * The description to show: one that came with Synthway, still as it was, in the current language;
+ * any other as it was saved
+ */
+export function instrumentDescription(instrument: Instrument): string {
+  const key = knownDescriptionKey(instrument.description);
+  return key ? t(key) : instrument.description;
+}
 
 /** Presets added after libraries already existed: offered once to each, and not brought back once deleted */
 const LATER_PRESET_IDS = ['shadow-supersaw', 'shadow-chord'];
@@ -328,8 +397,8 @@ export function markLaterPresetsOffered(): void {
 export function createInstrument(): Instrument {
   return {
     id: newId(),
-    name: 'Nouvel instrument',
-    description: 'À toi de sculpter son caractère.',
+    name: t('instruments.newName'),
+    description: t('instruments.newDescription'),
     category: 'lead',
     hue: 'violet',
     volume: 0.3,
@@ -382,7 +451,7 @@ export function duplicateInstrument(source: Instrument): Instrument {
   return {
     ...source,
     id: newId(),
-    name: `${source.name} (copie)`,
+    name: t('instruments.copyName', { name: source.name }),
     partials: source.partials.map((partial) => ({ ...partial, envelope: { ...partial.envelope } })),
     filter: { ...source.filter },
     // The copy of a locked instrument is the one to edit
@@ -424,10 +493,13 @@ export function migrateInstruments(saved: unknown): Instrument[] {
   }
   const list = saved as SavedInstrument[];
   const migrated: Instrument[] = list.map(migrateInstrument);
+  // Copies: the library gets plain values, its description in the current language
   if (list.some((instrument) => !Array.isArray(instrument.partials))) {
     const ids = new Set(migrated.map((instrument) => instrument.id));
     migrated.push(
-      ...PRESET_INSTRUMENTS.filter((preset) => ADDITIVE_PRESET_IDS.includes(preset.id) && !ids.has(preset.id)),
+      ...PRESET_INSTRUMENTS.filter((preset) => ADDITIVE_PRESET_IDS.includes(preset.id) && !ids.has(preset.id)).map(
+        (preset) => ({ ...preset }),
+      ),
     );
   }
   const offered = loadJson<string[]>(OFFERED_PRESETS_KEY, []);
@@ -435,7 +507,7 @@ export function migrateInstruments(saved: unknown): Instrument[] {
   migrated.push(
     ...PRESET_INSTRUMENTS.filter(
       (preset) => LATER_PRESET_IDS.includes(preset.id) && !offered.includes(preset.id) && !ids.has(preset.id),
-    ),
+    ).map((preset) => ({ ...preset })),
   );
   return migrated;
 }

@@ -1,3 +1,4 @@
+import { useI18n } from '../i18n';
 import { HUE_HEX, PARTIAL_HUES } from '../lib/neon';
 import { useElementSize } from '../lib/useElementSize';
 import type { Analysis } from '../types';
@@ -29,6 +30,7 @@ function formatHz(hz: number): string {
  * lies under its line is shaded: the analyzer ignores it.
  */
 export function AnalysisSpectrum({ analysis, noiseGateDb }: { analysis: Analysis | null; noiseGateDb?: number }) {
+  const { t } = useI18n();
   const [boxRef, { width, height }] = useElementSize<HTMLDivElement>();
   const plotW = Math.max(1, width - PAD.left - PAD.right);
   const plotH = Math.max(1, height - PAD.top - PAD.bottom);
@@ -79,7 +81,7 @@ export function AnalysisSpectrum({ analysis, noiseGateDb }: { analysis: Analysis
   return (
     <div ref={boxRef} className={styles.box}>
       {width > 0 && (
-        <svg width={width} height={height} className={styles.svg} role="img" aria-label="Spectre mesuré, en décibels selon la fréquence">
+        <svg width={width} height={height} className={styles.svg} role="img" aria-label={t('analyzer.spectrumChart.label')}>
           <defs>
             <linearGradient id="analysis-spectrum-fill" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor="#a31cff" stopOpacity="0.45" />
@@ -122,7 +124,9 @@ export function AnalysisSpectrum({ analysis, noiseGateDb }: { analysis: Analysis
               <rect className={styles.gated} x={PAD.left} y={y(noiseGateDb)} width={plotW} height={bottom - y(noiseGateDb)} />
               <line className={styles.gateLine} x1={PAD.left} x2={PAD.left + plotW} y1={y(noiseGateDb)} y2={y(noiseGateDb)} />
               <text className={styles.gateLabel} x={PAD.left + plotW - 4} y={y(noiseGateDb) - 5} textAnchor="end">
-                anti-bruit {noiseGateDb < -0.05 ? `−${Number((-noiseGateDb).toFixed(1))}` : '0'} dBFS : ignoré en dessous
+                {t('analyzer.spectrumChart.gate', {
+                  level: noiseGateDb < -0.05 ? `−${Number((-noiseGateDb).toFixed(1))}` : '0',
+                })}
               </text>
             </g>
           )}
@@ -146,7 +150,7 @@ export function AnalysisSpectrum({ analysis, noiseGateDb }: { analysis: Analysis
 
           {!analysis && (
             <text className={styles.empty} x={PAD.left + plotW / 2} y={PAD.top + plotH / 2} textAnchor="middle">
-              Le spectre s’affiche dès qu’un son est analysé
+              {t('analyzer.spectrumChart.empty')}
             </text>
           )}
         </svg>

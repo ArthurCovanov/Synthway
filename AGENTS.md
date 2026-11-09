@@ -14,7 +14,7 @@ Synthway est un synthétiseur audio en trois parties :
 | `synthway-ui/` | Interface de contrôle du serveur | React, TypeScript, Vite | Premier jet |
 | `synthway-demucs/` | Facultatif : séparation de sources de l'onglet Decomposer, lancée par le serveur dans un processus à part | Demucs v4 (Python, PyTorch), environnement uv à lui | Essai local |
 
-- **Présentation publique (GitLab / GitHub) :** `README.md` à la racine, avec les captures d'écran de `docs/images/`. Garde-le court et vendeur ; le détail technique va dans `docs/developpement.md`.
+- **Présentation publique (GitLab / GitHub) :** `README.md` à la racine, en anglais, et sa version française `README.fr.md`, avec les captures d'écran de `docs/images/`. Garde-les courts et vendeurs, et modifie toujours les deux ensemble ; le détail technique va dans `docs/developpement.md`.
 - **Lancer Synthway :** `synthway.bat` (Windows, double-clic), `synthway.sh` (Linux) ou `python3 synthway.py`, depuis les sources ; `packaging/build_windows.py` fabrique le zip Windows prêt à l'emploi, sans rien à installer (`packaging/build_windows.bat` construit d'abord l'interface, par WSL sans Node.js sous Windows) (voir « Le lanceur » et « Le zip Windows » dans `docs/developpement.md`). Le serveur y sert lui-même l'interface construite (`synthway-ui/dist`), sur le port 18741.
 - **Vue d'ensemble technique et démarrage :** `docs/developpement.md`.
 - **Règles d'architecture par couche :** section « Guide pour les Développeurs Humains et Agents IA » de `docs/developpement.md`. Lis-la avant de modifier une couche.
@@ -45,7 +45,8 @@ Trois contributeurs travaillent dans le même dossier, parfois en même temps : 
 
 ## Conventions
 
-- **Langues :** code, identifiants et commentaires en anglais ; documentation (README, `docs/`, ce fichier, skills) en français.
+- **Langues :** code, identifiants et commentaires en anglais ; documentation (READMEs des dossiers, `docs/`, ce fichier, skills) en français, sauf le `README.md` racine, en anglais (avec `README.fr.md`).
+- **Textes de l'interface :** jamais écrits en dur dans le code. Chaque texte visible (y compris `title`, `aria-label`, `placeholder`) a sa clé dans `synthway-ui/src/i18n/locales/en.json` **et** dans `fr.json` ; l'anglais est la langue par défaut. Voir « Langues de l'interface » dans `docs/developpement.md`.
 - **Licence du projet :** Apache-2.0, texte dans `LICENSE` à la racine. Le code tiers garde sa propre licence. Une dépendance doit pouvoir être distribuée avec du code Apache-2.0 : pas de GPLv2 seule, par exemple.
 - **API du core :** préfixe `synthway_`, macro `SYNTHWAY_API`, retour `synthway_result_t` quand la fonction peut échouer. L'API reste en C pur, car le serveur la charge par FFI. Toute modification passe par le skill `core-api-change`.
 - **Code tiers, bibliothèques et assets :** Tout élément externe introduit dans le projet (dépendances C/C++, paquets Python ou npm, polices, icônes, échantillons audio, images...) doit impérativement être **open-source**, **libre de droit** (permettant un usage commercial sans redevance : MIT, Apache-2.0, BSD, ISC, zlib, CC0 / Domaine Public...) et **respecter scrupuleusement les termes d'utilisation et de licence** (attribution requise, conservation des notices de copyright et conditions de distribution). Aucune ressource propriétaire, à usage non-commercial restreint (ex. CC-BY-NC) ou sous licence virale incompatible (ex. GPL liée en statique) n'est acceptée. Pour `synthway-core/vendor/`, suivre le skill `vendor-update`. Pour toute dépendance ou asset externe, suivre `third-party-resources`.

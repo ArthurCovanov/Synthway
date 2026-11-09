@@ -45,16 +45,4 @@ export const HUE_VAR: Record<NeonHue, string> = {
   red: 'var(--neon-red)',
   white: 'var(--neon-white)',
 };
-
-export const HUE_LABEL: Record<NeonHue, string> = {
-  pink: 'Rose',
-  magenta: 'Magenta',
-  violet: 'Violet',
-  blue: 'Bleu',
-  cyan: 'Cyan',
-  green: 'Vert',
-  yellow: 'Jaune',
-  orange: 'Orange',
-  red: 'Rouge',
-  white: 'Blanc',
-};
+// The name of each hue, shown by the Instrument Creator: instruments.hue.<hue> in the locale files

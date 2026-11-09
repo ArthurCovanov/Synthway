@@ -1,4 +1,5 @@
 import { useId } from 'react';
+import { useI18n } from '../i18n';
 import { envelopeLevel, envelopeTimes, type Envelope } from '../lib/instruments';
 import { ENVELOPE_CURVE } from '../types';
 
@@ -10,6 +11,7 @@ const HOLD = 0.4;
 
 /** ADSR curve of an instrument, linear or exponential (see synthway_envelope_curve_t) */
 export function EnvelopeGraph({ envelope }: { envelope: Envelope }) {
+  const { t } = useI18n();
   const id = useId().replace(/:/g, '');
   const noteOff = envelope.attack + envelope.decay + HOLD;
   const total = noteOff + envelope.release;
@@ -22,14 +24,18 @@ export function EnvelopeGraph({ envelope }: { envelope: Envelope }) {
   const line = envelopeTimes(envelope, noteOff, total)
     .map((t, i) => `${i ? 'L' : 'M'}${x(t).toFixed(1)} ${y(envelopeLevel(envelope, t, noteOff)).toFixed(1)}`)
     .join(' ');
-  const curve = envelope.curve === ENVELOPE_CURVE.Exponential ? ', exponentielle' : '';
 
   return (
     <svg
       viewBox={`0 0 ${W} ${H}`}
       preserveAspectRatio="none"
       role="img"
-      aria-label={`Enveloppe${curve} : attaque ${a} s, déclin ${envelope.decay} s, maintien ${Math.round(envelope.sustain * 100)} %, relâchement ${envelope.release} s`}
+      aria-label={t(envelope.curve === ENVELOPE_CURVE.Exponential ? 'graphs.envelopeExponential' : 'graphs.envelope', {
+        attack: a,
+        decay: envelope.decay,
+        sustain: Math.round(envelope.sustain * 100),
+        release: envelope.release,
+      })}
       style={{ display: 'block', width: '100%', height: '100%' }}
     >
       <defs>

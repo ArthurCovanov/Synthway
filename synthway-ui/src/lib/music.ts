@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import { WAVEFORM, type Waveform } from '../types';
 
 export const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
@@ -59,11 +60,36 @@ export function formatCents(cents: number, decimals = 1): string {
   return `${cents > 0 ? '+' : '−'}${text}`;
 }
 
+/** `label` is read in the current language each time */
 export const WAVEFORM_OPTIONS: { value: Waveform; label: string; short: string }[] = [
-  { value: WAVEFORM.Sine, label: 'Sinus', short: 'SIN' },
-  { value: WAVEFORM.Square, label: 'Carré', short: 'SQR' },
-  { value: WAVEFORM.Triangle, label: 'Triangle', short: 'TRI' },
-  { value: WAVEFORM.Sawtooth, label: 'Dent de scie', short: 'SAW' },
+  {
+    value: WAVEFORM.Sine,
+    get label() {
+      return t('waveforms.sine');
+    },
+    short: 'SIN',
+  },
+  {
+    value: WAVEFORM.Square,
+    get label() {
+      return t('waveforms.square');
+    },
+    short: 'SQR',
+  },
+  {
+    value: WAVEFORM.Triangle,
+    get label() {
+      return t('waveforms.triangle');
+    },
+    short: 'TRI',
+  },
+  {
+    value: WAVEFORM.Sawtooth,
+    get label() {
+      return t('waveforms.sawtooth');
+    },
+    short: 'SAW',
+  },
 ];
 
 const TWO_PI = Math.PI * 2;

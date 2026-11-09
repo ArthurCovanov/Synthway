@@ -1,5 +1,6 @@
 import { Minus, Plus, Power } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useI18n } from '../i18n';
 import { instrumentParams } from '../lib/instrumentSound';
 import { keyboardOctave, MAX_OCTAVE, MIN_OCTAVE, type Instrument } from '../lib/instruments';
 import { isTyping } from '../lib/keyboard';
@@ -80,6 +81,7 @@ export function KeyboardDock({
   /** Tooltip of the marked key */
   markedTitle?: string;
 }) {
+  const { t } = useI18n();
   const server = useSynthServer();
   const { canPlay, startNote, releaseNote, engine, busy } = server;
   const blocker = playBlocker(server);
@@ -193,10 +195,10 @@ export function KeyboardDock({
   const current = held[held.length - 1];
   const online = server.connection === 'online' && server.coreLoaded;
   const powerTitle = !online
-    ? 'Le serveur Synthway doit être connecté'
+    ? t('keyboard.serverNeeded')
     : engine.running
-      ? 'Couper l’audio'
-      : 'Activer l’audio (démarre le moteur sur la sortie choisie dans les réglages)';
+      ? t('common.disableAudio')
+      : t('keyboard.enableAudioTitle');
 
   return (
     <Panel as="div" className={cx(layout.dock, styles.dock)}>
@@ -206,7 +208,7 @@ export function KeyboardDock({
           className={cx(styles.power, engine.running && styles.powerOn)}
           disabled={!online || busy}
           aria-pressed={engine.running}
-          aria-label={engine.running ? 'Couper l’audio' : 'Activer l’audio'}
+          aria-label={engine.running ? t('common.disableAudio') : t('common.enableAudio')}
           title={powerTitle}
           onClick={() =>
             engine.running
@@ -217,9 +219,9 @@ export function KeyboardDock({
           <Power size={20} strokeWidth={2} />
         </button>
         <div className={styles.powerText}>
-          <span className={styles.powerLabel}>Audio</span>
+          <span className={styles.powerLabel}>{t('keyboard.audio')}</span>
           <span className={cx(styles.powerState, engine.running && styles.powerStateOn)}>
-            {busy ? '…' : engine.running ? 'Actif' : 'Coupé'}
+            {busy ? '…' : engine.running ? t('keyboard.audioOn') : t('keyboard.audioOff')}
           </span>
         </div>
       </div>
@@ -253,17 +255,17 @@ export function KeyboardDock({
           <Button
             size="small"
             iconOnly
-            aria-label="Octave inférieure"
+            aria-label={t('keyboard.octaveDown')}
             disabled={octave <= MIN_OCTAVE}
             onClick={() => changeOctave(-1)}
           >
             <Minus size={14} />
           </Button>
-          <span className={styles.octaveValue}>Oct {octave}</span>
+          <span className={styles.octaveValue}>{t('keyboard.octave', { octave })}</span>
           <Button
             size="small"
             iconOnly
-            aria-label="Octave supérieure"
+            aria-label={t('keyboard.octaveUp')}
             disabled={octave >= MAX_OCTAVE}
             onClick={() => changeOctave(1)}
           >

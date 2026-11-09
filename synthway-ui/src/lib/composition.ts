@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import type { NeonHue } from './neon';
 import { newId } from './storage';
 
@@ -118,7 +119,7 @@ function notes(list: [pitch: number, start: number, length: number][]): Note[] {
 export function createTrack(index: number, instrument: { id: string; name: string }, hue: NeonHue): Track {
   return {
     id: newId(),
-    name: `Piste ${index}`,
+    name: t('songFile.trackName', { number: index }),
     instrumentId: instrument.id,
     instrumentName: instrument.name,
     hue,
@@ -146,7 +147,7 @@ export function defaultComposition(): Composition {
     tracks: [
       {
         id: newId(),
-        name: 'Mélodie',
+        name: t('songFile.defaultTracks.melody'),
         instrumentId: 'neon-lead',
         hue: 'pink',
         basePitch: DEFAULT_SONG_BASE_PITCH,
@@ -162,7 +163,7 @@ export function defaultComposition(): Composition {
       },
       {
         id: newId(),
-        name: 'Basse',
+        name: t('songFile.defaultTracks.bass'),
         instrumentId: 'rain-city-bass',
         hue: 'blue',
         basePitch: DEFAULT_SONG_BASE_PITCH,
@@ -176,7 +177,7 @@ export function defaultComposition(): Composition {
       },
       {
         id: newId(),
-        name: 'Nappe',
+        name: t('songFile.defaultTracks.pad'),
         instrumentId: 'haze-pad',
         hue: 'violet',
         basePitch: DEFAULT_SONG_BASE_PITCH,

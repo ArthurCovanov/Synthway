@@ -4,6 +4,7 @@
  * A curve goes in straight lines between its points: in octaves for the cutoffs, as the engine
  * ramps them, so that what is drawn (on a logarithmic scale) is what is heard.
  */
+import { formatNumber, t } from '../i18n';
 import { AUTOMATION_PARAM, SIDE, type AutomationParamCode, type AutomationRamp, type ScoreRamp, type Side } from '../types';
 import type { AutomationLane, AutomationParam, AutomationPoint, Track } from './composition';
 import type { Instrument } from './instruments';
@@ -14,6 +15,10 @@ export const MAX_AUTOMATION_POINTS = 256;
 /** Longest ramp the engine takes (SYNTHWAY_MAX_AUTOMATION_SECONDS) */
 const MAX_RAMP_SECONDS = 600;
 
+/**
+ * A setting of the selector. Its texts (label, unitLines, help, and what format writes) are in the
+ * current language, read each time.
+ */
 export interface AutomationSpec {
   id: AutomationParam;
   label: string;
@@ -43,16 +48,24 @@ export interface AutomationSpec {
 }
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
-const fr = (value: number, digits = 0) => value.toLocaleString('fr-FR', { maximumFractionDigits: digits });
-const percent = (value: number) => `${fr(value * 100)} %`;
-const hertz = (value: number) => (value >= 1000 ? `${fr(value / 1000, 2)} kHz` : `${fr(value)} Hz`);
+const decimals = (value: number, digits = 0) => formatNumber(value, { maximumFractionDigits: digits });
+
+/** A value followed by its unit, as the current language writes it ("50 %" in French, "50%" in English) */
+export function withUnit(value: string | number, unit: string): string {
+  return unit === '%' ? t('automation.percent', { value }) : t('automation.withUnit', { value, unit });
+}
+
+const percent = (value: number) => withUnit(decimals(value * 100), '%');
+const hertz = (value: number) => (value >= 1000 ? `${decimals(value / 1000, 2)} kHz` : `${decimals(value)} Hz`);
 const cutoff = (value: number) => clamp(value, 20, 20000);
 
 /** The settings, in the order of the selector */
 export const AUTOMATION_SPECS: AutomationSpec[] = [
   {
     id: 'volume',
-    label: 'Volume',
+    get label() {
+      return t('automation.labels.volume');
+    },
     min: 0,
     max: 1,
     stereo: true,
@@ -60,14 +73,18 @@ export const AUTOMATION_SPECS: AutomationSpec[] = [
     base: () => 1,
     format: percent,
     unit: '%',
-    help: 'Volume de la piste, en % de celui de l’instrument : 0 % muet, 100 % inchangé.',
+    get help() {
+      return t('automation.help.volume');
+    },
     toInput: (value) => value * 100,
     fromInput: (input) => input / 100,
     inputDecimals: 1,
   },
   {
     id: 'pan',
-    label: 'Panoramique',
+    get label() {
+      return t('automation.labels.pan');
+    },
     min: -1,
     max: 1,
     stereo: false,
@@ -75,18 +92,26 @@ export const AUTOMATION_SPECS: AutomationSpec[] = [
     base: () => 0,
     format: (value) => {
       const share = Math.round(value * 100);
-      return share === 0 ? 'centre' : `${share < 0 ? 'gauche' : 'droite'} ${Math.abs(share)} %`;
+      if (share === 0) return t('automation.panCenter');
+      const amount = withUnit(Math.abs(share), '%');
+      return share < 0 ? t('automation.panLeft', { value: amount }) : t('automation.panRight', { value: amount });
     },
     unit: '%',
-    unitLines: ['+ D', '− G'],
-    help: 'Panoramique, en % : + vers la droite, − vers la gauche, 0 au centre. À +100 %, le son ne sort qu’à droite ; à −100 %, qu’à gauche.',
+    get unitLines(): [string, string] {
+      return [t('automation.panUnitRight'), t('automation.panUnitLeft')];
+    },
+    get help() {
+      return t('automation.help.pan');
+    },
     toInput: (value) => value * 100,
     fromInput: (input) => input / 100,
     inputDecimals: 1,
   },
   {
     id: 'lowPass',
-    label: 'Passe-bas',
+    get label() {
+      return t('automation.labels.lowPass');
+    },
     min: 20,
     max: 20000,
     log: true,
@@ -95,14 +120,18 @@ export const AUTOMATION_SPECS: AutomationSpec[] = [
     base: (instrument) => cutoff(instrument.filter.cutoff),
     format: hertz,
     unit: 'Hz',
-    help: 'Coupure du passe-bas, en hertz : les aigus au-dessus sont atténués. À 20 000 Hz, tout passe.',
+    get help() {
+      return t('automation.help.lowPass');
+    },
     toInput: (value) => value,
     fromInput: (input) => input,
     inputDecimals: 0,
   },
   {
     id: 'highPass',
-    label: 'Passe-haut',
+    get label() {
+      return t('automation.labels.highPass');
+    },
     min: 20,
     max: 20000,
     log: true,
@@ -111,14 +140,18 @@ export const AUTOMATION_SPECS: AutomationSpec[] = [
     base: (instrument) => cutoff(instrument.filter.lowCutoff),
     format: hertz,
     unit: 'Hz',
-    help: 'Coupure du passe-haut, en hertz : les graves en dessous sont atténués. À 20 Hz, tout passe.',
+    get help() {
+      return t('automation.help.highPass');
+    },
     toInput: (value) => value,
     fromInput: (input) => input,
     inputDecimals: 0,
   },
   {
     id: 'resonance',
-    label: 'Résonance',
+    get label() {
+      return t('automation.labels.resonance');
+    },
     min: 0,
     max: 1,
     stereo: true,
@@ -126,14 +159,18 @@ export const AUTOMATION_SPECS: AutomationSpec[] = [
     base: (instrument) => clamp(instrument.filter.resonance, 0, 1),
     format: percent,
     unit: '%',
-    help: 'Résonance du filtre, en % : accentue les fréquences proches des coupures du passe-bas et du passe-haut. 0 % : aucune.',
+    get help() {
+      return t('automation.help.resonance');
+    },
     toInput: (value) => value * 100,
     fromInput: (input) => input / 100,
     inputDecimals: 1,
   },
   {
     id: 'reverb',
-    label: 'Réverbe',
+    get label() {
+      return t('automation.labels.reverb');
+    },
     min: 0,
     max: 1,
     stereo: true,
@@ -141,22 +178,28 @@ export const AUTOMATION_SPECS: AutomationSpec[] = [
     base: (instrument) => clamp(instrument.reverb ?? 0, 0, 1),
     format: percent,
     unit: '%',
-    help: 'Part de son réverbéré, en % : 0 % son sec, sans réverbe.',
+    get help() {
+      return t('automation.help.reverb');
+    },
     toInput: (value) => value * 100,
     fromInput: (input) => input / 100,
     inputDecimals: 1,
   },
   {
     id: 'detune',
-    label: 'Désaccord',
+    get label() {
+      return t('automation.labels.detune');
+    },
     min: 0,
     max: 100,
     stereo: false,
     engine: AUTOMATION_PARAM.Detune,
     base: (instrument) => clamp(instrument.unison?.detune ?? 0, 0, 100),
-    format: (value) => `${fr(value, 1)} cents`,
+    format: (value) => withUnit(decimals(value, 1), 'cents'),
     unit: 'cents',
-    help: 'Désaccord de l’unisson, en cents (centièmes de demi-ton) : écart entre ses voix. Ne s’entend qu’avec 2 voix ou plus.',
+    get help() {
+      return t('automation.help.detune');
+    },
     toInput: (value) => value,
     fromInput: (input) => input,
     inputDecimals: 1,

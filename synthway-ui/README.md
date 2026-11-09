@@ -16,7 +16,9 @@ La barre latérale, inspirée de [Voicebox](https://voicebox.sh/), donne accès 
 | **Composer** | Morceau enregistré et ouvert en `.swsong`, pistes (muet, visibilité, instrument), nombre de mesures libre (9 999 au plus ; l'export audio accepte une heure de partition), piano roll multi-pistes (notes fantômes en transparence) et transport avec vue d'ensemble | Lecture et pause, reprise, déplacement du curseur, addition des notes actives via le timbre du moteur (64 partiels au plus) |
 | **Analyzer** | Source (micro ou fichier), accordeur (note, écart en cents, fréquence, netteté, niveau), spectre mesuré, liste des partiels | Micro écouté par le core en direct (`/ws/analyzer`), fichier décodé et analysé par le core ; lecture du fichier et de l'enregistrement dans le navigateur |
 | **Decomposer** | Un morceau décomposé en pistes (batterie, basse, voix, autres ; guitare et piano avec 6 pistes) par Demucs, chaque piste lue, téléchargée ou envoyée à l'Analyzer | Aucun : la séparation est faite par Demucs, lancé par le serveur ; les pistes sont lues par le navigateur |
-| **Réglages** | État du serveur, sortie audio et fréquence d'échantillonnage, MIDI, apparence, à propos | Démarrage et arrêt du moteur, choix de la sortie |
+| **Réglages** | Langue de l'interface, état du serveur, sortie audio et fréquence d'échantillonnage, MIDI, apparence, à propos | Démarrage et arrêt du moteur, choix de la sortie |
+
+**Langue :** l'interface s'ouvre en anglais ; la carte **Language** (Langue) des Réglages la passe en français, et inversement, tout de suite et sans recharger la page. Les textes sont dans `src/i18n/locales/en.json` et `fr.json`, avec les mêmes clés : un texte ajouté l'est dans les deux (voir « Langues de l'interface » dans [`docs/developpement.md`](../docs/developpement.md#langues-de-linterface)).
 
 Les réglages qui pilotent le moteur portent un badge **Moteur**. Ceux qui ne sont pas encore pris en charge par le core portent un badge **Bientôt** : filtre et choix du clavier MIDI. Ils sont quand même édités et enregistrés.
 
@@ -133,7 +135,7 @@ Le bouton **Exporter en audio** (après Enregistrer, dans l'en-tête du Composer
 
 ### Données enregistrées
 
-Instruments, composition, réglages audio, apparence et réglages de l'Analyzer (source, entrée, La de référence, anti-bruit) sont gardés dans le `localStorage` du navigateur : la page les retrouve au rechargement. Pour garder un morceau ou un instrument ailleurs, ou le partager, passe par les fichiers ci-dessus.
+Instruments, composition, réglages audio, langue, apparence et réglages de l'Analyzer (source, entrée, La de référence, anti-bruit) sont gardés dans le `localStorage` du navigateur : la page les retrouve au rechargement. Pour garder un morceau ou un instrument ailleurs, ou le partager, passe par les fichiers ci-dessus.
 
 ---
 
@@ -161,6 +163,7 @@ synthway-ui/
     ├── main.tsx, App.tsx     # Point d'entrée, navigation, état partagé
     ├── types.ts              # Types du serveur et du core (à garder synchronisés)
     ├── styles/               # theme.css (variables), fonts.css (@font-face)
+    ├── i18n/                 # Langues : index.tsx (t, tr, useI18n, LanguageProvider), locales/en.json et fr.json
     ├── assets/
     │   ├── brand/            # Emblème et logo allégés (générés)
     │   └── fonts/            # Polices + licences (voir son README)

@@ -7,6 +7,7 @@ import {
   type Dispatch,
   type SetStateAction,
 } from 'react';
+import { useI18n, type MessageKey } from '../i18n';
 import { EnvelopeGraph } from '../components/EnvelopeGraph';
 import { EnvelopesGraph } from '../components/EnvelopesGraph';
 import { SpectrumGlyph, WaveGlyph } from '../components/icons';
@@ -47,12 +48,13 @@ import {
   type FilterSettings,
   type Instrument,
   type InstrumentCategory,
+  instrumentDescription,
   releaseCurveOf,
   type TimbrePartial,
   unisonOf,
 } from '../lib/instruments';
 import { midiToName, WAVEFORM_OPTIONS } from '../lib/music';
-import { HUE_HEX, HUE_LABEL, HUE_VAR, HUES, PARTIAL_HUES, type NeonHue } from '../lib/neon';
+import { HUE_HEX, HUE_VAR, HUES, PARTIAL_HUES, type NeonHue } from '../lib/neon';
 import {
   activePartials,
   aliasingFrom,
@@ -83,8 +85,6 @@ function formatSeconds(seconds: number): string {
 function formatHertz(hz: number): string {
   return hz < 1000 ? `${Math.round(hz)} Hz` : `${(hz / 1000).toFixed(1)} kHz`;
 }
-
-const percent = (value: number) => `${Math.round(value * 100)} %`;
 
 /** A value in [0, 1], typed as a percentage */
 const percentEdit = (value: number, onChange: (value: number) => void): ValueEdit => ({
@@ -164,6 +164,7 @@ function FallSlider({
   onChange: (seconds: number) => void;
   disabled?: boolean;
 }) {
+  const { t } = useI18n();
   if (!exponential) {
     return <TimeSlider label={label} value={seconds} max={4} disabled={disabled} onChange={onChange} />;
   }
@@ -178,7 +179,7 @@ function FallSlider({
       max={1}
       step={0.001}
       disabled={disabled}
-      format={() => `${formatRate(rate)} · −60 dB en ${formatSeconds(seconds)}`}
+      format={() => t('instruments.fallFormat', { rate: formatRate(rate), time: formatSeconds(seconds) })}
       onChange={(position) => onChange(toSeconds(FALL_RATE_MIN * Math.exp(position * span)))}
       edit={{
         value: rate,
@@ -192,23 +193,20 @@ function FallSlider({
   );
 }
 
+/** Curve choices, as text keys: translated where they are shown */
 const ATTACK_CURVE_OPTIONS = [
-  { value: ATTACK_CURVE.Linear, label: 'Linéaire', title: 'Le niveau monte en ligne droite jusqu’au sommet' },
-  {
-    value: ATTACK_CURVE.Convex,
-    label: 'Exponentielle',
-    title: 'Lente au début, puis de plus en plus rapide (le carré d’une rampe droite) : une montée qu’on entend exponentielle',
-  },
-];
+  { value: ATTACK_CURVE.Linear, label: 'instruments.curve.linear', title: 'instruments.curve.attackLinearTitle' },
+  { value: ATTACK_CURVE.Convex, label: 'instruments.curve.exponential', title: 'instruments.curve.attackConvexTitle' },
+] satisfies { value: number; label: MessageKey; title: MessageKey }[];
 
 const FALL_CURVE_OPTIONS = [
-  { value: ENVELOPE_CURVE.Linear, label: 'Linéaire', title: 'Une rampe droite, réglée par sa durée' },
+  { value: ENVELOPE_CURVE.Linear, label: 'instruments.curve.linear', title: 'instruments.curve.fallLinearTitle' },
   {
     value: ENVELOPE_CURVE.Exponential,
-    label: 'Exponentielle',
-    title: 'Le niveau perd autant de dB chaque seconde, comme une corde pincée : réglée par cette vitesse, en dB/s',
+    label: 'instruments.curve.exponential',
+    title: 'instruments.curve.fallExponentialTitle',
   },
-];
+] satisfies { value: number; label: MessageKey; title: MessageKey }[];
 
 /**
  * Band-pass bounds on one logarithmic bar, from 20 Hz to 20 kHz. At its ends a
@@ -233,19 +231,20 @@ const GENERATED_PARTIALS = 16;
 /** Partials named in the aliasing warning, the others are only marked in the list */
 const ALIASING_LISTED = 6;
 
-const GENERATORS: { waveform: Waveform; label: string }[] = [
-  { waveform: WAVEFORM.Sawtooth, label: 'Dent de scie : toutes les harmoniques, en 1/n' },
-  { waveform: WAVEFORM.Square, label: 'Carré : harmoniques impaires, en 1/n' },
-  { waveform: WAVEFORM.Triangle, label: 'Triangle : harmoniques impaires, en 1/n²' },
+const GENERATORS: { waveform: Waveform; label: MessageKey }[] = [
+  { waveform: WAVEFORM.Sawtooth, label: 'instruments.generator.sawtooth' },
+  { waveform: WAVEFORM.Square, label: 'instruments.generator.square' },
+  { waveform: WAVEFORM.Triangle, label: 'instruments.generator.triangle' },
 ];
 
 /** Octave and harmonic shortcuts, under the typed ratio */
 function RatioShortcuts({ ratio, onChange }: { ratio: number; onChange: (ratio: number) => void }) {
+  const { t } = useI18n();
   return (
     <div className={styles.ratioButtons}>
       <Button
         size="small"
-        title="Une octave plus bas"
+        title={t('instruments.ratio.octaveDown')}
         disabled={ratio / 2 < MIN_RATIO}
         onClick={() => onChange(Number((ratio / 2).toFixed(3)))}
       >
@@ -253,7 +252,7 @@ function RatioShortcuts({ ratio, onChange }: { ratio: number; onChange: (ratio: 
       </Button>
       <Button
         size="small"
-        title="Une octave plus haut"
+        title={t('instruments.ratio.octaveUp')}
         disabled={ratio * 2 > MAX_RATIO}
         onClick={() => onChange(Number((ratio * 2).toFixed(3)))}
       >
@@ -261,11 +260,11 @@ function RatioShortcuts({ ratio, onChange }: { ratio: number; onChange: (ratio: 
       </Button>
       <Button
         size="small"
-        title="Arrondir à l’harmonique la plus proche"
+        title={t('instruments.ratio.harmonizeTitle')}
         disabled={Number.isInteger(ratio)}
         onClick={() => onChange(Math.max(1, Math.round(ratio)))}
       >
-        Harmoniser
+        {t('instruments.ratio.harmonize')}
       </Button>
     </div>
   );
@@ -283,21 +282,22 @@ function PartialSwitch({
   disabled: boolean;
   onToggle: () => void;
 }) {
-  const state = partial.muted ? 'Inactif' : 'Actif';
+  const { t } = useI18n();
+  const state = partial.muted ? t('instruments.partial.inactive') : t('instruments.partial.active');
   return (
     <button
       type="button"
       role="switch"
       aria-checked={!partial.muted}
-      aria-label={`Partiel ${number} actif`}
+      aria-label={t('instruments.partial.activeLabel', { number })}
       className={styles.partialSwitch}
       disabled={disabled}
       title={
         disabled
-          ? `${state} (verrouillé)`
+          ? t('instruments.partial.stateLocked', { state })
           : partial.muted
-            ? 'Inactif : cliquer pour l’ajouter de nouveau au son'
-            : 'Actif : cliquer pour le retirer du son sans le supprimer'
+            ? t('instruments.partial.inactiveTitle')
+            : t('instruments.partial.activeTitle')
       }
       onClick={(event) => {
         event.stopPropagation();
@@ -340,6 +340,7 @@ function InstrumentCard({
   onDragEnd?: (event: React.PointerEvent<HTMLElement>) => void;
   onDragCancel?: () => void;
 }) {
+  const { t } = useI18n();
   const count = instrument.partials.length;
   const active = activePartials(instrument.partials);
   const only = active.length === 1 ? active[0] : null;
@@ -388,12 +389,8 @@ function InstrumentCard({
           <button
             type="button"
             className={styles.dragHandle}
-            aria-label={`Déplacer ${instrument.name}`}
-            title={
-              disabledReorder
-                ? 'Un seul instrument chargé'
-                : 'Glisser pour réordonner les instruments (ou Alt+↑ / Alt+↓)'
-            }
+            aria-label={t('instruments.card.move', { name: instrument.name })}
+            title={disabledReorder ? t('instruments.card.onlyOne') : t('instruments.card.reorder')}
             disabled={disabledReorder}
             onClick={(event) => event.stopPropagation()}
             onPointerDown={(event) => {
@@ -427,8 +424,8 @@ function InstrumentCard({
           <button
             type="button"
             className={styles.miniBtn}
-            title="Dupliquer"
-            aria-label={`Dupliquer ${instrument.name}`}
+            title={t('instruments.card.duplicate')}
+            aria-label={t('instruments.card.duplicateNamed', { name: instrument.name })}
             onClick={(event) => {
               event.stopPropagation();
               onDuplicate();
@@ -441,12 +438,12 @@ function InstrumentCard({
             className={styles.miniBtn}
             title={
               instrument.locked
-                ? 'Instrument verrouillé : déverrouille-le pour le supprimer'
+                ? t('instruments.card.deleteLocked')
                 : canDelete
-                  ? 'Supprimer'
-                  : 'Il faut garder au moins un instrument'
+                  ? t('common.delete')
+                  : t('instruments.card.keepOne')
             }
-            aria-label={`Supprimer ${instrument.name}`}
+            aria-label={t('instruments.card.deleteNamed', { name: instrument.name })}
             disabled={!canDelete}
             onClick={(event) => {
               event.stopPropagation();
@@ -458,15 +455,13 @@ function InstrumentCard({
         </div>
       </div>
       <div className={styles.cardName}>{instrument.name}</div>
-      <p className={styles.cardDesc}>{instrument.description}</p>
+      <p className={styles.cardDesc}>{instrumentDescription(instrument)}</p>
       <div className={styles.tags}>
         <span className={cx(styles.tag, styles.tagHue)}>{CATEGORY_LABEL[instrument.category]}</span>
-        <span className={styles.tag}>
-          {count} partiel{count > 1 ? 's' : ''}
-        </span>
+        <span className={styles.tag}>{t('instruments.card.partials', { count })}</span>
         {instrument.locked && (
-          <span className={cx(styles.tag, styles.tagLock)} title="Instrument verrouillé">
-            <Lock size={10} aria-label="Verrouillé" />
+          <span className={cx(styles.tag, styles.tagLock)} title={t('instruments.lockedInstrument')}>
+            <Lock size={10} aria-label={t('instruments.locked')} />
           </span>
         )}
       </div>
@@ -485,8 +480,12 @@ export function InstrumentCreator({
   selectedId: string;
   setSelectedId: (id: string) => void;
 }) {
+  const { t } = useI18n();
   const { animate } = useAppearance();
   const { engine, audioConfig } = useSynthServer();
+  const percent = (value: number) => t('instruments.percent', { value: Math.round(value * 100) });
+  const curveOptions = <T extends number>(options: { value: T; label: MessageKey; title: MessageKey }[]) =>
+    options.map((option) => ({ value: option.value, label: t(option.label), title: t(option.title) }));
   const [query, setQuery] = useState('');
   const [magnet, setMagnet] = usePersistentState<boolean>('synthway.spectrum-magnet.v1', () => true);
   const [selectedPartialId, setSelectedPartialId] = useState<string | null>(null);
@@ -599,9 +598,7 @@ export function InstrumentCreator({
     const kept = partials.filter((item) => item.locked);
     const count = Math.min(GENERATED_PARTIALS, maxPartials - kept.length);
     if (count <= 0) return;
-    const question = kept.length
-      ? 'Remplacer les partiels non verrouillés de cet instrument par les harmoniques générées ? Les partiels verrouillés restent.'
-      : 'Remplacer les partiels de cet instrument par les harmoniques générées ?';
+    const question = kept.length ? t('instruments.partials.replaceUnlocked') : t('instruments.partials.replace');
     if (partials.length - kept.length > 1 && !window.confirm(question)) {
       return;
     }
@@ -723,12 +720,15 @@ export function InstrumentCreator({
       if (!result.saved) return;
       showNotice({
         tone: 'success',
-        title: `« ${instrument.name} » ${result.handle ? 'exporté dans' : 'téléchargé :'} « ${result.name} ».`,
+        title: t(result.handle ? 'instruments.export.saved' : 'instruments.export.downloaded', {
+          name: instrument.name,
+          file: result.name,
+        }),
       });
     } catch (error) {
       showNotice({
         tone: 'error',
-        title: `« ${instrument.name} » n’a pas pu être exporté.`,
+        title: t('instruments.export.failed', { name: instrument.name }),
         details: [error instanceof Error ? error.message : String(error)],
       });
     }
@@ -749,7 +749,12 @@ export function InstrumentCreator({
         read.push(parseInstrumentFile(await file.text()));
       } catch (error) {
         if (!(error instanceof FileFormatError)) console.error(error);
-        failures.push(`« ${file.name} » n’a pas pu être importé : ${error instanceof Error ? error.message : String(error)}`);
+        failures.push(
+          t('instruments.import.failed', {
+            file: file.name,
+            error: error instanceof Error ? error.message : String(error),
+          }),
+        );
       }
     }
     const outcomes = importInstruments(instruments, read);
@@ -761,22 +766,20 @@ export function InstrumentCreator({
     const details: string[] = [];
     for (const outcome of outcomes) {
       if (outcome.kind === 'copied') {
-        details.push(
-          `Une autre version de « ${outcome.existing.name} » est déjà dans ta bibliothèque : celle du fichier est ajoutée à côté, sous le nom « ${outcome.instrument.name} ».`,
-        );
+        details.push(t('instruments.import.copied', { existing: outcome.existing.name, name: outcome.instrument.name }));
       } else if (outcome.kind === 'present') {
-        details.push(`« ${outcome.instrument.name} » était déjà dans ta bibliothèque, à l’identique : rien n’est ajouté.`);
+        details.push(t('instruments.import.present', { name: outcome.instrument.name }));
       }
     }
     details.push(...failures);
     const title =
       added.length === 0
         ? failures.length
-          ? 'Aucun instrument importé.'
-          : 'Rien de nouveau à importer.'
+          ? t('instruments.import.none')
+          : t('instruments.import.nothingNew')
         : added.length === 1
-          ? `« ${added[0].name} » importé, verrouillé : déverrouille-le pour le modifier.`
-          : `${added.length} instruments importés, verrouillés : déverrouille-les pour les modifier.`;
+          ? t('instruments.import.addedOne', { name: added[0].name })
+          : t('instruments.import.addedMany', { count: added.length });
     showNotice({
       tone: failures.length ? (added.length ? 'warning' : 'error') : details.length ? 'info' : 'success',
       title,
@@ -787,7 +790,9 @@ export function InstrumentCreator({
   const needle = query.trim().toLowerCase();
   const visible = needle
     ? instruments.filter((item) =>
-        [item.name, item.description, CATEGORY_LABEL[item.category]].some((text) => text.toLowerCase().includes(needle)),
+        [item.name, instrumentDescription(item), CATEGORY_LABEL[item.category]].some((text) =>
+          text.toLowerCase().includes(needle),
+        ),
       )
     : instruments;
 
@@ -797,24 +802,24 @@ export function InstrumentCreator({
     <div className={layout.screen}>
       <ScreenHeader
         index="01"
-        eyebrow="Création sonore"
+        eyebrow={t('instruments.header.eyebrow')}
         title="Instrument Creator"
-        subtitle="Assemble les partiels de tes instruments, puis joue-les au clavier."
+        subtitle={t('instruments.header.subtitle')}
       />
 
       <div className={styles.body}>
         <Panel className={styles.library}>
           <div className={styles.libraryHead}>
             <h2 className={styles.panelTitle}>
-              Bibliothèque <span className={styles.count}>{instruments.length}</span>
+              {t('instruments.library.title')} <span className={styles.count}>{instruments.length}</span>
             </h2>
             <div className={styles.search}>
               <Search size={14} />
               <input
                 className={inputClass}
                 type="search"
-                placeholder="Rechercher"
-                aria-label="Rechercher un instrument"
+                placeholder={t('instruments.library.search')}
+                aria-label={t('instruments.library.searchLabel')}
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
               />
@@ -823,23 +828,23 @@ export function InstrumentCreator({
           <div className={styles.libraryActions}>
             <Button variant="primary" size="small" onClick={() => add(createInstrument())}>
               <Plus size={15} />
-              Nouvel instrument
+              {t('instruments.library.newInstrument')}
             </Button>
             <Button
               size="small"
-              title={`Importer des instruments (${INSTRUMENT_FILE.extension}) : ils arrivent verrouillés`}
+              title={t('instruments.library.importTitle', { extension: INSTRUMENT_FILE.extension })}
               onClick={() => void importFromFiles()}
             >
               <Upload size={14} />
-              Importer
+              {t('common.import')}
             </Button>
             <Button
               size="small"
-              title={`Exporter « ${selected.name} » dans un fichier ${INSTRUMENT_FILE.extension}`}
+              title={t('instruments.library.exportTitle', { name: selected.name, extension: INSTRUMENT_FILE.extension })}
               onClick={() => void exportSelected()}
             >
               <Download size={14} />
-              Exporter
+              {t('common.export')}
             </Button>
           </div>
           <div className={styles.grid} data-dragging={draggedInstrumentId ? 'true' : undefined}>
@@ -863,7 +868,7 @@ export function InstrumentCreator({
                 onDragCancel={handleDragCancel}
               />
             ))}
-            {visible.length === 0 && <p className={styles.empty}>Aucun instrument ne correspond à « {query} ».</p>}
+            {visible.length === 0 && <p className={styles.empty}>{t('instruments.library.noMatch', { query })}</p>}
           </div>
         </Panel>
 
@@ -873,14 +878,14 @@ export function InstrumentCreator({
               className={styles.nameInput}
               value={selected.name}
               maxLength={40}
-              aria-label="Nom de l’instrument"
+              aria-label={t('instruments.editor.name')}
               readOnly={locked}
               onChange={(event) => update({ name: event.target.value })}
             />
             <select
               className={selectClass}
               value={selected.category}
-              aria-label="Catégorie"
+              aria-label={t('instruments.editor.category')}
               disabled={locked}
               onChange={(event) => update({ category: event.target.value as InstrumentCategory })}
             >
@@ -894,61 +899,54 @@ export function InstrumentCreator({
               type="button"
               className={cx(styles.chipButton, styles.lockChip)}
               aria-pressed={locked}
-              title={
-                locked
-                  ? 'Instrument verrouillé : rien n’est modifiable. Cliquer pour le déverrouiller.'
-                  : 'Verrouiller tout l’instrument, comme une sauvegarde : il se joue toujours, mais plus rien ne se modifie.'
-              }
+              title={locked ? t('instruments.editor.unlockTitle') : t('instruments.editor.lockTitle')}
               onClick={() => setInstrumentLocked(!locked)}
             >
               {locked ? <Lock size={13} /> : <LockOpen size={13} />}
-              {locked ? 'Verrouillé' : 'Déverrouillé'}
+              {locked ? t('instruments.locked') : t('instruments.unlocked')}
             </button>
           </div>
           <input
             className={cx(inputClass, styles.descInput)}
-            value={selected.description}
+            value={instrumentDescription(selected)}
             maxLength={120}
-            placeholder="Décris son caractère…"
-            aria-label="Description"
+            placeholder={t('instruments.editor.descriptionPlaceholder')}
+            aria-label={t('instruments.editor.description')}
             readOnly={locked}
             onChange={(event) => update({ description: event.target.value })}
           />
           {locked && (
             <div className={styles.lockNote}>
               <Lock size={13} />
-              <span>
-                Instrument verrouillé : il se joue toujours, mais rien n’est modifiable. Déverrouille-le pour le modifier,
-                ou duplique-le pour en faire une variante.
-              </span>
+              <span>{t('instruments.editor.lockedNote')}</span>
               <Button size="small" className={styles.lockNoteAction} onClick={() => setInstrumentLocked(false)}>
                 <LockOpen size={13} />
-                Déverrouiller
+                {t('instruments.unlock')}
               </Button>
             </div>
           )}
 
           <Section
-            title="Spectre"
+            title={t('instruments.spectrum.title')}
             badge={<LiveBadge />}
             actions={
               <>
                 <span
                   className={cx(styles.chip, atLimit && styles.chipWarn)}
-                  title={`Limite du moteur (synthway-core) : ${maxPartials} partiels par instrument`}
+                  title={t('instruments.spectrum.limitTitle', { max: maxPartials })}
                 >
-                  {partials.length} / {maxPartials} partiels
+                  {t('instruments.spectrum.count', { count: partials.length, max: maxPartials })}
                 </span>
                 <button
                   type="button"
                   className={styles.chipButton}
                   aria-pressed={magnet}
                   disabled={locked}
-                  title="Aimant : un partiel glissé près d’un rapport entier s’y accroche (Alt pour l’ignorer)"
+                  title={t('instruments.spectrum.magnetTitle')}
                   onClick={() => setMagnet(!magnet)}
                 >
                   <Magnet size={13} />
-                  Aimant
+                  {t('instruments.spectrum.magnet')}
                 </button>
               </>
             }
@@ -966,17 +964,14 @@ export function InstrumentCreator({
               />
               {partials.length === 0 && (
                 <p className={styles.spectrumEmpty}>
-                  Aucun partiel : l’instrument est muet.{' '}
-                  {locked ? 'Déverrouille l’instrument pour en placer un.' : 'Double-clique pour en placer un.'}
+                  {t('instruments.noPartials')}{' '}
+                  {locked ? t('instruments.spectrum.emptyLocked') : t('instruments.spectrum.emptyAdd')}
                 </p>
               )}
             </div>
             <p className={styles.hint}>
-              {locked
-                ? 'Instrument verrouillé : un clic choisit un partiel sans le déplacer.'
-                : 'Glisse un partiel : à droite pour monter son rapport à la note jouée, en haut pour son amplitude. Double-clic : nouveau partiel. Un partiel verrouillé (cadenas) ne bouge pas.'}{' '}
-              Les pointillés sont les harmoniques déjà contenues dans une onde non sinusoïdale ; un partiel inactif est
-              estompé.
+              {locked ? t('instruments.spectrum.hintLocked') : t('instruments.spectrum.hint')}{' '}
+              {t('instruments.spectrum.hintDotted')}
             </p>
 
             {(atLimit || aliasingList.length > 0 || unisonPeak > 1) && (
@@ -984,55 +979,51 @@ export function InstrumentCreator({
                 {atLimit && (
                   <li>
                     <AlertTriangle size={14} />
-                    <span>
-                      Limite du moteur atteinte : {maxPartials} partiels au plus par instrument.
-                    </span>
+                    <span>{t('instruments.warnings.limit', { max: maxPartials })}</span>
                   </li>
                 )}
                 {aliasingList.length > 0 && (
                   <li>
                     <AlertTriangle size={14} />
                     <span>
-                      Au-delà de la moitié de la fréquence d’échantillonnage ({formatHertz(sampleRate / 2)}), un partiel se
-                      replie en une autre fréquence :{' '}
-                      {aliasingList
-                        .slice(0, ALIASING_LISTED)
-                        .map(
-                          (item) =>
-                            `partiel ${partialNumber(item.id)} (${formatRatio(item.ratio)}) dès ${midiToName(aliasing.get(item.id) ?? 0)}`,
-                        )
-                        .join(', ')}
-                      {aliasingList.length > ALIASING_LISTED
-                        ? `, et ${aliasingList.length - ALIASING_LISTED} autres (marqués dans la liste des partiels).`
-                        : '.'}
+                      {t(
+                        aliasingList.length > ALIASING_LISTED
+                          ? 'instruments.warnings.aliasingMore'
+                          : 'instruments.warnings.aliasing',
+                        {
+                          nyquist: formatHertz(sampleRate / 2),
+                          list: aliasingList
+                            .slice(0, ALIASING_LISTED)
+                            .map((item) =>
+                              t('instruments.warnings.aliasingItem', {
+                                number: partialNumber(item.id),
+                                ratio: formatRatio(item.ratio),
+                                note: midiToName(aliasing.get(item.id) ?? 0),
+                              }),
+                            )
+                            .join(', '),
+                          count: aliasingList.length - ALIASING_LISTED,
+                        },
+                      )}
                     </span>
                   </li>
                 )}
                 {peak > 1 && (
                   <li>
                     <AlertTriangle size={14} />
-                    <span>
-                      Saturation possible : la somme des amplitudes × le volume atteint {percent(peak)}. Si les partiels
-                      culminent ensemble, le son dépasse 100 % et sera écrêté.
-                    </span>
+                    <span>{t('instruments.warnings.peak', { peak: percent(peak) })}</span>
                   </li>
                 )}
                 {peak <= 1 && reverbPeak > 1 && (
                   <li>
                     <AlertTriangle size={14} />
-                    <span>
-                      Saturation possible avec la réverbération : elle peut porter les crêtes vers {percent(reverbPeak)}.
-                      Baisse le volume si le son est écrêté.
-                    </span>
+                    <span>{t('instruments.warnings.reverb', { peak: percent(reverbPeak) })}</span>
                   </li>
                 )}
                 {reverbPeak <= 1 && unisonPeak > 1 && (
                   <li>
                     <AlertTriangle size={14} />
-                    <span>
-                      Saturation possible avec l’unisson : quand ses {voices} voix se retrouvent en phase, les crêtes
-                      peuvent monter vers {percent(unisonPeak)}. Baisse le volume si le son est écrêté.
-                    </span>
+                    <span>{t('instruments.warnings.unison', { voices, peak: percent(unisonPeak) })}</span>
                   </li>
                 )}
               </ul>
@@ -1040,26 +1031,26 @@ export function InstrumentCreator({
           </Section>
 
           <div className={styles.views}>
-            <Section title="Enveloppes">
+            <Section title={t('instruments.views.envelopes')}>
               <div className={styles.envelopes}>
                 <EnvelopesGraph partials={active} selectedId={partial?.id ?? null} />
               </div>
             </Section>
-            <Section title="Onde résultante">
+            <Section title={t('instruments.views.wave')}>
               <div className={styles.scope}>
                 <WaveScope voices={active} hue={selected.hue} animate={animate} />
                 <div className={styles.scopeLabel}>
-                  <span>Somme des partiels</span>
-                  {engine.running && <span className={styles.scopeLive}>● Moteur actif</span>}
+                  <span>{t('instruments.views.sum')}</span>
+                  {engine.running && <span className={styles.scopeLive}>{t('instruments.views.engineOn')}</span>}
                 </div>
               </div>
             </Section>
           </div>
 
           <div className={styles.sections}>
-            <Section title="Volume" badge={<LiveBadge />}>
+            <Section title={t('instruments.volume.title')} badge={<LiveBadge />}>
               <Slider
-                label="Volume de l’instrument"
+                label={t('instruments.volume.label')}
                 value={selected.volume}
                 min={0}
                 max={1}
@@ -1071,17 +1062,17 @@ export function InstrumentCreator({
               />
             </Section>
 
-            <Section title="Filtre" badge={<LiveBadge />}>
+            <Section title={t('instruments.filter.title')} badge={<LiveBadge />}>
               <RangeSlider
                 label={
                   selected.filter.lowCutoff <= CUTOFF_MIN && selected.filter.cutoff >= CUTOFF_MAX
-                    ? 'Bande passante (aucun filtre)'
-                    : 'Bande passante'
+                    ? t('instruments.filter.bandOff')
+                    : t('instruments.filter.band')
                 }
                 step={0.001}
                 disabled={locked}
                 low={{
-                  label: 'Borne basse',
+                  label: t('instruments.filter.low'),
                   position: cutoffPosition(selected.filter.lowCutoff),
                   display: formatLowCutoff(selected.filter.lowCutoff),
                   onChange: (position) => updateFilter({ lowCutoff: Math.floor(cutoffAt(position)) }),
@@ -1096,7 +1087,7 @@ export function InstrumentCreator({
                   },
                 }}
                 high={{
-                  label: 'Borne haute',
+                  label: t('instruments.filter.high'),
                   position: cutoffPosition(selected.filter.cutoff),
                   display: formatHertz(selected.filter.cutoff),
                   onChange: (position) => updateFilter({ cutoff: Math.round(cutoffAt(position)) }),
@@ -1111,7 +1102,7 @@ export function InstrumentCreator({
                 }}
               />
               <Slider
-                label="Résonance"
+                label={t('instruments.filter.resonance')}
                 value={selected.filter.resonance}
                 min={0}
                 max={1}
@@ -1123,9 +1114,9 @@ export function InstrumentCreator({
               />
             </Section>
 
-            <Section title="Réverbération" badge={<LiveBadge />}>
+            <Section title={t('instruments.reverb.title')} badge={<LiveBadge />}>
               <Slider
-                label={reverb > 0 ? 'Son réverbéré' : 'Son réverbéré (aucune réverbération)'}
+                label={reverb > 0 ? t('instruments.reverb.mix') : t('instruments.reverb.mixOff')}
                 value={reverb}
                 min={0}
                 max={1}
@@ -1135,14 +1126,12 @@ export function InstrumentCreator({
                 onChange={(value) => update({ reverb: value })}
                 edit={percentEdit(reverb, (value) => update({ reverb: value }))}
               />
-              <p className={styles.hint}>
-                Une salle d’environ 2 s, qui continue de sonner après la note. À 100 %, seule la réverbération reste.
-              </p>
+              <p className={styles.hint}>{t('instruments.reverb.hint')}</p>
             </Section>
 
-            <Section title="Unisson" badge={<LiveBadge />}>
+            <Section title={t('instruments.unison.title')} badge={<LiveBadge />}>
               <Slider
-                label={voices > 1 ? 'Voix par partiel' : 'Voix par partiel (pas d’unisson)'}
+                label={voices > 1 ? t('instruments.unison.voices') : t('instruments.unison.voicesOff')}
                 value={voices}
                 min={1}
                 max={MAX_UNISON_VOICES}
@@ -1152,7 +1141,7 @@ export function InstrumentCreator({
                 onChange={(value) => updateUnison({ voices: Math.round(value) })}
               />
               <Slider
-                label="Désaccord"
+                label={t('instruments.unison.detune')}
                 value={Math.min(detune, UNISON_DETUNE_SLIDER_MAX)}
                 min={0}
                 max={UNISON_DETUNE_SLIDER_MAX}
@@ -1171,7 +1160,7 @@ export function InstrumentCreator({
                 }}
               />
               <Slider
-                label="Largeur stéréo"
+                label={t('instruments.unison.width')}
                 value={spread}
                 min={0}
                 max={1}
@@ -1181,18 +1170,14 @@ export function InstrumentCreator({
                 onChange={(value) => updateUnison({ spread: value })}
                 edit={percentEdit(spread, (value) => updateUnison({ spread: value }))}
               />
-              <p className={styles.hint}>
-                Chaque partiel est joué par plusieurs oscillateurs un peu désaccordés, qui battent entre eux : le son
-                s’épaissit, comme une « supersaw ». 5 à 7 voix à ±10–20 cents donnent l’épaisseur classique ; la largeur
-                les répartit entre gauche et droite.
-              </p>
+              <p className={styles.hint}>{t('instruments.unison.hint')}</p>
             </Section>
 
-            <Section title="Couleur de l'instrument">
+            <Section title={t('instruments.color.instrument')}>
               <Swatches
                 hues={HUES}
                 value={selected.hue}
-                label="Couleur de l'instrument"
+                label={t('instruments.color.instrument')}
                 disabled={locked}
                 onChange={(hue) => update({ hue })}
               />
@@ -1203,7 +1188,7 @@ export function InstrumentCreator({
         <Panel className={styles.partialsPanel}>
           <div className={styles.partialsHead}>
             <h2 className={styles.panelTitle}>
-              Partiels{' '}
+              {t('instruments.partials.title')}{' '}
               <span className={styles.count}>
                 {partials.length}/{maxPartials}
               </span>
@@ -1214,29 +1199,29 @@ export function InstrumentCreator({
               disabled={atLimit || locked}
               title={
                 locked
-                  ? 'Instrument verrouillé'
+                  ? t('instruments.lockedInstrument')
                   : atLimit
-                    ? `Limite du moteur atteinte : ${maxPartials} partiels`
-                    : 'Ajouter un partiel sur la prochaine harmonique libre'
+                    ? t('instruments.partials.limitReached', { max: maxPartials })
+                    : t('instruments.partials.addTitle')
               }
             >
               <Plus size={14} />
-              Ajouter
+              {t('instruments.partials.add')}
             </Button>
           </div>
           <select
             className={cx(selectClass, styles.generator)}
             value=""
-            aria-label="Remplacer les partiels non verrouillés par les harmoniques d’une forme d’onde"
+            aria-label={t('instruments.partials.generatorLabel')}
             disabled={locked}
             onChange={(event) => generate(Number(event.target.value) as Waveform)}
           >
             <option value="" disabled>
-              Générer depuis une forme d’onde…
+              {t('instruments.partials.generate')}
             </option>
             {GENERATORS.map((generator) => (
               <option key={generator.waveform} value={generator.waveform}>
-                {generator.label}
+                {t(generator.label)}
               </option>
             ))}
           </select>
@@ -1266,10 +1251,10 @@ export function InstrumentCreator({
                   onToggle={() => togglePartial(item.id)}
                 />
                 <span className={styles.partialNumber}>
-                  {item.locked && <Lock size={10} className={styles.partialLockIcon} aria-label="verrouillé" />}
+                  {item.locked && <Lock size={10} className={styles.partialLockIcon} aria-label={t('instruments.partials.lockedIcon')} />}
                   {index + 1}
                 </span>
-                <span className={styles.partialRatio} title="Rapport à la note jouée">
+                <span className={styles.partialRatio} title={t('instruments.partials.ratioTitle')}>
                   {formatRatio(item.ratio)}
                 </span>
                 <span className={styles.partialMeter}>
@@ -1280,13 +1265,13 @@ export function InstrumentCreator({
                   {WAVEFORM_OPTIONS.find((option) => option.value === item.waveform)?.short}
                 </span>
                 {aliasing.has(item.id) ? (
-                  <AlertTriangle size={13} className={styles.partialWarn} aria-label="Repliement sur les notes aiguës" />
+                  <AlertTriangle size={13} className={styles.partialWarn} aria-label={t('instruments.partials.aliasingIcon')} />
                 ) : (
                   <span className={styles.partialWarnSpace} />
                 )}
               </div>
             ))}
-            {partials.length === 0 && <p className={styles.empty}>Aucun partiel : l’instrument est muet.</p>}
+            {partials.length === 0 && <p className={styles.empty}>{t('instruments.noPartials')}</p>}
           </div>
 
           {partial && (
@@ -1299,21 +1284,21 @@ export function InstrumentCreator({
                   onToggle={() => togglePartial(partial.id)}
                 />
                 <h3 className={styles.partialTitle}>
-                  Partiel {partialNumber(partial.id)}
-                  {partial.muted && <span className={styles.partialMuted}> · inactif</span>}
+                  {t('instruments.partial.title', { number: partialNumber(partial.id) })}
+                  {partial.muted && <span className={styles.partialMuted}>{t('instruments.partial.mutedSuffix')}</span>}
                 </h3>
                 <button
                   type="button"
                   className={styles.partialLock}
                   aria-pressed={!!partial.locked}
-                  aria-label={`Verrouiller le partiel ${partialNumber(partial.id)}`}
+                  aria-label={t('instruments.partial.lockLabel', { number: partialNumber(partial.id) })}
                   disabled={locked}
                   title={
                     locked
-                      ? 'Instrument verrouillé'
+                      ? t('instruments.lockedInstrument')
                       : partial.locked
-                        ? 'Partiel verrouillé : cliquer pour pouvoir le modifier de nouveau'
-                        : 'Verrouiller ce partiel : plus rien ne le modifie, ni le spectre, ni les réglages'
+                        ? t('instruments.partial.unlockTitle')
+                        : t('instruments.partial.lockTitle')
                   }
                   onClick={() => togglePartialLock(partial.id)}
                 >
@@ -1323,8 +1308,8 @@ export function InstrumentCreator({
                   <Button
                     size="small"
                     iconOnly
-                    title="Dupliquer ce partiel"
-                    aria-label="Dupliquer ce partiel"
+                    title={t('instruments.partial.duplicate')}
+                    aria-label={t('instruments.partial.duplicate')}
                     disabled={atLimit || locked}
                     onClick={() => duplicatePartial(partial)}
                   >
@@ -1333,8 +1318,8 @@ export function InstrumentCreator({
                   <Button
                     size="small"
                     iconOnly
-                    title={partialFrozen ? 'Verrouillé : impossible de le supprimer' : 'Supprimer ce partiel'}
-                    aria-label="Supprimer ce partiel"
+                    title={partialFrozen ? t('instruments.partial.deleteLocked') : t('instruments.partial.delete')}
+                    aria-label={t('instruments.partial.delete')}
                     disabled={partialFrozen}
                     onClick={() => removePartial(partial.id)}
                   >
@@ -1345,12 +1330,12 @@ export function InstrumentCreator({
               {partial.locked && !locked && (
                 <p className={styles.lockNote}>
                   <Lock size={13} />
-                  Partiel verrouillé : clique sur le cadenas à côté de son nom pour le modifier.
+                  {t('instruments.partial.lockedNote')}
                 </p>
               )}
 
               <Slider
-                label="Rapport à la note"
+                label={t('instruments.partial.ratio')}
                 value={Math.min(1, Math.max(0, Math.log(partial.ratio / RATIO_SLIDER_MIN) / Math.log(RATIO_SLIDER_RANGE)))}
                 min={0}
                 max={1}
@@ -1375,7 +1360,7 @@ export function InstrumentCreator({
                 }}
               />
               <Slider
-                label="Amplitude"
+                label={t('instruments.partial.amplitude')}
                 value={partial.amplitude}
                 min={0}
                 max={1}
@@ -1386,7 +1371,7 @@ export function InstrumentCreator({
                 edit={percentEdit(partial.amplitude, (amplitude) => updatePartial(partial.id, { amplitude }))}
               />
               <Segmented
-                label="Forme d’onde"
+                label={t('instruments.partial.waveform')}
                 options={WAVEFORM_OPTIONS.map((option) => ({
                   value: option.value,
                   label: option.short,
@@ -1398,25 +1383,24 @@ export function InstrumentCreator({
                 onChange={(waveform) => updatePartial(partial.id, { waveform })}
               />
               {partial.waveform !== WAVEFORM.Sine && (
-                <p className={styles.note}>
-                  Une onde non sinusoïdale contient déjà ses propres harmoniques : elles apparaissent en pointillés sur le
-                  spectre.
-                </p>
+                <p className={styles.note}>{t('instruments.partial.waveNote')}</p>
               )}
               {aliasing.has(partial.id) && (
                 <p className={styles.partialAlias}>
                   <AlertTriangle size={13} />
-                  Dépasse {formatHertz(sampleRate / 2)} dès la note {midiToName(aliasing.get(partial.id) ?? 0)} : il se
-                  replie en une autre fréquence.
+                  {t('instruments.partial.aliasing', {
+                    nyquist: formatHertz(sampleRate / 2),
+                    note: midiToName(aliasing.get(partial.id) ?? 0),
+                  })}
                 </p>
               )}
 
               <Section
-                title="Enveloppe du partiel"
+                title={t('instruments.envelope.title')}
                 actions={
                   <Button
                     size="small"
-                    title="Donner cette enveloppe à tous les partiels non verrouillés"
+                    title={t('instruments.envelope.applyAllTitle')}
                     disabled={locked || !partials.some((item) => item.id !== partial.id && !item.locked)}
                     onClick={() =>
                       setPartials((list) =>
@@ -1424,7 +1408,7 @@ export function InstrumentCreator({
                       )
                     }
                   >
-                    À tous
+                    {t('instruments.envelope.applyAll')}
                   </Button>
                 }
               >
@@ -1434,7 +1418,7 @@ export function InstrumentCreator({
                 <div className={styles.segments}>
                   <div className={styles.segment}>
                     <TimeSlider
-                      label="Attaque"
+                      label={t('instruments.envelope.attack')}
                       value={partial.envelope.attack}
                       max={2}
                       disabled={partialFrozen}
@@ -1442,8 +1426,8 @@ export function InstrumentCreator({
                     />
                     <Segmented
                       compact
-                      label="Courbe de l’attaque"
-                      options={ATTACK_CURVE_OPTIONS}
+                      label={t('instruments.envelope.attackCurve')}
+                      options={curveOptions(ATTACK_CURVE_OPTIONS)}
                       value={partial.envelope.attack_curve ?? ATTACK_CURVE.Linear}
                       disabled={partialFrozen}
                       onChange={(attack_curve) => updatePartialEnvelope(partial.id, { attack_curve })}
@@ -1451,7 +1435,7 @@ export function InstrumentCreator({
                   </div>
                   <div className={styles.segment}>
                     <FallSlider
-                      label="Déclin"
+                      label={t('instruments.envelope.decay')}
                       seconds={partial.envelope.decay}
                       exponential={decayExponential}
                       disabled={partialFrozen}
@@ -1459,8 +1443,8 @@ export function InstrumentCreator({
                     />
                     <Segmented
                       compact
-                      label="Courbe du déclin"
-                      options={FALL_CURVE_OPTIONS}
+                      label={t('instruments.envelope.decayCurve')}
+                      options={curveOptions(FALL_CURVE_OPTIONS)}
                       value={partial.envelope.curve ?? ENVELOPE_CURVE.Linear}
                       disabled={partialFrozen}
                       // The release keeps its curve: saved without one, it followed the decay's
@@ -1471,7 +1455,7 @@ export function InstrumentCreator({
                   </div>
                   <div className={styles.segment}>
                     <Slider
-                      label="Maintien"
+                      label={t('instruments.envelope.sustain')}
                       value={partial.envelope.sustain}
                       min={0}
                       max={1}
@@ -1484,7 +1468,7 @@ export function InstrumentCreator({
                   </div>
                   <div className={styles.segment}>
                     <FallSlider
-                      label="Relâchement"
+                      label={t('instruments.envelope.release')}
                       seconds={partial.envelope.release}
                       exponential={releaseExponential}
                       disabled={partialFrozen}
@@ -1492,8 +1476,8 @@ export function InstrumentCreator({
                     />
                     <Segmented
                       compact
-                      label="Courbe du relâchement"
-                      options={FALL_CURVE_OPTIONS}
+                      label={t('instruments.envelope.releaseCurve')}
+                      options={curveOptions(FALL_CURVE_OPTIONS)}
                       value={releaseCurveOf(partial.envelope)}
                       disabled={partialFrozen}
                       onChange={(release_curve) => updatePartialEnvelope(partial.id, { release_curve })}
@@ -1502,11 +1486,11 @@ export function InstrumentCreator({
                 </div>
               </Section>
 
-              <Section title="Couleur du partiel">
+              <Section title={t('instruments.color.partial')}>
                 <Swatches
                   hues={PARTIAL_HUES}
                   value={partial.hue}
-                  label="Couleur du partiel"
+                  label={t('instruments.color.partial')}
                   disabled={partialFrozen}
                   onChange={(hue) => updatePartial(partial.id, { hue })}
                 />
@@ -1535,6 +1519,7 @@ function Swatches({
   disabled?: boolean;
   onChange: (hue: NeonHue) => void;
 }) {
+  const { t } = useI18n();
   return (
     <div className={styles.swatches} role="group" aria-label={label}>
       {hues.map((hue) => (
@@ -1544,8 +1529,8 @@ function Swatches({
           className={styles.swatch}
           style={{ '--hue': HUE_VAR[hue] } as CSSProperties}
           aria-pressed={value === hue}
-          aria-label={HUE_LABEL[hue]}
-          title={HUE_LABEL[hue]}
+          aria-label={t(`instruments.hue.${hue}`)}
+          title={t(`instruments.hue.${hue}`)}
           disabled={disabled}
           onClick={() => onChange(hue)}
         />

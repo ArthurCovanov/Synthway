@@ -1,4 +1,5 @@
 import { useRef } from 'react';
+import { useI18n } from '../i18n';
 import { formatCents, frequencyToNote, type NoteReading } from '../lib/music';
 import type { Analysis } from '../types';
 import styles from './Tuner.module.css';
@@ -42,6 +43,7 @@ interface Shown {
  * once the sound stops, so it can be read.
  */
 export function Tuner({ analysis, a4, hold }: { analysis: Analysis | null; a4: number; hold: boolean }) {
+  const { t, language } = useI18n();
   const last = useRef<{ shown: Shown; time: number } | null>(null);
 
   let shown: Shown | null = null;
@@ -58,16 +60,21 @@ export function Tuner({ analysis, a4, hold }: { analysis: Analysis | null; a4: n
   const tone = !shown ? 'idle' : Math.abs(cents) <= IN_TUNE_CENTS ? 'tune' : Math.abs(cents) <= 15 ? 'near' : 'off';
   const needleAngle = (cents / 50) * GAUGE.spread;
 
-  let status = 'En attente d’un son';
-  if (analysis && silent && !shown) status = 'Silence';
-  else if (analysis && !shown) status = 'Pas de note nette (bruit, accord ?)';
-  else if (shown?.held) status = 'Dernière note entendue';
-  else if (shown?.uncertain) status = 'Note incertaine';
-  else if (shown) status = tone === 'tune' ? 'Juste' : cents > 0 ? 'Trop haut' : 'Trop bas';
+  let status = t('tuner.waiting');
+  if (analysis && silent && !shown) status = t('tuner.silence');
+  else if (analysis && !shown) status = t('tuner.noClearNote');
+  else if (shown?.held) status = t('tuner.held');
+  else if (shown?.uncertain) status = t('tuner.uncertain');
+  else if (shown) status = tone === 'tune' ? t('tuner.inTune') : cents > 0 ? t('tuner.sharp') : t('tuner.flat');
 
   return (
     <div className={styles.tuner} data-tone={tone} data-dim={shown && (shown.uncertain || shown.held) ? 'true' : undefined}>
-      <svg className={styles.gauge} viewBox="0 0 260 150" role="img" aria-label={shown ? `Écart : ${formatCents(cents)} cents` : 'Aucune note'}>
+      <svg
+        className={styles.gauge}
+        viewBox="0 0 260 150"
+        role="img"
+        aria-label={shown ? t('tuner.deviation', { cents: formatCents(cents) }) : t('tuner.noNote')}
+      >
         <path className={styles.track} d={arc(-50, 50, GAUGE.r)} />
         <path className={styles.inTune} d={arc(-IN_TUNE_CENTS, IN_TUNE_CENTS, GAUGE.r)} />
         {[-50, -40, -30, -20, -10, 0, 10, 20, 30, 40, 50].map((tick) => {
@@ -109,7 +116,8 @@ export function Tuner({ analysis, a4, hold }: { analysis: Analysis | null; a4: n
             '—'
           )}
         </div>
-        <div className={styles.solfege}>{shown ? `${shown.note.solfege} ${shown.note.octave}` : ' '}</div>
+        {/* French names (Sol 3) under the letter name in French; English has the letter name only */}
+        <div className={styles.solfege}>{shown && language === 'fr' ? `${shown.note.solfege} ${shown.note.octave}` : ' '}</div>
         <div className={styles.facts}>
           <span>{shown ? `${formatCents(shown.note.cents)} cents` : '— cents'}</span>
           <span>{shown ? `${shown.frequency.toFixed(2)} Hz` : '— Hz'}</span>
@@ -118,14 +126,14 @@ export function Tuner({ analysis, a4, hold }: { analysis: Analysis | null; a4: n
       </div>
 
       <dl className={styles.meters}>
-        <dt>Netteté</dt>
+        <dt>{t('tuner.clarity')}</dt>
         <dd>
           <span className={styles.meter}>
             <span style={{ width: `${Math.round((analysis?.clarity ?? 0) * 100)}%` }} />
           </span>
           <span className={styles.meterValue}>{analysis ? analysis.clarity.toFixed(2) : '—'}</span>
         </dd>
-        <dt>Niveau</dt>
+        <dt>{t('tuner.level')}</dt>
         <dd>
           <span className={styles.meter} data-kind="level">
             <span style={{ width: `${Math.max(0, Math.min(100, ((analysis?.level_db ?? -120) + 80) * 1.25))}%` }} />

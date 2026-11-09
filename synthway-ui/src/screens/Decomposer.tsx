@@ -3,6 +3,9 @@ import { useCallback, useEffect, useRef, useState, type DragEvent, type MouseEve
 import layout from '../components/layout.module.css';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { Badge, Button, Panel, Section, Segmented } from '../components/ui';
+// translateNow: the module t, for messages made by requests, which must not run
+// again when the language changes
+import { t, t as translateNow, useI18n, type MessageKey } from '../i18n';
 import { api, SEPARATION_SOURCE_URL, separationStemUrl } from '../lib/api';
 import { useSpaceBar } from '../lib/keyboard';
 import { saveJson, usePersistentState } from '../lib/storage';
@@ -28,44 +31,41 @@ const PLAYBACK_FOLLOW_MS = 50;
 /** The Analyzer's « Source du son », written so that it opens on its Fichier tab */
 const ANALYZER_SOURCE_KEY = 'synthway.analyzer.source.v1';
 
-const MODELS: { value: SeparationModel; label: string; title: string }[] = [
-  { value: 'htdemucs', label: '4 pistes', title: 'htdemucs : batterie, basse, voix, autres. Le plus rapide.' },
-  {
-    value: 'htdemucs_ft',
-    label: '4 pistes, affiné',
-    title: 'htdemucs_ft : les mêmes pistes, un peu plus propres, environ 4 fois plus lent.',
-  },
-  {
-    value: 'htdemucs_6s',
-    label: '6 pistes',
-    title: 'htdemucs_6s : ajoute guitare et piano. Le piano déborde beaucoup sur les autres pistes, selon l’auteur.',
-  },
+// Texts by key: translated when shown, in the language of the moment
+const MODELS: { value: SeparationModel; label: MessageKey; title: MessageKey }[] = [
+  { value: 'htdemucs', label: 'decomposer.model.fourStems', title: 'decomposer.model.fourStemsTitle' },
+  { value: 'htdemucs_ft', label: 'decomposer.model.fourStemsFine', title: 'decomposer.model.fourStemsFineTitle' },
+  { value: 'htdemucs_6s', label: 'decomposer.model.sixStems', title: 'decomposer.model.sixStemsTitle' },
 ];
 
-const STEMS: Record<string, { label: string; color: string }> = {
-  drums: { label: 'Batterie', color: 'var(--neon-pink)' },
-  bass: { label: 'Basse', color: 'var(--neon-blue)' },
-  vocals: { label: 'Voix', color: 'var(--neon-violet)' },
-  other: { label: 'Autres', color: 'var(--neon-cyan)' },
-  guitar: { label: 'Guitare', color: 'var(--neon-orange)' },
-  piano: { label: 'Piano', color: 'var(--neon-yellow)' },
+/** By Demucs id: the name shown, and the colour */
+const STEMS: Record<string, { label: MessageKey; color: string }> = {
+  drums: { label: 'decomposer.stemName.drums', color: 'var(--neon-pink)' },
+  bass: { label: 'decomposer.stemName.bass', color: 'var(--neon-blue)' },
+  vocals: { label: 'decomposer.stemName.vocals', color: 'var(--neon-violet)' },
+  other: { label: 'decomposer.stemName.other', color: 'var(--neon-cyan)' },
+  guitar: { label: 'decomposer.stemName.guitar', color: 'var(--neon-orange)' },
+  piano: { label: 'decomposer.stemName.piano', color: 'var(--neon-yellow)' },
 };
 
-const STAGES: Record<NonNullable<SeparationStatus['job']['stage']>, string> = {
-  starting: 'Démarrage de Demucs…',
-  loading: 'Chargement du modèle (téléchargé à sa première utilisation)…',
-  reading: 'Lecture du morceau…',
-  separating: 'Séparation…',
-  saving: 'Écriture des pistes…',
+const STAGES: Record<NonNullable<SeparationStatus['job']['stage']>, MessageKey> = {
+  starting: 'decomposer.stage.starting',
+  loading: 'decomposer.stage.loading',
+  reading: 'decomposer.stage.reading',
+  separating: 'decomposer.stage.separating',
+  saving: 'decomposer.stage.saving',
 };
 
+/** A stem's name in the current language and its colour; a stem Synthway does not know keeps its Demucs id */
 function stemInfo(name: string) {
-  return STEMS[name] ?? { label: name, color: 'var(--neon-green)' };
+  const stem = STEMS[name];
+  return stem ? { label: t(stem.label), color: stem.color } : { label: name, color: 'var(--neon-green)' };
 }
 
+/** Why a request failed; the server's own messages are shown as they come (in French) */
 function describe(error: unknown): string {
   if (error instanceof DOMException && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
-    return 'le serveur ne répond pas';
+    return t('decomposer.error.noAnswer');
   }
   return error instanceof Error ? error.message : String(error);
 }
@@ -76,12 +76,14 @@ function formatDuration(seconds: number): string {
 }
 
 function formatSize(bytes: number): string {
-  return bytes >= 2 ** 20 ? `${(bytes / 2 ** 20).toFixed(1)} Mo` : `${Math.ceil(bytes / 2 ** 10)} Ko`;
+  return bytes >= 2 ** 20
+    ? t('decomposer.size.megabytes', { size: (bytes / 2 ** 20).toFixed(1) })
+    : t('decomposer.size.kilobytes', { size: Math.ceil(bytes / 2 ** 10) });
 }
 
 function deviceLabel(device: string | null): string {
-  if (device === 'cuda') return 'carte graphique (CUDA)';
-  if (device === 'cpu') return 'processeur';
+  if (device === 'cuda') return t('decomposer.device.cuda');
+  if (device === 'cpu') return t('decomposer.device.cpu');
   return device ?? '';
 }
 
@@ -121,7 +123,7 @@ function useTrackPlayer(onError: (error: string) => void) {
       follow(audio.duration || timeRef.current);
     });
     audio.addEventListener('error', () => {
-      if (audio.getAttribute('src')) onError('La lecture a échoué.');
+      if (audio.getAttribute('src')) onError(t('decomposer.error.playbackFailed'));
     });
     const tick = window.setInterval(() => {
       if (!audio.paused) follow(audio.currentTime);
@@ -155,7 +157,9 @@ function useTrackPlayer(onError: (error: string) => void) {
       follow(start);
       audio.play().catch((error: unknown) => {
         // AbortError: paused or replaced before it could start
-        if (!(error instanceof DOMException && error.name === 'AbortError')) onError(`Lecture impossible : ${describe(error)}`);
+        if (!(error instanceof DOMException && error.name === 'AbortError')) {
+          onError(t('decomposer.error.cannotPlay', { reason: describe(error) }));
+        }
       });
     },
     [track, onError, follow],
@@ -253,6 +257,8 @@ function StemWave({
 }
 
 export function Decomposer({ onOpenAnalyzer }: { onOpenAnalyzer: () => void }) {
+  // In here, the t of the hook: the screen renders again when the language changes
+  const { t, tr } = useI18n();
   const server = useSynthServer();
   const online = server.connection === 'online';
   const [status, setStatus] = useState<SeparationStatus | null>(null);
@@ -268,7 +274,7 @@ export function Decomposer({ onOpenAnalyzer }: { onOpenAnalyzer: () => void }) {
     try {
       setStatus(await api.separation());
     } catch (failure) {
-      setError(`État de la décomposition indisponible : ${describe(failure)}`);
+      setError(translateNow('decomposer.error.status', { reason: describe(failure) }));
     }
   }, []);
 
@@ -297,7 +303,7 @@ export function Decomposer({ onOpenAnalyzer }: { onOpenAnalyzer: () => void }) {
     try {
       setStatus(await api.uploadSeparationSource(file));
     } catch (failure) {
-      setError(`${file.name} : ${describe(failure)}`);
+      setError(t('decomposer.error.upload', { name: file.name, reason: describe(failure) }));
     } finally {
       setUploading(false);
     }
@@ -315,7 +321,7 @@ export function Decomposer({ onOpenAnalyzer }: { onOpenAnalyzer: () => void }) {
     try {
       setStatus(await api.runSeparation(model));
     } catch (failure) {
-      setError(`Décomposition impossible : ${describe(failure)}`);
+      setError(t('decomposer.error.decompose', { reason: describe(failure) }));
     }
   };
 
@@ -323,7 +329,7 @@ export function Decomposer({ onOpenAnalyzer }: { onOpenAnalyzer: () => void }) {
     try {
       setStatus(await api.cancelSeparation());
     } catch (failure) {
-      setError(`Annulation impossible : ${describe(failure)}`);
+      setError(t('decomposer.error.cancel', { reason: describe(failure) }));
     }
   };
 
@@ -333,7 +339,7 @@ export function Decomposer({ onOpenAnalyzer }: { onOpenAnalyzer: () => void }) {
     try {
       setStatus(await api.clearSeparationSource());
     } catch (failure) {
-      setError(`Effacement impossible : ${describe(failure)}`);
+      setError(t('decomposer.error.clear', { reason: describe(failure) }));
     }
   };
 
@@ -346,7 +352,7 @@ export function Decomposer({ onOpenAnalyzer }: { onOpenAnalyzer: () => void }) {
       saveJson(ANALYZER_SOURCE_KEY, 'file');
       onOpenAnalyzer();
     } catch (failure) {
-      setError(`${stemInfo(name).label} : envoi à l’Analyzer impossible (${describe(failure)})`);
+      setError(t('decomposer.error.toAnalyzer', { stem: stemInfo(name).label, reason: describe(failure) }));
       setBusy(null);
     }
   };
@@ -365,6 +371,7 @@ export function Decomposer({ onOpenAnalyzer }: { onOpenAnalyzer: () => void }) {
   const percent = Math.round((job?.progress ?? 0) * 100);
   const sourceUrl = `${SEPARATION_SOURCE_URL}?v=${encodeURIComponent(sourceStamp)}`;
   const stemUrl = (name: string) => `${separationStemUrl(name)}?v=${encodeURIComponent(resultStamp)}`;
+  const models = MODELS.map((option) => ({ value: option.value, label: t(option.label), title: t(option.title) }));
 
   // The space bar plays or pauses the track selected (the one played last; none yet: the piece), from the cursor
   useSpaceBar(() => {
@@ -377,21 +384,24 @@ export function Decomposer({ onOpenAnalyzer }: { onOpenAnalyzer: () => void }) {
     <div className={layout.screen}>
       <ScreenHeader
         index="03"
-        eyebrow="Séparation de sources"
+        eyebrow={t('decomposer.eyebrow')}
         title="Decomposer"
-        subtitle="Décompose un morceau en ses pistes (batterie, basse, voix, autres…), puis analyse celle qui t’intéresse."
+        subtitle={t('decomposer.subtitle')}
       >
-        <aside className={styles.credit} aria-label="Outil tiers utilisé">
-          <span className={styles.creditEyebrow}>Powered by</span>
+        <aside className={styles.credit} aria-label={t('decomposer.credit.label')}>
+          <span className={styles.creditEyebrow}>{t('decomposer.credit.poweredBy')}</span>
           <a className={styles.creditName} href="https://github.com/adefossez/demucs" target="_blank" rel="noreferrer">
             Demucs v4
             <ExternalLink size={13} />
           </a>
           <span className={styles.creditNote}>
-            Outil tiers open source, licence MIT ·{' '}
-            <a href="https://github.com/facebookresearch/demucs" target="_blank" rel="noreferrer">
-              version d’origine (Meta)
-            </a>
+            {tr('decomposer.credit.note', {
+              link: (inner) => (
+                <a href="https://github.com/facebookresearch/demucs" target="_blank" rel="noreferrer">
+                  {inner}
+                </a>
+              ),
+            })}
           </span>
         </aside>
       </ScreenHeader>
@@ -399,7 +409,7 @@ export function Decomposer({ onOpenAnalyzer }: { onOpenAnalyzer: () => void }) {
       <div className={styles.body}>
         <Panel className={styles.panel}>
           <Section
-            title="Morceau"
+            title={t('decomposer.source.title')}
             badge={source ? <Badge>{source.name}</Badge> : undefined}
             actions={
               <>
@@ -408,10 +418,10 @@ export function Decomposer({ onOpenAnalyzer }: { onOpenAnalyzer: () => void }) {
                     size="small"
                     disabled={!online}
                     onClick={() => play('source', sourceUrl)}
-                    title={track === 'source' && playing ? 'Met la lecture en pause (Espace)' : 'Lit le morceau entier, à partir du curseur'}
+                    title={track === 'source' && playing ? t('decomposer.pauseTitle') : t('decomposer.source.playTitle')}
                   >
                     {track === 'source' && playing ? <Pause size={13} /> : <Play size={13} />}
-                    {track === 'source' && playing ? 'Pause' : 'Lire'}
+                    {track === 'source' && playing ? t('decomposer.pause') : t('decomposer.source.play')}
                   </Button>
                 )}
                 {source && (
@@ -419,15 +429,15 @@ export function Decomposer({ onOpenAnalyzer }: { onOpenAnalyzer: () => void }) {
                     size="small"
                     disabled={!canChange}
                     onClick={() => void clear()}
-                    title="Retire le morceau et ses pistes pour vider le tableau"
+                    title={t('decomposer.source.removeTitle')}
                   >
                     <Trash2 size={13} />
-                    Retirer
+                    {t('decomposer.source.remove')}
                   </Button>
                 )}
                 <Button size="small" variant={source ? 'default' : 'primary'} disabled={!canChange} onClick={() => fileInput.current?.click()}>
                   <Upload size={13} />
-                  {uploading ? 'Envoi…' : 'Importer un morceau'}
+                  {uploading ? t('decomposer.source.uploading') : t('decomposer.source.import')}
                 </Button>
                 <input
                   ref={fileInput}
@@ -460,34 +470,34 @@ export function Decomposer({ onOpenAnalyzer }: { onOpenAnalyzer: () => void }) {
                     <span className={styles.sourceName}>{source.name}</span>
                     <span className={styles.note}>
                       {formatSize(source.size)}
-                      {result ? ` · ${formatDuration(result.duration)}` : ''} · dépose un autre fichier ici pour le remplacer
+                      {result ? ` · ${formatDuration(result.duration)}` : ''} · {t('decomposer.source.replaceHint')}
                     </span>
                   </div>
                 </div>
               ) : (
                 <div className={styles.dropHint}>
                   <FileAudio size={28} />
-                  <span>Dépose un morceau WAV, FLAC, MP3 ou OGG ici, ou clique sur « Importer un morceau ».</span>
-                  <span className={styles.note}>Il est envoyé entier au serveur, qui le garde. Rien n’est joué.</span>
+                  <span>{t('decomposer.source.dropHint')}</span>
+                  <span className={styles.note}>{t('decomposer.source.dropNote')}</span>
                 </div>
               )}
             </div>
 
             <div className={styles.controls}>
-              <Segmented label="Modèle de Demucs" value={model} onChange={setModel} options={MODELS} disabled={running} />
+              <Segmented label={t('decomposer.model.label')} value={model} onChange={setModel} options={models} disabled={running} />
               {running ? (
                 <Button onClick={() => void cancel()}>
                   <Square size={14} />
-                  Annuler
+                  {t('common.cancel')}
                 </Button>
               ) : (
                 <Button variant="primary" disabled={!canChange || !source} onClick={() => void decompose()}>
                   <AudioLines size={15} />
-                  Decompose
+                  {t('decomposer.decompose')}
                 </Button>
               )}
             </div>
-            <p className={styles.note}>{MODELS.find((option) => option.value === model)?.title}</p>
+            <p className={styles.note}>{models.find((option) => option.value === model)?.title}</p>
 
             {running && job && (
               <div className={styles.progress} role="status">
@@ -498,16 +508,18 @@ export function Decomposer({ onOpenAnalyzer }: { onOpenAnalyzer: () => void }) {
                   />
                 </div>
                 <span className={styles.note}>
-                  {job.stage ? STAGES[job.stage] : 'Décomposition…'}
-                  {job.stage === 'separating' ? ` ${percent} %` : ''}
-                  {job.device ? ` · sur le ${deviceLabel(job.device)}` : ''}
+                  {job.stage ? t(STAGES[job.stage]) : t('decomposer.decomposing')}
+                  {job.stage === 'separating' ? ` ${t('decomposer.percent', { percent })}` : ''}
+                  {job.device ? ` · ${t('decomposer.onDevice', { device: deviceLabel(job.device) })}` : ''}
                 </span>
               </div>
             )}
 
             {status && !available && <p className={styles.warning}>{status.reason}</p>}
-            {!online && <p className={styles.note}>Le serveur n’est pas connecté (voir les Réglages).</p>}
-            {job?.state === 'error' && job.error && <p className={styles.error}>Demucs a échoué : {job.error}</p>}
+            {!online && <p className={styles.note}>{t('decomposer.offline')}</p>}
+            {job?.state === 'error' && job.error && (
+              <p className={styles.error}>{t('decomposer.error.demucs', { error: job.error })}</p>
+            )}
             {job?.state === 'idle' && job.error && <p className={styles.note}>{job.error}.</p>}
             {error && <p className={styles.error}>{error}</p>}
           </Section>
@@ -515,8 +527,8 @@ export function Decomposer({ onOpenAnalyzer }: { onOpenAnalyzer: () => void }) {
 
         <Panel className={styles.panel}>
           <Section
-            title="Pistes"
-            badge={result ? <Badge>{result.stems.length} pistes</Badge> : undefined}
+            title={t('decomposer.stems.title')}
+            badge={result ? <Badge>{t('decomposer.stems.count', { count: result.stems.length })}</Badge> : undefined}
           >
             {result ? (
               <>
@@ -537,7 +549,7 @@ export function Decomposer({ onOpenAnalyzer }: { onOpenAnalyzer: () => void }) {
                           color={info.color}
                           cursor={track !== null ? Math.min(1, time / Math.max(result.duration, 1e-6)) : null}
                           selected={loaded}
-                          label={`Forme d’onde : ${info.label}`}
+                          label={t('decomposer.stems.waveform', { stem: info.label })}
                           onSeek={(fraction) => select(stem.name, url, fraction * result.duration)}
                         />
                         <div className={styles.stemActions}>
@@ -546,8 +558,12 @@ export function Decomposer({ onOpenAnalyzer }: { onOpenAnalyzer: () => void }) {
                             iconOnly
                             disabled={!online}
                             onClick={() => play(stem.name, url)}
-                            title={loaded && playing ? 'Met la lecture en pause (Espace)' : `Lit la piste « ${info.label} » à partir du curseur`}
-                            aria-label={loaded && playing ? 'Pause' : `Lire ${info.label}`}
+                            title={
+                              loaded && playing
+                                ? t('decomposer.pauseTitle')
+                                : t('decomposer.stems.playTitle', { stem: info.label })
+                            }
+                            aria-label={loaded && playing ? t('decomposer.pause') : t('decomposer.stems.play', { stem: info.label })}
                           >
                             {loaded && playing ? <Pause size={14} /> : <Play size={14} />}
                           </Button>
@@ -556,8 +572,8 @@ export function Decomposer({ onOpenAnalyzer }: { onOpenAnalyzer: () => void }) {
                             iconOnly
                             disabled={!online}
                             onClick={() => download(stem.name)}
-                            title={`Télécharge la piste « ${info.label} » en WAV (stéréo, 16 bits)`}
-                            aria-label={`Télécharger ${info.label}`}
+                            title={t('decomposer.stems.downloadTitle', { stem: info.label })}
+                            aria-label={t('decomposer.stems.download', { stem: info.label })}
                           >
                             <Download size={14} />
                           </Button>
@@ -565,9 +581,9 @@ export function Decomposer({ onOpenAnalyzer }: { onOpenAnalyzer: () => void }) {
                             size="small"
                             disabled={!online || !server.coreLoaded || busy !== null}
                             onClick={() => void analyze(stem.name)}
-                            title="Charge cette piste dans l’Analyzer (onglet Fichier), à la place de son fichier"
+                            title={t('decomposer.stems.analyzeTitle')}
                           >
-                            {busy === stem.name ? 'Envoi…' : 'Analyser'}
+                            {busy === stem.name ? t('decomposer.stems.sending') : t('decomposer.stems.analyze')}
                           </Button>
                         </div>
                       </div>
@@ -575,10 +591,13 @@ export function Decomposer({ onOpenAnalyzer }: { onOpenAnalyzer: () => void }) {
                   })}
                 </div>
                 <p className={styles.note}>
-                  {MODELS.find((option) => option.value === result.model)?.label ?? result.model} ({result.model}) ·{' '}
-                  {(result.sample_rate / 1000).toFixed(1)} kHz · séparé en {formatDuration(result.seconds)} sur le{' '}
-                  {deviceLabel(result.device)}. Un clic sur une piste la sélectionne et y place le curseur, sans la lire ;
-                  ▶ ou Espace : lecture / pause de la piste sélectionnée. Une autre piste reprend au même endroit.
+                  {t('decomposer.stems.result', {
+                    model: models.find((option) => option.value === result.model)?.label ?? result.model,
+                    id: result.model,
+                    rate: (result.sample_rate / 1000).toFixed(1),
+                    duration: formatDuration(result.seconds),
+                    device: deviceLabel(result.device),
+                  })}
                 </p>
               </>
             ) : (
@@ -586,8 +605,8 @@ export function Decomposer({ onOpenAnalyzer }: { onOpenAnalyzer: () => void }) {
                 <AudioLines size={26} />
                 <span>
                   {running
-                    ? 'Les pistes apparaîtront ici à la fin de la décomposition.'
-                    : `${source ? 'Clique' : 'Importe un morceau puis clique'} sur « Decompose » : chaque instrument arrivera sur sa propre piste.`}
+                    ? t('decomposer.stems.waiting')
+                    : t(source ? 'decomposer.stems.emptyReady' : 'decomposer.stems.emptyNoSource')}
                 </span>
               </div>
             )}

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { NeonDefs } from './components/icons';
 import { Sidebar, type ScreenId } from './components/Sidebar';
+import { LanguageProvider } from './i18n';
 import { AppearanceProvider } from './lib/appearance';
 import { markLaterPresetsOffered, migrateInstruments, PRESET_INSTRUMENTS, type Instrument } from './lib/instruments';
 import { usePersistentState } from './lib/storage';
@@ -55,41 +56,43 @@ export function App() {
   };
 
   return (
-    <AppearanceProvider>
-      <SynthServerProvider>
-        <NeonDefs />
-        <div className={styles.app}>
-          <Sidebar current={screen} onNavigate={navigate} />
-          <main className={styles.main}>
-            {screen === 'instruments' && (
-              <InstrumentCreator
-                instruments={instruments}
-                setInstruments={setInstruments}
-                selectedId={selectedInstrumentId}
-                setSelectedId={setSelectedInstrumentId}
-              />
-            )}
-            {screen === 'composer' && (
-              <Composer
-                instruments={instruments}
-                onAddInstruments={(added) => setInstruments((list) => [...list, ...added])}
-              />
-            )}
-            {screen === 'analyzer' && (
-              <Analyzer
-                onSaveInstrument={(instrument) => {
-                  // The trial instrument saved: a new card at the end of the library, opened in the Instrument Creator
-                  setInstruments((list) => [...list, instrument]);
-                  setSelectedInstrumentId(instrument.id);
-                  navigate('instruments');
-                }}
-              />
-            )}
-            {screen === 'decomposer' && <Decomposer onOpenAnalyzer={() => navigate('analyzer')} />}
-            {screen === 'settings' && <Settings />}
-          </main>
-        </div>
-      </SynthServerProvider>
-    </AppearanceProvider>
+    <LanguageProvider>
+      <AppearanceProvider>
+        <SynthServerProvider>
+          <NeonDefs />
+          <div className={styles.app}>
+            <Sidebar current={screen} onNavigate={navigate} />
+            <main className={styles.main}>
+              {screen === 'instruments' && (
+                <InstrumentCreator
+                  instruments={instruments}
+                  setInstruments={setInstruments}
+                  selectedId={selectedInstrumentId}
+                  setSelectedId={setSelectedInstrumentId}
+                />
+              )}
+              {screen === 'composer' && (
+                <Composer
+                  instruments={instruments}
+                  onAddInstruments={(added) => setInstruments((list) => [...list, ...added])}
+                />
+              )}
+              {screen === 'analyzer' && (
+                <Analyzer
+                  onSaveInstrument={(instrument) => {
+                    // The trial instrument saved: a new card at the end of the library, opened in the Instrument Creator
+                    setInstruments((list) => [...list, instrument]);
+                    setSelectedInstrumentId(instrument.id);
+                    navigate('instruments');
+                  }}
+                />
+              )}
+              {screen === 'decomposer' && <Decomposer onOpenAnalyzer={() => navigate('analyzer')} />}
+              {screen === 'settings' && <Settings />}
+            </main>
+          </div>
+        </SynthServerProvider>
+      </AppearanceProvider>
+    </LanguageProvider>
   );
 }

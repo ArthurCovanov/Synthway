@@ -11,6 +11,7 @@ import {
   type RefObject,
 } from 'react';
 import { createPortal } from 'react-dom';
+import { useI18n } from '../i18n';
 import styles from './ui.module.css';
 
 function cx(...classes: (string | false | null | undefined)[]): string {
@@ -116,18 +117,20 @@ export function Badge({
 
 /** Badge for settings that are saved but not yet sent to synthway-core */
 export function SoonBadge() {
+  const { t } = useI18n();
   return (
-    <Badge tone="soon" title="Réglage enregistré, mais pas encore pris en charge par synthway-core">
-      Bientôt
+    <Badge tone="soon" title={t('ui.badge.soonTitle')}>
+      {t('common.soon')}
     </Badge>
   );
 }
 
 /** Badge for settings that drive the engine live */
 export function LiveBadge() {
+  const { t } = useI18n();
   return (
-    <Badge tone="live" title="Envoyé au moteur audio en temps réel">
-      Moteur
+    <Badge tone="live" title={t('ui.badge.liveTitle')}>
+      {t('ui.badge.live')}
     </Badge>
   );
 }
@@ -278,6 +281,7 @@ function ValueButton({
   edit: ValueEdit;
   disabled?: boolean;
 }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const button = useRef<HTMLButtonElement>(null);
   const close = useCallback((refocus: boolean) => {
@@ -293,8 +297,8 @@ function ValueButton({
         className={cx(styles.sliderValue, styles.valueButton)}
         aria-haspopup="dialog"
         aria-expanded={open}
-        aria-label={`${label} : ${display}, saisir la valeur`}
-        title="Saisir la valeur"
+        aria-label={t('ui.value.editLabel', { label, value: display })}
+        title={t('ui.value.edit')}
         disabled={disabled}
         onClick={() => setOpen(!open)}
       >
@@ -334,6 +338,7 @@ function ValuePopover({
   edit: ValueEdit;
   onClose: (refocus: boolean) => void;
 }) {
+  const { t } = useI18n();
   const { value, min, max, prefix, unit, decimals = 2, onCommit, extra } = edit;
   const [text, setText] = useState(() => toText(value, decimals));
   const [position, setPosition] = useState<{ left: number; top: number } | null>(null);
@@ -427,11 +432,11 @@ function ValuePopover({
           {unit && <span className={styles.popoverAffix}>{unit}</span>}
         </label>
         <Button type="submit" variant="primary" size="small" disabled={!valid}>
-          OK
+          {t('ui.value.ok')}
         </Button>
       </form>
       <div className={cx(styles.popoverRange, !valid && styles.popoverInvalid)}>
-        Entre {bound(min)} et {bound(max)}
+        {t('ui.value.range', { min: bound(min), max: bound(max) })}
         {unit ? ` ${unit}` : ''}
       </div>
       {extra}

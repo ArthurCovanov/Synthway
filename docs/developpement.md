@@ -62,7 +62,8 @@ synthway/
 ├── synthway.sh                 # Lanceur Linux (terminal ou double-clic) : trouve Python, puis synthway.py
 ├── packaging/build_windows.py  # Fabrique le zip Windows prêt à l'emploi (Python embarqué)
 ├── packaging/build_windows.bat # Double-clic : interface (par WSL sans Node.js), puis build_windows.py
-├── README.md                   # Présentation publique du projet (GitLab / GitHub)
+├── README.md                   # Présentation publique du projet (GitLab / GitHub), en anglais
+├── README.fr.md                # La même, en français (les deux se tiennent à jour ensemble)
 ├── LICENSE                     # Licence Apache-2.0
 ├── AGENTS.md                   # Règles communes aux agents IA (Claude, Gemini) et aux humains
 ├── CLAUDE.md                   # Point d'entrée de Claude Code (importe AGENTS.md)
@@ -113,6 +114,7 @@ synthway/
         ├── screens/            # Instrument Creator, Composer, Analyzer, Decomposer, Réglages
         ├── components/         # Barre latérale, contrôles, oscilloscope, clavier
         ├── lib/                # Client API/WebSocket, modèles, état partagé
+        ├── i18n/               # Langues de l'interface : textes (locales/en.json, fr.json), t(), useI18n()
         ├── styles/             # Thème synthwave (couleurs du logo), polices
         └── assets/             # Logo décliné, polices OFL
 ```
@@ -247,6 +249,35 @@ Le projet est conçu pour fonctionner de manière transparente sous **Windows** 
 
 ---
 
+## Langues de l'interface
+
+L'interface parle anglais (langue par défaut, au premier lancement) et français. On en change dans **Settings** (Réglages), carte **Language** (Langue) ; le choix est gardé dans le navigateur (`localStorage`, clé `synthway.language.v1`). Le README public existe dans les deux langues : `README.md` (anglais) et `README.fr.md` (français), à tenir à jour ensemble.
+
+**Où sont les textes.** Un fichier par langue, `synthway-ui/src/i18n/locales/en.json` et `fr.json`, avec les mêmes clés. Les clés sont groupées par partie de l'interface (`settings`, `composer`, `analyzer`…) : `settings.audio.output` désigne `"Output"` dans `en.json` et `"Sortie"` dans `fr.json`. Le reste de la mécanique est dans `synthway-ui/src/i18n/index.tsx`.
+
+**Écrire un texte.**
+
+- Dans un composant : `const { t } = useI18n();` puis `t('settings.audio.output')`. Le composant se redessine quand la langue change ; mettez `t` dans les dépendances d'un `useMemo` ou d'un `useCallback` qui fabrique du texte.
+- Hors composant (`lib/`) : la fonction `t` du module `i18n`, qui lit la langue du moment.
+- Paramètres : `"Port {port} in use"`, puis `t('settings.server.foreign', { port: 18741 })`.
+- Pluriels : deux clés `channels_one` et `channels_other`, appelées par `t('settings.audio.channels', { count })`. Les règles de chaque langue choisissent la forme (`Intl.PluralRules`) : en français, 0 et 1 prennent `_one` ; en anglais, 1 seulement.
+- Texte avec des éléments : `tr('settings.midi.note', { command: <code>…</code> })`, et `<strong>…</strong>` dans le texte pour un passage à mettre en forme (`tr('clé', { strong: (texte) => <strong>{texte}</strong> })`). On garde ainsi des phrases entières, faciles à traduire.
+- Nombres : `formatNumber(valeur, options)` à la place de `toLocaleString('fr-FR', …)`, pour « 1.5 » en anglais et « 1,5 » en français.
+
+**Vérification.** Le typage (`npm run typecheck`) refuse une clé qui n'existe pas, et une clé présente dans un fichier de langue mais absente de l'autre, qu'il nomme. Un texte ajouté l'est donc dans les deux langues à la fois.
+
+**Ce qui n'est pas traduit.** Les données de l'utilisateur (noms et descriptions d'instruments ou de morceaux enregistrés), sauf les descriptions des préréglages encore intactes ; les messages d'erreur qui viennent du serveur Python, affichés tels quels ; la console du lanceur ; la documentation de développement, en français.
+
+**Ajouter une langue.**
+
+1. Copier `en.json` en `<code>.json` (par exemple `de.json`) et traduire les valeurs, jamais les clés, ni les `{paramètres}`, ni les `<balises>`.
+2. Dans `src/i18n/index.tsx` : ajouter le code au type `Language`, la langue à `LANGUAGES` (nommée dans sa propre langue : « Deutsch »), sa locale à `LOCALES`, et le fichier importé à `MESSAGES`.
+3. Ajouter la vérification de ses clés à côté de `missingInEnglish`. Une langue qui a d'autres formes de pluriel (`_few`, `_many`, en russe ou en polonais par exemple) en a plus que le français : sa vérification devra les accepter.
+
+Le sélecteur des Réglages propose alors la nouvelle langue.
+
+---
+
 ## 🤖 Guide pour les Développeurs Humains et Agents IA
 
 L'utilisateur, Claude et Gemini travaillent dans ce même dossier. Les règles de travail communes (journal, conventions, skills partagés) sont dans [`AGENTS.md`](../AGENTS.md).
@@ -263,6 +294,7 @@ Lors de l'ajout de nouvelles fonctionnalités, respectez scrupuleusement les fro
    - Utilisez les routes REST (`/api/*`) pour les opérations de configuration (choix de carte son, profils, presets).
 3. **Règles pour `synthway-ui` (Ergonomie & Contrôle)** :
    - Conserver l'interface réactive et découplée : elle doit afficher l'état de synchronisation avec le serveur.
+   - Aucun texte visible écrit en dur dans le code : chaque texte a sa clé dans `src/i18n/locales/en.json` **et** dans `fr.json` (voir [Langues de l'interface](#langues-de-linterface)).
    - Pour une version application de bureau sans navigateur, préférer **Tauri** à Electron pour sa légèreté.
 4. **Règles pour `synthway-demucs` (facultatif)** :
    - Le serveur n'importe jamais PyTorch ni Demucs : il lance `separate.py` avec le Python de `synthway-demucs/.venv`, dans un processus à part, et lit ses lignes JSON.

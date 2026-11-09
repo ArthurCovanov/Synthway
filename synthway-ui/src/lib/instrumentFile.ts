@@ -4,6 +4,7 @@
  * The format is described in docs/formats-de-fichier.md; any change to Instrument
  * goes through the `file-formats` skill.
  */
+import { t } from '../i18n';
 import { ATTACK_CURVE, ENVELOPE_CURVE, MAX_UNISON_DETUNE_CENTS, MAX_UNISON_VOICES, WAVEFORM } from '../types';
 import {
   FileFormatError,
@@ -18,6 +19,7 @@ import {
 import {
   CATEGORY_LABEL,
   keyboardOctave,
+  knownDescriptionKey,
   migrateInstrument,
   type Envelope,
   type Instrument,
@@ -35,7 +37,9 @@ export const INSTRUMENT_FORMAT = 'synthway-instrument';
 export const INSTRUMENT_FORMAT_VERSION = 1;
 
 export const INSTRUMENT_FILE: FileKind = {
-  description: 'Instrument Synthway',
+  get description() {
+    return t('instrumentFile.fileType');
+  },
   extension: '.swinst',
   pickerId: 'synthway-instruments',
 };
@@ -73,9 +77,7 @@ export function parseInstrumentFile(text: string): Instrument {
   const data = parseJsonObject(text);
   if (data.format !== INSTRUMENT_FORMAT) {
     throw new FileFormatError(
-      data.format === 'synthway-composition'
-        ? 'c’est un morceau : ouvre-le dans le Composer.'
-        : 'ce n’est pas un instrument Synthway.',
+      data.format === 'synthway-composition' ? t('instrumentFile.isSong') : t('instrumentFile.notInstrument'),
     );
   }
   formatVersion(data, INSTRUMENT_FORMAT_VERSION);
@@ -89,7 +91,7 @@ export function parseInstrumentFile(text: string): Instrument {
  * compositions using it find it again. Throws a FileFormatError when there is no instrument at all.
  */
 export function readInstrument(raw: unknown): Instrument {
-  if (!isRecord(raw)) throw new FileFormatError('l’instrument est absent du fichier.');
+  if (!isRecord(raw)) throw new FileFormatError(t('instrumentFile.noInstrument'));
   // Migrated, but still whatever the file held: each field is checked below
   const source = migrateInstrument(raw as unknown as SavedInstrument) as unknown as Record<string, unknown>;
   const ids = new Set<string>();
@@ -100,7 +102,7 @@ export function readInstrument(raw: unknown): Instrument {
   const lowCutoff = numberIn(filter.lowCutoff, 20, 20000 / 1.05, 20);
   const instrument: Instrument = {
     id: textOf(source.id, 200, '').trim() || newId(),
-    name: textOf(source.name, NAME_MAX, '').trim() || 'Instrument importé',
+    name: textOf(source.name, NAME_MAX, '').trim() || t('instrumentFile.importedName'),
     description: textOf(source.description, DESCRIPTION_MAX, ''),
     category: oneOf(source.category, Object.keys(CATEGORY_LABEL) as InstrumentCategory[], 'lead'),
     hue: oneOf(source.hue, HUES, 'violet'),
@@ -159,10 +161,17 @@ function readEnvelope(raw: unknown): Envelope {
   return envelope;
 }
 
-/** What an instrument is, without what only concerns its editing: its lock, its partials' locks, its keyboard octave */
+/**
+ * What an instrument is, without what only concerns its editing: its lock, its partials' locks, its keyboard
+ * octave. A description that came with Synthway counts as the same in every language.
+ */
 function essence(instrument: Instrument): unknown {
   const { locked: _locked, octave: _octave, ...rest } = instrument;
-  return { ...rest, partials: rest.partials.map(({ locked: _partialLocked, ...partial }) => partial) };
+  return {
+    ...rest,
+    description: knownDescriptionKey(rest.description) ?? rest.description,
+    partials: rest.partials.map(({ locked: _partialLocked, ...partial }) => partial),
+  };
 }
 
 /** Same instrument: same sound, same name and description, whatever their locks and keyboard octave */
@@ -192,8 +201,10 @@ export function importInstruments(library: Instrument[], incoming: Instrument[])
     if (existing && sameInstrument(existing, instrument)) return { kind: 'present', instrument: existing };
     let outcome: ImportOutcome;
     if (existing) {
-      let name = `${instrument.name} (importé)`.slice(0, NAME_MAX);
-      for (let n = 2; names.has(name); n += 1) name = `${instrument.name} (importé ${n})`.slice(0, NAME_MAX);
+      let name = t('instrumentFile.importedCopy', { name: instrument.name }).slice(0, NAME_MAX);
+      for (let n = 2; names.has(name); n += 1) {
+        name = t('instrumentFile.importedCopyNumber', { name: instrument.name, number: n }).slice(0, NAME_MAX);
+      }
       outcome = { kind: 'copied', instrument: { ...instrument, id: newId(), name, locked: true }, existing };
     } else {
       outcome = { kind: 'added', instrument: { ...instrument, locked: true } };

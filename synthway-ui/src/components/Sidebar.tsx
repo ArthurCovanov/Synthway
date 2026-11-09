@@ -1,6 +1,7 @@
 import { Settings } from 'lucide-react';
 import type { ReactNode } from 'react';
 import emblem from '../assets/brand/emblem-256.png';
+import { useI18n, type MessageKey } from '../i18n';
 import { SERVER_PORT } from '../lib/api';
 import { useSynthServer, type Connection } from '../lib/SynthServer';
 import { AnalyzerIcon, ComposerIcon, DecomposerIcon, InstrumentIcon } from './icons';
@@ -8,11 +9,11 @@ import styles from './Sidebar.module.css';
 
 export type ScreenId = 'instruments' | 'composer' | 'analyzer' | 'decomposer' | 'settings';
 
-const CONNECTION_LABEL: Record<Connection, string> = {
-  connecting: 'Connexion au serveur…',
-  online: 'Serveur connecté',
-  offline: 'Serveur hors ligne',
-  foreign: `Port ${SERVER_PORT} occupé par un autre service`,
+const CONNECTION_LABEL: Record<Connection, MessageKey> = {
+  connecting: 'sidebar.connection.connecting',
+  online: 'sidebar.connection.online',
+  offline: 'sidebar.connection.offline',
+  foreign: 'sidebar.connection.foreign',
 };
 
 function NavItem({
@@ -44,11 +45,13 @@ function NavItem({
 
 export function Sidebar({ current, onNavigate }: { current: ScreenId; onNavigate: (id: ScreenId) => void }) {
   const { connection, coreLoaded } = useSynthServer();
-  const statusLabel =
-    connection === 'online' && !coreLoaded ? 'Serveur connecté, core non chargé' : CONNECTION_LABEL[connection];
+  const { t } = useI18n();
+  const statusLabel = t(connection === 'online' && !coreLoaded ? 'sidebar.connection.noCore' : CONNECTION_LABEL[connection], {
+    port: SERVER_PORT,
+  });
 
   return (
-    <nav className={styles.sidebar} aria-label="Navigation principale">
+    <nav className={styles.sidebar} aria-label={t('sidebar.mainNavigation')}>
       <button type="button" className={styles.logo} onClick={() => onNavigate('instruments')} title="Synthway">
         <img src={emblem} alt="Synthway" />
       </button>
@@ -88,7 +91,7 @@ export function Sidebar({ current, onNavigate }: { current: ScreenId; onNavigate
 
       <NavItem
         id="settings"
-        label="Réglages"
+        label={t('sidebar.settings')}
         icon={<Settings size={21} strokeWidth={1.8} />}
         current={current}
         onNavigate={onNavigate}

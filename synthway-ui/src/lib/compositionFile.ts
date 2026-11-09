@@ -4,6 +4,7 @@
  * The format is described in docs/formats-de-fichier.md; any change to
  * Composition, Track or Note goes through the `file-formats` skill.
  */
+import { t } from '../i18n';
 import { AUTOMATION_SPECS, MAX_AUTOMATION_POINTS, sortedPoints, type AutomationSpec } from './automation';
 import {
   DEFAULT_BASE_PITCH,
@@ -28,7 +29,10 @@ export const COMPOSITION_FORMAT = 'synthway-composition';
 export const COMPOSITION_FORMAT_VERSION = 1;
 
 export const COMPOSITION_FILE: FileKind = {
-  description: 'Morceau Synthway',
+  /** In the current language, read when the save dialog opens */
+  get description() {
+    return t('songFile.fileDescription');
+  },
   extension: '.swsong',
   pickerId: 'synthway-songs',
 };
@@ -106,17 +110,15 @@ export function parseCompositionFile(text: string): OpenedComposition {
   const data = parseJsonObject(text);
   if (data.format !== COMPOSITION_FORMAT) {
     throw new FileFormatError(
-      data.format === 'synthway-instrument'
-        ? 'c’est un instrument : importe-le dans l’Instrument Creator.'
-        : 'ce n’est pas un morceau Synthway.',
+      data.format === 'synthway-instrument' ? t('songFile.errors.isInstrument') : t('songFile.errors.notASong'),
     );
   }
   formatVersion(data, COMPOSITION_FORMAT_VERSION);
   // Version 1 is the current one: a later version adds here the steps from the older ones
   const raw = data.composition;
-  if (!isRecord(raw) || !Array.isArray(raw.tracks)) throw new FileFormatError('le morceau est absent du fichier.');
+  if (!isRecord(raw) || !Array.isArray(raw.tracks)) throw new FileFormatError(t('songFile.errors.noSong'));
   const tracks = raw.tracks.filter(isRecord).map(readTrack);
-  if (tracks.length === 0) throw new FileFormatError('le morceau n’a aucune piste.');
+  if (tracks.length === 0) throw new FileFormatError(t('songFile.errors.noTracks'));
   const composition: Composition = {
     bpm: numberIn(raw.bpm, BPM_MIN, BPM_MAX, 98),
     beatsPerBar: Math.round(numberIn(raw.beatsPerBar, 1, MAX_BEATS_PER_BAR, 4)),
@@ -140,7 +142,7 @@ export function parseCompositionFile(text: string): OpenedComposition {
 function readTrack(raw: Record<string, unknown>, index: number): Track {
   const track: Track = {
     id: newId(),
-    name: textOf(raw.name, TRACK_NAME_MAX, '') || `Piste ${index + 1}`,
+    name: textOf(raw.name, TRACK_NAME_MAX, '') || t('songFile.trackName', { number: index + 1 }),
     instrumentId: textOf(raw.instrumentId, 200, ''),
     hue: oneOf(raw.hue, HUES, HUES[index % HUES.length]),
     basePitch: Math.round(numberIn(raw.basePitch, -120, 247, DEFAULT_BASE_PITCH)),
