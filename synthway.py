@@ -2,7 +2,7 @@
 """Synthway launcher: starts Synthway in one go and opens it in the browser.
 
     Windows:  double-click synthway.bat (or: python synthway.py)
-    Linux:    python3 synthway.py
+    Linux:    ./synthway.sh, or a double-click on it (or: python3 synthway.py)
 
 synthway-server serves the built interface itself: one program, one port.
 In the Windows package (packaging/build_windows.py) everything is built

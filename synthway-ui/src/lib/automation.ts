@@ -30,8 +30,12 @@ export interface AutomationSpec {
   base: (instrument: Instrument) => number;
   /** A value as shown */
   format: (value: number) => string;
-  /** What the point's field takes: its unit, and a value of the setting in it and back */
+  /** What the point's field takes: its unit (short, shown after the field), and a value of the setting in it and back */
   unit: string;
+  /** Shown after the field in place of the unit, one line above the other */
+  unitLines?: [string, string];
+  /** What the field's value means, in the tooltip of its unit */
+  help: string;
   toInput: (value: number) => number;
   fromInput: (input: number) => number;
   /** Decimals kept in the field */
@@ -56,6 +60,7 @@ export const AUTOMATION_SPECS: AutomationSpec[] = [
     base: () => 1,
     format: percent,
     unit: '%',
+    help: 'Volume de la piste, en % de celui de l’instrument : 0 % muet, 100 % inchangé.',
     toInput: (value) => value * 100,
     fromInput: (input) => input / 100,
     inputDecimals: 1,
@@ -72,7 +77,9 @@ export const AUTOMATION_SPECS: AutomationSpec[] = [
       const share = Math.round(value * 100);
       return share === 0 ? 'centre' : `${share < 0 ? 'gauche' : 'droite'} ${Math.abs(share)} %`;
     },
-    unit: '% (− gauche, + droite)',
+    unit: '%',
+    unitLines: ['+ D', '− G'],
+    help: 'Panoramique, en % : + vers la droite, − vers la gauche, 0 au centre. À +100 %, le son ne sort qu’à droite ; à −100 %, qu’à gauche.',
     toInput: (value) => value * 100,
     fromInput: (input) => input / 100,
     inputDecimals: 1,
@@ -88,6 +95,7 @@ export const AUTOMATION_SPECS: AutomationSpec[] = [
     base: (instrument) => cutoff(instrument.filter.cutoff),
     format: hertz,
     unit: 'Hz',
+    help: 'Coupure du passe-bas, en hertz : les aigus au-dessus sont atténués. À 20 000 Hz, tout passe.',
     toInput: (value) => value,
     fromInput: (input) => input,
     inputDecimals: 0,
@@ -103,6 +111,7 @@ export const AUTOMATION_SPECS: AutomationSpec[] = [
     base: (instrument) => cutoff(instrument.filter.lowCutoff),
     format: hertz,
     unit: 'Hz',
+    help: 'Coupure du passe-haut, en hertz : les graves en dessous sont atténués. À 20 Hz, tout passe.',
     toInput: (value) => value,
     fromInput: (input) => input,
     inputDecimals: 0,
@@ -117,6 +126,7 @@ export const AUTOMATION_SPECS: AutomationSpec[] = [
     base: (instrument) => clamp(instrument.filter.resonance, 0, 1),
     format: percent,
     unit: '%',
+    help: 'Résonance du filtre, en % : accentue les fréquences proches des coupures du passe-bas et du passe-haut. 0 % : aucune.',
     toInput: (value) => value * 100,
     fromInput: (input) => input / 100,
     inputDecimals: 1,
@@ -131,6 +141,7 @@ export const AUTOMATION_SPECS: AutomationSpec[] = [
     base: (instrument) => clamp(instrument.reverb ?? 0, 0, 1),
     format: percent,
     unit: '%',
+    help: 'Part de son réverbéré, en % : 0 % son sec, sans réverbe.',
     toInput: (value) => value * 100,
     fromInput: (input) => input / 100,
     inputDecimals: 1,
@@ -145,6 +156,7 @@ export const AUTOMATION_SPECS: AutomationSpec[] = [
     base: (instrument) => clamp(instrument.unison?.detune ?? 0, 0, 100),
     format: (value) => `${fr(value, 1)} cents`,
     unit: 'cents',
+    help: 'Désaccord de l’unisson, en cents (centièmes de demi-ton) : écart entre ses voix. Ne s’entend qu’avec 2 voix ou plus.',
     toInput: (value) => value,
     fromInput: (input) => input,
     inputDecimals: 1,

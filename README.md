@@ -116,7 +116,7 @@ Le moteur, l'interface et Python sont dans le dossier : rien n'est installé sur
 Puis lancez Synthway :
 
 - **Windows :** double-cliquez sur `synthway.bat`.
-- **Linux :** `python3 synthway.py`
+- **Linux :** `./synthway.sh` dans un terminal, ou double-cliquez dessus (ou encore : `python3 synthway.py`).
 
 Le lanceur prépare ce qui manque. Au premier lancement, il compile le moteur, installe les paquets du serveur et de l'interface et construit l'interface, ce qui prend quelques minutes. Il démarre ensuite le serveur, qui sert aussi l'interface, et ouvre Synthway dans le navigateur ([http://127.0.0.1:18741](http://127.0.0.1:18741)). Pour tout arrêter : Ctrl+C, ou fermez la fenêtre.
 

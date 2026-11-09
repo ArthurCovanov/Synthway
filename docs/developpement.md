@@ -56,10 +56,12 @@ Le détail des échanges entre les couches (qui stocke quoi, où vit le signal a
 ```text
 synthway/
 ├── .gitignore                  # Fichiers ignorés (builds C, venvs Python, node_modules)
-├── .gitattributes              # Fins de ligne CRLF pour les .bat
+├── .gitattributes              # Fins de ligne : CRLF pour les .bat, LF pour les .sh
 ├── synthway.py                 # Lanceur : prépare le moteur et l'interface, lance le serveur, ouvre le navigateur
 ├── synthway.bat                # Lanceur Windows (double-clic) : trouve Python, puis synthway.py
+├── synthway.sh                 # Lanceur Linux (terminal ou double-clic) : trouve Python, puis synthway.py
 ├── packaging/build_windows.py  # Fabrique le zip Windows prêt à l'emploi (Python embarqué)
+├── packaging/build_windows.bat # Double-clic : interface (par WSL sans Node.js), puis build_windows.py
 ├── README.md                   # Présentation publique du projet (GitLab / GitHub)
 ├── LICENSE                     # Licence Apache-2.0
 ├── AGENTS.md                   # Règles communes aux agents IA (Claude, Gemini) et aux humains
@@ -123,7 +125,7 @@ Les commandes se lancent depuis la racine du dépôt.
 
 ### Le lanceur : tout en une fois
 
-`synthway.bat` (Windows, double-clic) ou `python3 synthway.py` (Linux) lance Synthway en un seul programme : `synthway-server`, qui sert aussi l'interface construite (`synthway-ui/dist`) sur [http://127.0.0.1:18741](http://127.0.0.1:18741). Pas de Vite au lancement. Depuis les sources, il prépare d'abord ce qui manque ou a changé :
+`synthway.bat` (Windows, double-clic), `./synthway.sh` (Linux, terminal ou double-clic) ou `python3 synthway.py` lance Synthway en un seul programme : `synthway-server`, qui sert aussi l'interface construite (`synthway-ui/dist`) sur [http://127.0.0.1:18741](http://127.0.0.1:18741). Pas de Vite au lancement. Depuis les sources, il prépare d'abord ce qui manque ou a changé :
 
 1. **Moteur :** compilé par `build.ps1` (Windows) ou `build.sh` (Linux) quand sa bibliothèque manque ou qu'un fichier de `include/`, `src/` ou `vendor/` est plus récent qu'elle. Sans compilateur, une bibliothèque déjà compilée est gardée, avec un avertissement.
 2. **Python du serveur :** celui qui exécute le lanceur s'il a les paquets du serveur. Sinon, le lanceur crée `synthway-server/.venv` et y installe `requirements.txt`, puis le réinstalle quand ce fichier change. Exception : avec le Python de MSYS2, `pip` ne sait pas compiler `pydantic-core`, et le lanceur donne la commande `pacman` (voir le [README du serveur](../synthway-server/README.md#3-lancer-le-serveur)).
@@ -133,7 +135,12 @@ Les commandes se lancent depuis la racine du dépôt.
 Options : `--no-browser`, `--port N`. Rien ne joue au lancement : le moteur ne démarre qu'avec le bouton ⏻ de l'interface. Le lanceur n'utilise que la bibliothèque standard de Python, pour tourner avant toute installation.
 
 - **`synthway.bat`** cherche Python dans cet ordre : `python\python.exe` (celui du zip Windows), `py -3`, `python` (pas l'alias du Microsoft Store, qui n'installe rien), puis `C:\msys64\ucrt64\bin\python.exe`. En cas d'erreur, il garde la fenêtre ouverte. Il doit garder ses fins de ligne CRLF (`.gitattributes`) : avec des LF, `cmd` lit mal ses étiquettes.
+- **`synthway.sh`** cherche `python3`, puis `python` (3.9 ou plus récent), et donne la commande d'installation sinon. Lancé hors d'un terminal (double-clic dans le gestionnaire de fichiers), il se rouvre dans le premier terminal trouvé parmi `x-terminal-emulator`, `gnome-terminal`, `konsole`, `xfce4-terminal` et `xterm`. Le terminal sert à montrer ses messages et à pouvoir arrêter Synthway ; il reste ouvert en cas d'erreur. Selon le gestionnaire de fichiers, le double-clic peut aussi ouvrir le script dans un éditeur au lieu de le lancer : `./synthway.sh` dans un terminal marche partout.
+  - Le script doit garder ses fins de ligne LF (`.gitattributes`) : avec des CRLF, `sh` lit un `\r` au bout de chaque commande.
+  - Il doit aussi garder son bit exécutable dans git. Depuis Windows, où git ne le voit pas, utilisez `git add --chmod=+x synthway.sh`.
+  - Pour un agent, sans terminal, `python3 synthway.py` : `synthway.sh` ouvrirait une fenêtre de terminal (WSLg).
 - **Tout Windows, pas de WSL :** le lanceur prend le Node de Windows. Un `node_modules` installé depuis WSL (c'est le même dossier) ne contient que les binaires Linux d'esbuild et de Rollup. Le lanceur le réinstalle alors pour Windows, avec un avertissement, et Vite ne repartira dans WSL qu'après un nouveau `npm install` là-bas (et inversement).
+- **Windows sans Node.js, avec WSL :** le lanceur garde le `dist/` déjà construit, même si les sources de l'interface ont changé. Pour le reconstruire, lancez `npm run build` dans `synthway-ui`, depuis WSL, ou double-cliquez sur `packaging/build_windows.bat`, qui refait aussi le paquet Windows (voir plus bas). Puis rechargez la page de Synthway.
 - **Les données de l'interface** (bibliothèque d'instruments, réglages) sont dans le `localStorage` du navigateur, propre à chaque origine : celles de `http://127.0.0.1:18741` (lanceur, zip) ne sont pas celles de `http://localhost:5173` (Vite).
 - **Pour travailler sur l'interface,** `npm run dev` reste le plus pratique (rechargement à chaud), face au serveur lancé par le lanceur ou à la main.
 
@@ -148,6 +155,14 @@ Options : `--no-browser`, `--port N`. Rien ne joue au lancement : le moteur ne d
 
 Celui qui le télécharge le dézippe et double-clique sur `synthway.bat`. Le Decomposer n'y est pas (PyTorch, environ 3 Go).
 
+Le plus simple : double-cliquez sur `packaging/build_windows.bat`. Il construit tout `dist/` d'un coup :
+1. **L'interface :** `npm run build` dans `synthway-ui`. Il passe par WSL quand Node.js n'est pas installé sous Windows : la distribution par défaut, ou celle donnée en argument (`build_windows.bat Debian`), qui doit avoir Node.js et les paquets de l'interface. La construction peut tourner pendant `npm run dev`.
+2. **Le paquet :** il lance `build_windows.py` avec le premier Python pour Windows qui a `pip` (`py -3`, `python`, puis celui de MSYS2).
+
+Le résultat : `dist/Synthway-<version>-windows-x64` (le dossier, qu'on peut lancer tel quel par son `synthway.bat`) et son zip. Synthway lancé depuis les sources (`synthway.bat` à la racine) profite aussi de la nouvelle interface et du moteur recompilé. Fermez d'abord un Synthway lancé depuis le dossier du paquet : le script ne pourrait pas le remplacer, et le dit. Il faut une connexion : `pip` télécharge à chaque fois les paquets du serveur.
+
+À la main :
+
 ```powershell
 C:\msys64\ucrt64\bin\python.exe packaging\build_windows.py
 ```
@@ -157,7 +172,7 @@ C:\msys64\ucrt64\bin\python.exe packaging\build_windows.py
   - la DLL doit être à jour et n'importer que des DLL de Windows (contrôle par `objdump`) ;
   - `dist/` doit être à jour et construit sans adresse fixe.
 
-  Sans Node.js pour Windows, construisez l'interface avant, là où est Node (`npm ci`, puis `npm run build` dans `synthway-ui`, depuis WSL par exemple) : le script prend un `dist/` à jour, et lit les licences des paquets npm dans `node_modules`.
+  Sans Node.js pour Windows, construisez l'interface avant, là où est Node (`npm ci`, puis `npm run build` dans `synthway-ui`, depuis WSL par exemple ; `build_windows.bat` le fait) : le script prend un `dist/` à jour, et lit les licences des paquets npm dans `node_modules`.
 - **Licences :** le zip contient les licences du moteur (miniaudio, RtMidi, libogg et libvorbis, dont la licence BSD de Xiph exige la notice dans toute distribution binaire), des polices, des paquets npm intégrés à l'interface, de Python (`python\LICENSE.txt`) et de chaque paquet Python (dans son `*.dist-info`). `licences\LISEZ-MOI.txt` les récapitule.
 - **Mettre à jour Python :** changer `PYTHON_VERSION` et `PYTHON_SHA256`, donné par `https://www.python.org/api/v2/downloads/release_file/?release=<id>`. Il faut une version publiée avec son paquet embarquable.
 

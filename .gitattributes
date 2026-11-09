@@ -1,2 +1,4 @@
 # Batch files need CRLF line endings: cmd misreads labels and goto in LF files
 *.bat text eol=crlf
+# Shell scripts need LF line endings: with CRLF, sh reads "\r" at the end of every command
+*.sh text eol=lf

@@ -183,6 +183,7 @@
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--auto-dim);
+  cursor: help;
 }
 
 .input {
@@ -200,6 +201,16 @@
   white-space: nowrap;
   font-size: 11px;
   color: var(--auto-dim);
+  cursor: help;
+}
+
+/* Two words one above the other (the pan: + right above − left) */
+.unitLines {
+  display: flex;
+  flex-direction: column;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.15;
 }
 
 .hint {

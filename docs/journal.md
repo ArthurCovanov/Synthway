@@ -1,5 +1,64 @@
 # Journal de travail
 
+## 2026-11-09 10:05 · Claude · terminé
+**Tâche :** version 0.3.1 partout (demande de l'utilisateur) : interface, serveur, moteur ; paquet Windows refait
+**Fichiers :** synthway-ui/{package.json, package-lock.json}, synthway-server/{pyproject.toml, src/main.py}, synthway-core/{src/synthway.c, CMakeLists.txt}, docs/journal.md
+**Résultat :**
+- **Versions :** 0.3.1 dans `package.json` et `package-lock.json` (sans `npm install`), `pyproject.toml`, `version` de FastAPI, `synthway_get_version`, `CMakeLists.txt`. Le « 0.1.0-mock » du serveur factice et `synthway-demucs` restent tels quels, comme pour 0.3.0.
+- **Moteur :**
+  - `build.sh --test` (archlinux) : tous les tests passent, CLI « v0.3.1 ».
+  - `build.ps1 -Test` (Windows), après l'arrêt de son Synthway par l'utilisateur : sans avertissement, tous les tests passent, « core 0.3.1 ».
+- **Paquet :** `packaging/build_windows.bat` a fait `dist/Synthway-0.3.1-windows-x64` et son zip (18,6 Mo).
+  - Lancé depuis son dossier, avec son Python et un PATH limité à Windows, sur le port 18753 : prêt en 2,4 s.
+  - `/health` donne `core_version` 0.3.1, l'API 0.3.1, et la page sert un bundle qui contient 0.3.1 et plus 0.3.0.
+  - Arrêté par `taskkill /T` ; aucun processus restant. Moteur jamais démarré, aucun son.
+- **`synthway-ui/dist`** (racine) reconstruit en 0.3.1 au passage : `synthway.bat` affiche la nouvelle version.
+- **Ancien paquet :** `dist/Synthway-0.3.0-windows-x64` et son zip supprimés, à la demande de l'utilisateur. `dist/` ne garde que le 0.3.1 et `cache/`. Rien n'est commité.
+
+## 2026-11-09 09:58 · Claude · terminé
+**Tâche :** à la demande de l'utilisateur, remplacer `synthway-ui/build-wsl.bat` (interface seule) par un script à double-cliquer qui construit tout `dist/` : interface par WSL, puis `packaging/build_windows.py` (moteur, dossier du paquet et zip)
+**Fichiers :** packaging/build_windows.bat (nouveau), packaging/build_windows.py, synthway-ui/build-wsl.bat (supprimé, jamais commité), docs/developpement.md, AGENTS.md, docs/journal.md
+**Résultat :**
+- **`packaging/build_windows.bat` (CRLF) :**
+  - Étape 1 : `npm run build` dans WSL quand `node` manque sous Windows (distribution par défaut, ou celle donnée en argument). S'il y a un Node Windows, `build_windows.py` construit l'interface comme le lanceur.
+  - Étape 2 : `build_windows.py`, lancé avec le premier Python Windows qui a `pip` (`py -3`, `python`, puis MSYS2).
+  - La fenêtre reste ouverte, avec un message de réussite ou d'échec.
+- **`build_windows.py` :**
+  - Si le dossier du paquet ne peut pas être remplacé (un Synthway lancé depuis lui), message clair au lieu d'une trace Python.
+  - Docstring : le `.bat` y est mentionné.
+- **Vérifié :**
+  - `build_windows.bat` lancé comme un double-clic : interface construite dans archlinux, DLL à jour et sans DLL de MSYS2, paquets du serveur téléchargés.
+  - `dist/Synthway-0.3.0-windows-x64` et son zip refaits (18,6 Mo, 713 fichiers). L'ancien paquet datait du 2026-11-08 15:48, sans l'automation.
+  - Le paquet a la même interface que `synthway-ui/dist` (avec l'infobulle du panoramique) et la même DLL que les sources.
+  - Message d'erreur testé sur un dossier de test au fichier ouvert, dans mon dossier temporaire.
+  - Synthway ne tournait pas pendant la construction.
+- **Non vérifié :** lancement du paquet refait (seul son contenu a changé, pas sa structure, vérifiée le 2026-11-08) ; sortie avec un Node Windows.
+- **Docs :** guide (arborescence ; zip Windows : double-clic, étapes, connexion requise, paquet à fermer ; lanceur : `build_windows.bat` à la place de `build-wsl.bat`) et `AGENTS.md`. Rien n'est commité.
+
+## 2026-11-09 09:45 · Claude · terminé
+**Tâche :** lancement (demande de l'utilisateur) : script Windows à double-cliquer qui reconstruit `synthway-ui/dist` par WSL, et `synthway.sh`, l'équivalent Linux de `synthway.bat`
+**Fichiers :** synthway-ui/build-wsl.bat, synthway.sh (nouveaux), .gitattributes, synthway.py (docstring), README.md, docs/developpement.md, AGENTS.md, docs/journal.md
+**Résultat :**
+- **`synthway-ui/build-wsl.bat` (CRLF) :** lance `npm run build` dans la distribution WSL par défaut, ou celle donnée en argument (`build-wsl.bat Debian`), puis dit de recharger la page. Il garde la fenêtre ouverte. Vérifié : archlinux (défaut) et Debian construisent `dist`. Une distribution inconnue donne le message d'échec : `wsl` rend alors un code négatif, que `if errorlevel 1` laissait passer pour un succès (corrigé).
+- **`synthway.sh` (LF, `#!/bin/sh`) :** cherche `python3` puis `python` (3.9 ou plus récent) et passe les options à `synthway.py`. Sans terminal, mais avec un écran (double-clic), il se rouvre dans `x-terminal-emulator`, `gnome-terminal`, `konsole`, `xfce4-terminal` ou `xterm`, et garde ce terminal ouvert en cas d'erreur. `.gitattributes` force LF pour les `.sh` (`synthway-core/build.sh` l'était déjà).
+- **Vérifié :**
+  - archlinux (bash, sans Python) : message d'installation ; relance dans un faux `xterm` depuis un autre dossier (chemin absolu, options transmises, message puis attente d'Entrée) ; `--` pour `gnome-terminal` ; pas de seconde relance.
+  - Debian, avec `dash` puis `bash` : `--help` transmis. Vrai lancement sur 18752 avec `--no-browser` : `/health` (core 0.3.0) et la page servie. Un Ctrl+C comme celui d'un terminal (SIGINT au groupe) donne « Arrêt de Synthway... », arrêt propre d'uvicorn, code 0, aucun processus restant. Moteur jamais démarré, aucun son.
+- **Constaté :** la Debian a maintenant `gcc`, `g++` et ALSA. Le premier lancement y a recompilé `libsynthway.so`, périmé (objets dans `build/obj/linux`). `AGENTS.md` est mis à jour sur ce point.
+- **Docs :** README (Linux : `./synthway.sh`), guide (arborescence, lanceur : `synthway.sh`, `build-wsl.bat`, bit exécutable), `AGENTS.md` (lanceurs ; un agent lance `python3 synthway.py`, car `synthway.sh` ouvrirait un terminal par WSLg), docstring de `synthway.py`. `synthway-ui/README.md` n'est pas touché, à cause de l'entrée « en cours » de Gemini du 2026-11-05 21:19.
+- **Non vérifié :** un vrai double-clic dans un gestionnaire de fichiers Linux, et un vrai terminal (seulement des faux).
+- **Git :** à la demande de l'utilisateur, `synthway.sh` est ajouté à l'index avec son bit exécutable (`git add --chmod=+x`, mode 100755 ; `core.fileMode` vaut false ici, git ne le verrait pas seul). Les `git add` suivants gardent ce mode. Rien d'autre n'est indexé, rien n'est commité.
+
+## 2026-11-09 09:36 · Claude · terminé
+**Tâche :** case d'automation du Composer (demande de l'utilisateur) : unité courte qui tient dans la case, « + D » au-dessus de « − G » pour le panoramique, infobulle complète et curseur d'aide (« ? ») sur l'unité de tous les réglages ; `synthway-ui/dist` reconstruit pour le lanceur
+**Fichiers :** synthway-ui/src/lib/automation.ts, synthway-ui/src/components/{Automation.tsx, Automation.module.css}, synthway-ui/dist (reconstruit), docs/journal.md
+**Résultat :**
+- **Unité :** `AutomationSpec` gagne `help` (l'explication du réglage, dans l'infobulle de l'unité et l'`aria-label` du champ) et `unitLines` (deux mots empilés à la place de l'unité). Le panoramique affiche « + D » au-dessus de « − G » au lieu de « % (− gauche, + droite) », qui était coupé dans ses 44 px. Les 7 réglages ont leur infobulle.
+- **Curseur :** `cursor: help` sur l'unité et sur la position du point, les deux textes à infobulle de la case.
+- **Vérifié :** typage et build (archlinux). Dans l'aperçu face au serveur factice : point posé sur le panoramique (53,5), unité « + D / − G », curseur d'aide, console sans erreur. Serveur factice et aperçu arrêtés, données de test effacées (origine de l'aperçu). Aucun son joué.
+- **Lanceur :** `synthway-ui/dist` reconstruit (`npm run build`, archlinux) : `synthway.bat` sert la nouvelle version, sans Node. Le `.bat` lui-même ne change pas. Le zip n'est pas refait.
+- **Non fait :** `synthway-ui/README.md` (ligne de la case d'automation) laissé tel quel, car l'entrée de Gemini du 2026-11-05 21:19, toujours « en cours », le touche.
+
 ## 2026-11-08 15:46 · Claude · terminé
 **Tâche :** version 0.3.0 partout (demande de l'utilisateur) : `package.json` comme seule source pour l'interface (barre latérale, Réglages, nom du zip), serveur et moteur à 0.3.0 ; zip refait
 **Fichiers :** synthway-ui/{package.json, package-lock.json, vite.config.ts, src/vite-env.d.ts, src/components/Sidebar.tsx, src/screens/Settings.tsx}, synthway-server/{pyproject.toml, src/main.py}, synthway-core/{src/synthway.c, CMakeLists.txt}, docs/journal.md

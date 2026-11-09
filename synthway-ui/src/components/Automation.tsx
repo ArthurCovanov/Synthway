@@ -225,7 +225,7 @@ export function AutomationCard({
             <input
               className={styles.input}
               inputMode="decimal"
-              aria-label={`Valeur du point (${spec.unit})`}
+              aria-label={`Valeur du point. ${spec.help}`}
               title={`Valeur du point, de ${spec.toInput(spec.min)} à ${spec.toInput(spec.max)} ${spec.unit} (Entrée pour valider)`}
               value={draft}
               disabled={locked}
@@ -242,8 +242,8 @@ export function AutomationCard({
                 }
               }}
             />
-            <span className={styles.unit} title={spec.unit}>
-              {spec.unit}
+            <span className={cx(styles.unit, spec.unitLines && styles.unitLines)} title={spec.help}>
+              {spec.unitLines ? spec.unitLines.map((line) => <span key={line}>{line}</span>) : spec.unit}
             </span>
           </>
         ) : (

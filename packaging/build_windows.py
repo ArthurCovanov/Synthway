@@ -3,6 +3,9 @@
 
     python packaging/build_windows.py
 
+or double-click packaging/build_windows.bat, which builds the interface
+first (through WSL when Node.js is not installed on Windows).
+
 The zip holds synthway-core already compiled, the interface already built,
 python.org's embeddable Python with the server's packages, the launcher
 (synthway.bat, synthway.py) and every licence. Whoever downloads it unzips it
@@ -219,7 +222,11 @@ def licences(target):
 
 def assemble(folder):
     if folder.exists():
-        shutil.rmtree(folder)
+        try:
+            shutil.rmtree(folder)
+        except OSError as e:
+            raise PackageError(f"Impossible de remplacer {folder} ({e.strerror}) : "
+                               "si Synthway tourne depuis ce dossier, fermez-le, puis relancez.")
     folder.mkdir(parents=True)
     for name in ("synthway.bat", "synthway.py", "LICENSE"):
         shutil.copyfile(ROOT / name, folder / name)
