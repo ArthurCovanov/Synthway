@@ -1,5 +1,25 @@
 # Journal de travail
 
+## 2026-11-09 15:36 · Claude · terminé
+**Tâche :** version 0.4.0 aussi pour le serveur et le moteur (demande de l'utilisateur), comme l'interface
+**Fichiers :** synthway-server/{pyproject.toml, src/main.py}, synthway-core/{src/synthway.c, CMakeLists.txt}, docs/journal.md
+**Résultat :**
+- **Versions :** 0.4.0 dans `pyproject.toml`, `version` de FastAPI, `synthway_get_version` et `CMakeLists.txt`. Le « 0.1.0-mock » du serveur factice et `synthway-demucs` restent tels quels, comme pour les versions précédentes.
+- **Moteur :**
+  - `build.sh --test` (archlinux) : sans avertissement, tous les tests passent.
+  - `build.ps1 -Test` (Windows ; aucun serveur n'écoutait sur 18741) : sans avertissement, tous les tests passent, CLI « v0.4.0 ». La DLL ne dépend que de DLL système.
+- **Serveur :** avec le Python MSYS2, `main` s'importe et donne l'API 0.4.0 ; le pont charge la nouvelle DLL et lit 0.4.0. Moteur jamais démarré, aucun son.
+- **Non fait :** zip Windows pas refait (`dist/` n'a que le 0.3.1). Commité avec l'entrée de 15:34, à la demande de l'utilisateur, sur une branche `version-0.4.0` partie de `main` ; rien n'est poussé.
+
+## 2026-11-09 15:34 · Claude · terminé
+**Tâche :** version de l'interface à 0.4.0 (demande de l'utilisateur), après l'interface bilingue ; `synthway-ui/dist` reconstruit
+**Fichiers :** synthway-ui/{package.json, package-lock.json}, synthway-ui/dist (reconstruit), docs/journal.md
+**Résultat :**
+- **Version :** 0.4.0 dans `package.json` et `package-lock.json` (sans `npm install`). La barre latérale et les Réglages (« Interface ») la lisent à la compilation ; le nom du zip Windows la suivra.
+- **Laissés en 0.3.1 :** le serveur (`pyproject.toml`, `version` de FastAPI) et le moteur (`synthway_get_version`, `CMakeLists.txt`), la demande ne portant que sur l'interface. Les Réglages afficheront donc « Interface 0.4.0 » et « Core 0.3.1 ».
+- **Vérifié :** `npm run build` (archlinux, typage compris) ; le bundle de `synthway-ui/dist` contient 0.4.0 et plus 0.3.1. Le zip n'est pas refait. Commité avec l'entrée de 15:36 (même commit).
+- **Au passage :** dans l'entrée de 10:46, la ligne Git dit maintenant que `main` a été avancé jusqu'au commit 2e6817b.
+
 ## 2026-11-09 10:46 · Claude · terminé
 **Tâche :** interface multilingue (demande de l'utilisateur) : textes de l'interface dans des fichiers de langue (français et anglais), sélecteur de langue dans les Réglages, anglais par défaut ; README en anglais, version française gardée, section illustrée sur le changement de langue. Les deux entrées « en cours » de Gemini (2026-11-05 21:19 et 2026-11-08 13:18), périmées, sont refermées à la demande de l'utilisateur.
 **Fichiers :** synthway-ui/src/i18n/ (nouveau : index.tsx, locales/en.json, locales/fr.json), synthway-ui/src/{App.tsx, screens/*.tsx (les 5), screens/Settings.module.css, components/{AnalysisSpectrum, Automation, ClipWaveform, EnvelopeGraph, EnvelopesGraph, ExportDialog, KeyboardDock, Notice, PianoKeyboard, Sidebar, SpectrumGraph, Tuner, WaveformFitCard, ui}.tsx, lib/{SynthServer.tsx, api, audioExport, automation, composition, compositionFile, files, history, instrumentFile, instruments, music, neon, waveShapes}.ts}, synthway-ui/{index.html, README.md}, synthway-ui/dist (reconstruit), README.md (anglais), README.fr.md (nouveau), docs/images/language.png (nouveau), docs/developpement.md, AGENTS.md, .claude/skills/ui-build/SKILL.md, docs/journal.md
@@ -11,7 +31,7 @@
 - **Vérifié :** typage et build (archlinux) ; dans l'aperçu face au serveur factice, les 5 écrans en anglais (par défaut, stockage vide) puis en français : aucune clé brute, aucun `{…}`, aucun texte de l'autre langue détecté, console sans erreur ; changement de langue immédiat, gardé au rechargement. Serveur factice et aperçu arrêtés, données de test effacées (origine de l'aperçu). Aucun son joué, micro jamais ouvert.
 - **Docs :** `README.md` en anglais (section « Language » illustrée, avec une ligne en français) et `README.fr.md` (section « Langue », renvoi depuis le démarrage rapide) ; capture annotée `docs/images/language.png` (1 : engrenage, 2 : « Français », étiquettes bilingues) ; guide (section « Langues de l'interface », ajouter une langue), `AGENTS.md` (règle des textes, deux README), skill `ui-build`, README de l'interface.
 - **Non fait / non vérifié :** zip Windows pas refait ; serveur et lanceur non traduits ; vérification à l'œil seulement sur des captures réduites (pas tous les dialogues ni tous les états d'erreur).
-- **Git :** commité à la demande de l'utilisateur, sur une nouvelle branche `ui-i18n` partie de `main` (0543682) ; `main` n'a pas bougé, rien n'est poussé.
+- **Git :** commité à la demande de l'utilisateur (2e6817b), d'abord sur une branche `ui-i18n` partie de `main`, puis `main` avancé jusqu'à lui (fast-forward, à la demande de l'utilisateur). Rien n'est poussé.
 
 ## 2026-11-09 10:05 · Claude · terminé
 **Tâche :** version 0.3.1 partout (demande de l'utilisateur) : interface, serveur, moteur ; paquet Windows refait
