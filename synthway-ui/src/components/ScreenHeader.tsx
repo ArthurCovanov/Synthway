@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import styles from './layout.module.css';
+import styles from '@theme/components/layout.module.css';
 
 export function ScreenHeader({
   index,

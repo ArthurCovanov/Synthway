@@ -20,16 +20,16 @@
 }
 
 .gridLine {
-  stroke: rgba(150, 125, 255, 0.08);
+  stroke: color-mix(in srgb, var(--grid) 8%, transparent);
 }
 
 .harmonicLine {
-  stroke: rgba(150, 125, 255, 0.11);
+  stroke: color-mix(in srgb, var(--grid) 11%, transparent);
   stroke-dasharray: 2 4;
 }
 
 .axis {
-  stroke: rgba(170, 140, 255, 0.3);
+  stroke: color-mix(in srgb, var(--grid-strong) 30%, transparent);
 }
 
 .tick {
@@ -82,7 +82,7 @@
 }
 
 .handle {
-  stroke: rgba(0, 0, 8, 0.6);
+  stroke: color-mix(in srgb, var(--bg-0) 60%, transparent);
   stroke-width: 1.5;
   filter: drop-shadow(0 0 5px currentColor);
 }
@@ -93,7 +93,7 @@
 }
 
 .partial[data-selected] .handle {
-  stroke: #fff;
+  stroke: var(--highlight);
   stroke-width: 2;
 }
 
@@ -110,7 +110,7 @@
 }
 
 .partial:focus-visible .handle {
-  stroke: var(--neon-pink);
+  stroke: var(--accent);
   stroke-width: 3;
 }
 

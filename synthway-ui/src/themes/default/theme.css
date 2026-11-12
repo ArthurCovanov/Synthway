@@ -1,0 +1,119 @@
+/* Synthway theme: colours sampled from assets/logo/v4.png.
+
+   Every colour of the interface comes from the variables below: a theme that
+   only replaces this file recolours everything (see ../README.md). The other
+   stylesheets take their translucent shades with color-mix(), so one variable
+   per colour is enough. */
+
+:root {
+  color-scheme: dark;
+
+  /* Surfaces, darkest first; the darkest one is the logo's own background */
+  --bg-0: #000008;
+  --bg-1: #05051a;
+  --bg-2: #0a0a24;
+  --bg-3: #111033;
+  --bg-4: #1a1846;
+  --bg-5: #24215a;
+  --bg-raised: #131136; /* Inside a selected card or track, behind its gradient border */
+  --bg-float: #16112c; /* Floating bar of the piano roll (selected notes) */
+  --bg-sunken: #00000a; /* Black-key rows of the piano roll */
+  --line: rgba(150, 125, 255, 0.12);
+  --line-strong: rgba(170, 140, 255, 0.24);
+  --grid: #967dff; /* Graph and grid lines, at low opacities */
+  --grid-strong: #aa8cff;
+
+  /* Neon, along the wordmark gradient (S -> Y) */
+  --neon-pink: #ff1aa8;
+  --neon-magenta: #f21cf0;
+  --neon-violet: #a31cff;
+  --neon-indigo: #5b2bff;
+  --neon-blue: #2e4dff;
+  --neon-pink-soft: #ff7cc6;
+  --neon-blue-soft: #8a9bff;
+  --grad-neon: linear-gradient(90deg, #ff1aa8 0%, #f21cf0 30%, #a31cff 60%, #2e4dff 100%);
+  --grad-neon-v: linear-gradient(180deg, #ff1aa8 0%, #a31cff 55%, #2e4dff 100%);
+
+  /* Extra colours, to tell partials, tracks and stems apart (lib/neon.ts) */
+  --neon-cyan: #22e6ff;
+  --neon-green: #39ff88;
+  --neon-yellow: #ffe94a;
+  --neon-orange: #ff9b2f;
+  --neon-red: #ff3d4d;
+  --neon-white: #f4f0ff;
+  --neon-blue-mid: #5f78ff; /* The blue hue, as drawn on graphs */
+  --neon-amber: #ff8c14;
+  --neon-orange-deep: #ff640f;
+
+  /* The roles the interface lights up with: the accent (buttons, focus,
+     selection), a second one (drop targets, black keys) and a third one
+     (halos, grids). Here, the neon pink, blue and violet. */
+  --accent: var(--neon-pink);
+  --accent-soft: var(--neon-pink-soft);
+  --accent-2: var(--neon-blue);
+  --accent-2-mid: #5f78ff;
+  --accent-2-soft: var(--neon-blue-soft);
+  --accent-3: var(--neon-violet);
+  --on-accent: #fff; /* Text, knobs and marks on a filled colour (button, key, note) */
+  --highlight: #fff; /* The brightest mark on the background: playhead, selected outlines */
+  --shadow: #000;
+
+  /* Curves drawn by the code: oscilloscope, envelope, active icons */
+  --curve-start: var(--neon-pink);
+  --curve-mid: #c21cff;
+  --curve-end: #5f78ff;
+
+  /* Neon halos: 1 as drawn, 0 for none at all (between: dimmer). The three
+     shadows below are the strongest ones, also turned off by Settings > Neon glow. */
+  --glow: 1;
+  --glow-pink: 0 0 10px rgba(255, 26, 168, 0.55), 0 0 28px rgba(255, 26, 168, 0.22);
+  --glow-violet: 0 0 10px rgba(163, 28, 255, 0.5), 0 0 28px rgba(163, 28, 255, 0.2);
+  --glow-blue: 0 0 10px rgba(46, 77, 255, 0.55), 0 0 28px rgba(46, 77, 255, 0.22);
+
+  /* Text */
+  --text-0: #f4f0ff;
+  --text-1: #c3bce6;
+  --text-2: #8a84b3;
+  --text-3: #5c5785;
+
+  /* Status */
+  --ok: #2ff3c9;
+  --warn: #ffb02e;
+  --danger: #ff3b6b;
+  --danger-soft: #ffb3c9; /* Text of a delete button */
+  --danger-edge: #ff3c78;
+
+  /* Window backdrop: neon haze, like city lights in fog; and the synthwave
+     horizon grid at the bottom of each screen (none: no grid) */
+  --app-backdrop:
+    radial-gradient(55% 45% at 88% -8%, color-mix(in srgb, var(--accent) 17%, transparent), transparent 70%),
+    radial-gradient(50% 45% at 12% 108%, color-mix(in srgb, var(--accent-2) 20%, transparent), transparent 70%),
+    radial-gradient(40% 35% at 55% 55%, color-mix(in srgb, var(--accent-3) 6%, transparent), transparent 75%),
+    var(--bg-0);
+  --app-grid:
+    linear-gradient(color-mix(in srgb, var(--accent-3) 20%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--accent-2) 16%, transparent) 1px, transparent 1px);
+
+  /* Piano keys (the white keys are dark here) */
+  --key-white: linear-gradient(180deg, #19173f 0%, #110f33 70%, #1b1946 100%);
+  --key-white-hover: linear-gradient(180deg, #221f55 0%, #17143f 70%, #24215a 100%);
+  --key-black: linear-gradient(180deg, #03030f 0%, #0a0926 100%);
+  --key-black-hover: linear-gradient(180deg, #0a0926 0%, #15133a 100%);
+
+  /* Automation of the Composer: orange and yellow on black */
+  --automation-bg: #000;
+  --automation-bg-2: #120a02;
+  --automation-text: #ffd9a8;
+  --automation-dim: #a3784a;
+  --automation-playhead: #fff6e8;
+
+  --radius-s: 6px;
+  --radius-m: 10px;
+  --radius-l: 14px;
+
+  --font-display: 'Michroma', 'Eurostile', 'Segoe UI', sans-serif;
+  --font-ui: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Cascadia Mono', ui-monospace, monospace;
+
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+}

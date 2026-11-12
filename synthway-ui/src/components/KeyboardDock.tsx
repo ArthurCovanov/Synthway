@@ -6,10 +6,10 @@ import { keyboardOctave, MAX_OCTAVE, MIN_OCTAVE, type Instrument } from '../lib/
 import { isTyping } from '../lib/keyboard';
 import { midiToFrequency, midiToName } from '../lib/music';
 import { playBlocker, useSynthServer } from '../lib/SynthServer';
-import layout from './layout.module.css';
+import layout from '@theme/components/layout.module.css';
 import { PianoKeyboard } from './PianoKeyboard';
 import { Button, Panel, cx } from './ui';
-import styles from './KeyboardDock.module.css';
+import styles from '@theme/components/KeyboardDock.module.css';
 
 // Physical key positions (KeyboardEvent.code): the same keys play the same
 // notes on AZERTY and QWERTY layouts

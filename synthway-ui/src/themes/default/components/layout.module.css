@@ -34,8 +34,8 @@
 }
 
 .eyebrowIndex {
-  color: var(--neon-pink-soft);
-  text-shadow: 0 0 8px rgba(255, 26, 168, 0.6);
+  color: var(--accent-soft);
+  text-shadow: 0 0 8px color-mix(in srgb, var(--accent) calc(60% * var(--glow)), transparent);
 }
 
 .eyebrowIndex::after {
@@ -55,7 +55,7 @@
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-0);
-  text-shadow: 0 0 22px rgba(163, 28, 255, 0.45);
+  text-shadow: 0 0 22px color-mix(in srgb, var(--accent-3) calc(45% * var(--glow)), transparent);
 }
 
 .subtitle {

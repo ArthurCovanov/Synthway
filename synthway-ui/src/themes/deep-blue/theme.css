@@ -1,0 +1,100 @@
+/* Deep blue: flat ink, one electric blue, off-white text, square corners.
+   No haze, no grid, no halo. Same variables as ../default/theme.css, which
+   explains each of them. */
+
+:root {
+  color-scheme: dark;
+
+  /* Surfaces: ink, darker cards */
+  --bg-0: #19192f;
+  --bg-1: #141429;
+  --bg-2: #0f0f25;
+  --bg-3: #0d0d24;
+  --bg-4: #23234a;
+  --bg-5: #2f2f5e;
+  --bg-raised: #14143a;
+  --bg-float: #10102c;
+  --bg-sunken: #0b0b1f;
+  --line: rgba(242, 242, 242, 0.1);
+  --line-strong: rgba(242, 242, 242, 0.2);
+  --grid: #9a9aff;
+  --grid-strong: #b4b4ff;
+
+  /* Blue, almost flat */
+  --neon-pink: #ff5ca8;
+  --neon-magenta: #d66bff;
+  --neon-violet: #9277ff;
+  --neon-indigo: #3b3bff;
+  --neon-blue: #4d6bff;
+  --neon-pink-soft: #ff9ccb;
+  --neon-blue-soft: #a3b2ff;
+  --grad-neon: linear-gradient(90deg, #0000f2 0%, #2a2aff 100%);
+  --grad-neon-v: linear-gradient(180deg, #2a2aff 0%, #0000f2 100%);
+
+  --neon-cyan: #3dd6ff;
+  --neon-green: #3ddc97;
+  --neon-yellow: #ffe066;
+  --neon-orange: #ffa94d;
+  --neon-red: #ff6b6b;
+  --neon-white: #f2f2f2;
+  --neon-blue-mid: #6b86ff;
+  --neon-amber: #ff922b;
+  --neon-orange-deep: #ff7a33;
+
+  /* Accents: electric blue, and lighter blues */
+  --accent: #2a2aff;
+  --accent-soft: #9d9dff;
+  --accent-2: #4747ff;
+  --accent-2-mid: #6464ff;
+  --accent-2-soft: #a6a6ff;
+  --accent-3: #6e6eff;
+  --on-accent: #ffffff;
+  --highlight: #f2f2f2;
+  --shadow: #000000;
+
+  --curve-start: #4747ff;
+  --curve-mid: #7a7aff;
+  --curve-end: #c4c4ff;
+
+  /* Flat: no halo */
+  --glow: 0;
+  --glow-pink: none;
+  --glow-violet: none;
+  --glow-blue: none;
+
+  --text-0: #f2f2f2;
+  --text-1: #c9c9da;
+  --text-2: #9090ad;
+  --text-3: #62627f;
+
+  --ok: #3ddc97;
+  --warn: #ffb347;
+  --danger: #ff5c7a;
+  --danger-soft: #ffb3c1;
+  --danger-edge: #ff5c7a;
+
+  --app-backdrop: var(--bg-0);
+  --app-grid: none;
+
+  --key-white: linear-gradient(180deg, #1d1d3d 0%, #17173a 100%);
+  --key-white-hover: linear-gradient(180deg, #26264f 0%, #1e1e46 100%);
+  --key-black: linear-gradient(180deg, #08081a 0%, #0d0d24 100%);
+  --key-black-hover: linear-gradient(180deg, #141433 0%, #1a1a40 100%);
+
+  /* Automation: orange on ink, the one warm colour */
+  --automation-bg: #0d0d24;
+  --automation-bg-2: #16162e;
+  --automation-text: #ffd8a8;
+  --automation-dim: #a88a6a;
+  --automation-playhead: #f2f2f2;
+
+  --radius-s: 2px;
+  --radius-m: 3px;
+  --radius-l: 4px;
+
+  --font-display: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  --font-ui: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Cascadia Mono', ui-monospace, monospace;
+
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+}

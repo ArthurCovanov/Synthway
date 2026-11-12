@@ -13,7 +13,7 @@ import {
   SHAPE_LABELS,
   type BuildFrom,
 } from '../lib/waveShapes';
-import styles from './WaveformFitCard.module.css';
+import styles from '@theme/components/WaveformFitCard.module.css';
 
 /** Harmonics drawn, and the depth of the drawing in dB */
 const CHART_HARMONICS = 32;

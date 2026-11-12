@@ -11,7 +11,7 @@
 }
 
 .gridLine {
-  stroke: rgba(150, 125, 255, 0.08);
+  stroke: color-mix(in srgb, var(--grid) 8%, transparent);
 }
 
 .tick,
@@ -22,7 +22,7 @@
 }
 
 .harmonic {
-  stroke: rgba(150, 125, 255, 0.2);
+  stroke: color-mix(in srgb, var(--grid) 20%, transparent);
   stroke-dasharray: 2 4;
 }
 
@@ -32,10 +32,10 @@
 
 .line {
   fill: none;
-  stroke: var(--neon-violet);
+  stroke: var(--accent-3);
   stroke-width: 1.4;
   stroke-linejoin: round;
-  filter: drop-shadow(0 0 4px rgba(163, 28, 255, 0.6));
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--accent-3) calc(60% * var(--glow)), transparent));
 }
 
 .partialLine {
@@ -45,7 +45,7 @@
 }
 
 .partialDot {
-  stroke: rgba(0, 0, 8, 0.7);
+  stroke: color-mix(in srgb, var(--bg-0) 70%, transparent);
   stroke-width: 1;
   filter: drop-shadow(0 0 4px currentColor);
 }
@@ -62,7 +62,7 @@
 
 /* Noise gate: what lies under the line is ignored by the analyzer */
 .gated {
-  fill: rgba(0, 0, 8, 0.55);
+  fill: color-mix(in srgb, var(--bg-0) 55%, transparent);
   pointer-events: none;
 }
 

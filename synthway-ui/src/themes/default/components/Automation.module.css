@@ -2,20 +2,20 @@
    The card (under the tracks) and the lane (under the piano roll) have the same height, so that
    they line up: the roll's panel has 4 px less padding at its bottom than the tracks' one. */
 
-.automation {
+.card,
+.lane {
   --auto-orange: var(--neon-orange);
   --auto-yellow: var(--neon-yellow);
-  --auto-line: rgba(255, 155, 47, 0.32);
-  --auto-line-soft: rgba(255, 155, 47, 0.14);
-  --auto-text: #ffd9a8;
-  --auto-dim: #a3784a;
+  --auto-line: color-mix(in srgb, var(--neon-orange) 32%, transparent);
+  --auto-line-soft: color-mix(in srgb, var(--neon-orange) 14%, transparent);
+  --auto-text: var(--automation-text);
+  --auto-dim: var(--automation-dim);
   --auto-height: 148px;
 }
 
 /* ---------- Card, under the tracks ---------- */
 
 .card {
-  composes: automation;
   flex: none;
   height: var(--auto-height);
   margin-top: 10px;
@@ -25,10 +25,10 @@
   gap: 7px;
   border-radius: 11px;
   border: 1px solid var(--auto-orange);
-  background: #000;
+  background: var(--automation-bg);
   box-shadow:
-    0 0 14px rgba(255, 155, 47, 0.22),
-    inset 0 0 18px rgba(255, 155, 47, 0.05);
+    0 0 14px color-mix(in srgb, var(--neon-orange) calc(22% * var(--glow)), transparent),
+    inset 0 0 18px color-mix(in srgb, var(--neon-orange) calc(5% * var(--glow)), transparent);
   color: var(--auto-text);
   font-size: 12px;
 }
@@ -51,7 +51,7 @@
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--auto-orange);
-  text-shadow: 0 0 8px rgba(255, 155, 47, 0.6);
+  text-shadow: 0 0 8px color-mix(in srgb, var(--neon-orange) calc(60% * var(--glow)), transparent);
 }
 
 .cardTrack {
@@ -75,7 +75,7 @@
   height: 8px;
   border-radius: 50%;
   background: var(--hue);
-  box-shadow: 0 0 8px var(--hue);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--hue) calc(100% * var(--glow)), transparent);
 }
 
 .select,
@@ -83,7 +83,7 @@
   height: 26px;
   border-radius: 6px;
   border: 1px solid var(--auto-line);
-  background: #120a02;
+  background: var(--automation-bg-2);
   color: var(--auto-text);
   font-family: var(--font-ui);
   font-size: 12px;
@@ -98,11 +98,11 @@
 .select:focus-visible,
 .input:focus-visible {
   border-color: var(--auto-orange);
-  box-shadow: 0 0 0 1px var(--auto-orange), 0 0 10px rgba(255, 155, 47, 0.35);
+  box-shadow: 0 0 0 1px var(--auto-orange), 0 0 10px color-mix(in srgb, var(--neon-orange) calc(35% * var(--glow)), transparent);
 }
 
 .select option {
-  background: #120a02;
+  background: var(--automation-bg-2);
   color: var(--auto-text);
 }
 
@@ -133,9 +133,9 @@
 }
 
 .segment[aria-pressed='true'] {
-  background: rgba(255, 155, 47, 0.18);
+  background: color-mix(in srgb, var(--neon-orange) 18%, transparent);
   color: var(--auto-yellow);
-  text-shadow: 0 0 6px rgba(255, 233, 74, 0.5);
+  text-shadow: 0 0 6px color-mix(in srgb, var(--neon-yellow) calc(50% * var(--glow)), transparent);
 }
 
 .segment:disabled {
@@ -158,7 +158,7 @@
 
 .iconButton:hover:not(:disabled) {
   border-color: var(--auto-orange);
-  box-shadow: 0 0 8px rgba(255, 155, 47, 0.35);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--neon-orange) calc(35% * var(--glow)), transparent);
 }
 
 .iconButton:disabled {
@@ -224,15 +224,14 @@
 /* ---------- Lane, under the piano roll ---------- */
 
 .lane {
-  composes: automation;
   flex: none;
   height: var(--auto-height);
   margin: 10px 0 4px;
   display: flex;
   border-radius: 10px;
   border: 1px solid var(--auto-line);
-  background: #000;
-  box-shadow: 0 0 16px rgba(255, 155, 47, 0.12);
+  background: var(--automation-bg);
+  box-shadow: 0 0 16px color-mix(in srgb, var(--neon-orange) calc(12% * var(--glow)), transparent);
   overflow: hidden;
   color: var(--auto-text);
 }
@@ -305,7 +304,7 @@
   right: 8px;
   padding: 2px 6px;
   border-radius: 5px;
-  background: rgba(0, 0, 0, 0.75);
+  background: color-mix(in srgb, var(--shadow) 75%, transparent);
   font-family: var(--font-mono);
   font-size: 10.5px;
   color: var(--auto-yellow);

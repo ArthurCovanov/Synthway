@@ -1,0 +1,102 @@
+/* Graphite: black and greys. Neutral grey accents, a white main button, and
+   only the partials, tracks and stems in colour, muted, to tell them apart.
+   No halo. Same variables as ../default/theme.css, which explains each of them. */
+
+:root {
+  color-scheme: dark;
+
+  /* Surfaces: black, then graphite cards */
+  --bg-0: #0a0a0a;
+  --bg-1: #0f0f0f;
+  --bg-2: #141414;
+  --bg-3: #181818;
+  --bg-4: #232323;
+  --bg-5: #303030;
+  --bg-raised: #1e1e1e;
+  --bg-float: #171717;
+  --bg-sunken: #070707;
+  --line: rgba(255, 255, 255, 0.08);
+  --line-strong: rgba(255, 255, 255, 0.17);
+  --grid: #a3a3a3;
+  --grid-strong: #c2c2c2;
+
+  /* Greys, for the gradients */
+  --neon-pink: #f472b6;
+  --neon-magenta: #e879f9;
+  --neon-violet: #a78bfa;
+  --neon-indigo: #818cf8;
+  --neon-blue: #60a5fa;
+  --neon-pink-soft: #f9a8d4;
+  --neon-blue-soft: #93c5fd;
+  --grad-neon: linear-gradient(90deg, #6e6e6e 0%, #4a4a4a 100%);
+  --grad-neon-v: linear-gradient(180deg, #8a8a8a 0%, #4a4a4a 100%);
+
+  /* Colours of partials, tracks and stems: muted, but distinct */
+  --neon-cyan: #22d3ee;
+  --neon-green: #4ade80;
+  --neon-yellow: #facc15;
+  --neon-orange: #fb923c;
+  --neon-red: #f87171;
+  --neon-white: #f5f5f5;
+  --neon-blue-mid: #60a5fa;
+  --neon-amber: #f59e0b;
+  --neon-orange-deep: #ea580c;
+
+  /* Accents: light, middle and dark greys */
+  --accent: #c4c4c4;
+  --accent-soft: #e0e0e0;
+  --accent-2: #8c8c8c;
+  --accent-2-mid: #9e9e9e;
+  --accent-2-soft: #c4c4c4;
+  --accent-3: #5e5e5e;
+  --on-accent: #ffffff;
+  --highlight: #f5f5f5;
+  --shadow: #000000;
+
+  --curve-start: #f0f0f0;
+  --curve-mid: #b0b0b0;
+  --curve-end: #707070;
+
+  /* Flat: no halo */
+  --glow: 0;
+  --glow-pink: none;
+  --glow-violet: none;
+  --glow-blue: none;
+
+  --text-0: #f2f2f2;
+  --text-1: #c7c7c7;
+  --text-2: #8f8f8f;
+  --text-3: #5c5c5c;
+
+  --ok: #4ade80;
+  --warn: #fbbf24;
+  --danger: #f87171;
+  --danger-soft: #fecaca;
+  --danger-edge: #f87171;
+
+  /* Black, a little lighter at the top */
+  --app-backdrop: radial-gradient(90% 55% at 50% -12%, #1b1b1b, transparent 70%), var(--bg-0);
+  --app-grid: none;
+
+  --key-white: linear-gradient(180deg, #262626 0%, #1f1f1f 70%, #292929 100%);
+  --key-white-hover: linear-gradient(180deg, #303030 0%, #282828 70%, #333333 100%);
+  --key-black: linear-gradient(180deg, #050505 0%, #0e0e0e 100%);
+  --key-black-hover: linear-gradient(180deg, #151515 0%, #1c1c1c 100%);
+
+  /* Automation: orange on black, the one warm colour */
+  --automation-bg: #0a0a0a;
+  --automation-bg-2: #15110d;
+  --automation-text: #fed7aa;
+  --automation-dim: #a8957f;
+  --automation-playhead: #f5f5f5;
+
+  --radius-s: 5px;
+  --radius-m: 8px;
+  --radius-l: 10px;
+
+  --font-display: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  --font-ui: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Cascadia Mono', ui-monospace, monospace;
+
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+}

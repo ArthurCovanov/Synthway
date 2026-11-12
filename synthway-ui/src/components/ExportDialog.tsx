@@ -9,7 +9,7 @@ import {
   type ExportSummary,
 } from '../lib/audioExport';
 import { FALLBACK_INSTRUMENT } from '../lib/instruments';
-import styles from './ExportDialog.module.css';
+import styles from '@theme/components/ExportDialog.module.css';
 import { Button, Segmented, inputClass } from './ui';
 
 /** The formats offered, with the keys of their tooltip and of the hint under them */

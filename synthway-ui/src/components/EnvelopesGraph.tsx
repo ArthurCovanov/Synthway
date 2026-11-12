@@ -1,7 +1,7 @@
 import { useI18n } from '../i18n';
 import { envelopeLevel, envelopeTimes, type TimbrePartial } from '../lib/instruments';
-import { HUE_HEX } from '../lib/neon';
-import styles from './EnvelopesGraph.module.css';
+import { HUE_DRAW } from '../lib/neon';
+import styles from '@theme/components/EnvelopesGraph.module.css';
 
 const W = 320;
 const H = 110;
@@ -53,12 +53,16 @@ export function EnvelopesGraph({ partials, selectedId }: { partials: TimbreParti
               key={partial.id}
               d={line}
               fill="none"
-              stroke={HUE_HEX[partial.hue]}
+              stroke={HUE_DRAW[partial.hue]}
               strokeWidth={isSelected ? 2.4 : 1.4}
               strokeLinejoin="round"
               opacity={isSelected || !selectedId ? 1 : 0.45}
               vectorEffect="non-scaling-stroke"
-              style={isSelected ? { filter: `drop-shadow(0 0 4px ${HUE_HEX[partial.hue]})` } : undefined}
+              style={
+                isSelected
+                  ? { filter: `drop-shadow(0 0 4px color-mix(in srgb, ${HUE_DRAW[partial.hue]} calc(100% * var(--glow)), transparent))` }
+                  : undefined
+              }
             />
           );
         })}

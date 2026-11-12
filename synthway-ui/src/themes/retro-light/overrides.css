@@ -1,0 +1,43 @@
+/* Retro light: what the variables alone cannot change */
+
+/* Three seventies stripes across the top of the window */
+.App_app::after {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 6px;
+  z-index: 20;
+  pointer-events: none;
+  background: linear-gradient(180deg, #f4a20c 0 2px, #e8590c 2px 4px, #b83a14 4px 6px);
+}
+
+/* The logo's dark disc stays: blended with "screen", it would vanish on paper */
+.Sidebar_logo img,
+.Settings_aboutLogo {
+  mix-blend-mode: normal;
+}
+
+/* An orange rule down the side bar instead of the neon edge */
+.Sidebar_sidebar {
+  border-right: 1px solid var(--line-strong);
+}
+
+.Sidebar_sidebar::after {
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  opacity: 1;
+}
+
+/* Darker chevron in the drop-down lists */
+.ui_select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2385725f' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+}
+
+/* Cards: a soft paper shadow rather than a deep one */
+.ui_panel {
+  backdrop-filter: none;
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--shadow) 18%, transparent);
+}

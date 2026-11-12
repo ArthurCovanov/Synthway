@@ -69,8 +69,8 @@
 }
 
 .drop[data-dropping] {
-  border-color: var(--neon-pink);
-  background: rgba(255, 26, 168, 0.06);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
 }
 
 .dropHint {
@@ -88,7 +88,7 @@
 }
 
 .dropHint svg {
-  color: var(--neon-blue-soft);
+  color: var(--accent-2-soft);
 }
 
 /* Recording, under the microphone */
@@ -99,7 +99,7 @@
 }
 
 .dropHint[data-recording] {
-  border-color: rgba(255, 59, 107, 0.5);
+  border-color: color-mix(in srgb, var(--danger) 50%, transparent);
 }
 
 .dropHint[data-recording] svg {
@@ -317,7 +317,7 @@
 }
 
 .noteChip:hover:not(:disabled) {
-  border-color: rgba(255, 124, 198, 0.55);
+  border-color: color-mix(in srgb, var(--accent-soft) 55%, transparent);
   background: var(--bg-3);
 }
 

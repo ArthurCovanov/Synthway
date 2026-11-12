@@ -222,7 +222,7 @@ if HAS_FASTAPI:
     app = FastAPI(
         title="Synthway Server API",
         description="REST & WebSocket API orchestrating the Synthway audio engine",
-        version="0.4.0",
+        version="0.5.0",
     )
 
     # The UI calls the API directly, from its own origin (the Vite dev server).

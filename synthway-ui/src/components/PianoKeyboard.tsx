@@ -2,7 +2,7 @@ import { useEffect, useRef, type PointerEvent } from 'react';
 import { useI18n } from '../i18n';
 import { isBlackKey, midiToName } from '../lib/music';
 import { cx } from './ui';
-import styles from './PianoKeyboard.module.css';
+import styles from '@theme/components/PianoKeyboard.module.css';
 
 /**
  * On-screen keyboard from `startMidi` over `octaves` octaves (plus the final C).

@@ -6,7 +6,7 @@
   align-items: center;
   gap: 6px;
   padding: 16px 0 14px;
-  background: linear-gradient(180deg, rgba(10, 10, 36, 0.88), rgba(5, 5, 26, 0.94));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--bg-2) 88%, transparent), color-mix(in srgb, var(--bg-1) 94%, transparent));
   border-right: 1px solid var(--line);
 }
 
@@ -39,14 +39,14 @@
   border-radius: 50%;
   /* the logo's near-black background disappears on the dark sidebar */
   mix-blend-mode: screen;
-  filter: drop-shadow(0 0 10px rgba(255, 26, 168, 0.35));
+  filter: drop-shadow(0 0 10px color-mix(in srgb, var(--accent) calc(35% * var(--glow)), transparent));
   transition:
     filter 0.3s var(--ease),
     transform 0.3s var(--ease);
 }
 
 .logo:hover img {
-  filter: drop-shadow(0 0 16px rgba(255, 26, 168, 0.6));
+  filter: drop-shadow(0 0 16px color-mix(in srgb, var(--accent) calc(60% * var(--glow)), transparent));
   transform: scale(1.05);
 }
 
@@ -79,9 +79,9 @@
 
 .item[aria-current='page'] {
   color: var(--text-0);
-  background: linear-gradient(180deg, rgba(255, 26, 168, 0.14), rgba(46, 77, 255, 0.12));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 14%, transparent), color-mix(in srgb, var(--accent-2) 12%, transparent));
   border-color: var(--line-strong);
-  box-shadow: inset 0 0 14px rgba(163, 28, 255, 0.2);
+  box-shadow: inset 0 0 14px color-mix(in srgb, var(--accent-3) calc(20% * var(--glow)), transparent);
 }
 
 .item[aria-current='page']::before {
@@ -98,7 +98,7 @@
 
 .item[aria-current='page'] svg {
   stroke: url(#sw-neon-stroke);
-  filter: drop-shadow(0 0 4px rgba(255, 26, 168, 0.55));
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--accent) calc(55% * var(--glow)), transparent));
 }
 
 /* Label shown on hover, Voicebox style */
@@ -111,7 +111,7 @@
   border-radius: 8px;
   background: var(--bg-3);
   border: 1px solid var(--line-strong);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
+  box-shadow: 0 10px 28px color-mix(in srgb, var(--shadow) 55%, transparent);
   font-family: var(--font-display);
   font-size: 9.5px;
   letter-spacing: 0.16em;
@@ -154,7 +154,7 @@
 
 .dot[data-state='online'] {
   background: var(--ok);
-  box-shadow: 0 0 8px var(--ok);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--ok) calc(100% * var(--glow)), transparent);
 }
 
 .dot[data-state='connecting'] {
@@ -165,7 +165,7 @@
 .dot[data-state='offline'],
 .dot[data-state='foreign'] {
   background: var(--danger);
-  box-shadow: 0 0 8px var(--danger);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--danger) calc(100% * var(--glow)), transparent);
 }
 
 .version {

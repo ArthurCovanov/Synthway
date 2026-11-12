@@ -5,7 +5,7 @@ import { useI18n, type MessageKey } from '../i18n';
 import { SERVER_PORT } from '../lib/api';
 import { useSynthServer, type Connection } from '../lib/SynthServer';
 import { AnalyzerIcon, ComposerIcon, DecomposerIcon, InstrumentIcon } from './icons';
-import styles from './Sidebar.module.css';
+import styles from '@theme/components/Sidebar.module.css';
 
 export type ScreenId = 'instruments' | 'composer' | 'analyzer' | 'decomposer' | 'settings';
 

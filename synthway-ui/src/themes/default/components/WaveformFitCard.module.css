@@ -74,7 +74,7 @@
 }
 
 .fit:hover {
-  border-color: rgba(255, 124, 198, 0.55);
+  border-color: color-mix(in srgb, var(--accent-soft) 55%, transparent);
   background: var(--bg-3);
 }
 
@@ -84,8 +84,8 @@
 }
 
 .fit[aria-pressed='true'] {
-  border-color: var(--neon-pink-soft);
-  box-shadow: 0 0 0 1px rgba(255, 124, 198, 0.35);
+  border-color: var(--accent-soft);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-soft) 35%, transparent);
 }
 
 .fitName {
@@ -124,7 +124,7 @@
 }
 
 .bar {
-  fill: var(--neon-violet);
+  fill: var(--accent-3);
   opacity: 0.85;
 }
 

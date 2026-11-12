@@ -11,7 +11,7 @@ import { Composer } from './screens/Composer';
 import { Decomposer } from './screens/Decomposer';
 import { InstrumentCreator } from './screens/InstrumentCreator';
 import { Settings } from './screens/Settings';
-import styles from './App.module.css';
+import styles from '@theme/App.module.css';
 
 const SCREENS: ScreenId[] = ['instruments', 'composer', 'analyzer', 'decomposer', 'settings'];
 

@@ -1,10 +1,10 @@
 import { useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react';
 import { useI18n } from '../i18n';
 import type { TimbrePartial } from '../lib/instruments';
-import { HUE_HEX } from '../lib/neon';
+import { HUE_DRAW } from '../lib/neon';
 import { activePartials, formatRatio, MAX_RATIO, MIN_RATIO, waveformHarmonics } from '../lib/partials';
 import { useElementSize } from '../lib/useElementSize';
-import styles from './SpectrumGraph.module.css';
+import styles from '@theme/components/SpectrumGraph.module.css';
 
 const PAD = { left: 38, right: 16, top: 24, bottom: 24 };
 /** Distance, in pixels, under which a dragged partial snaps to a whole ratio */
@@ -168,7 +168,7 @@ export function SpectrumGraph({
                   x2={x(partial.ratio * multiple)}
                   y1={bottom}
                   y2={y(level)}
-                  stroke={HUE_HEX[partial.hue]}
+                  stroke={HUE_DRAW[partial.hue]}
                   opacity={partial.id === selectedId ? 0.75 : 0.4}
                 />
               );
@@ -179,7 +179,7 @@ export function SpectrumGraph({
           {ordered.map((partial) => {
             const px = x(partial.ratio);
             const py = y(partial.amplitude);
-            const color = HUE_HEX[partial.hue];
+            const color = HUE_DRAW[partial.hue];
             const isSelected = partial.id === selectedId;
             return (
               <g
@@ -222,7 +222,7 @@ export function SpectrumGraph({
               x={Math.min(PAD.left + plotW - 40, Math.max(PAD.left + 40, x(selected.ratio)))}
               y={y(selected.amplitude) < PAD.top + 14 ? y(selected.amplitude) + 24 : y(selected.amplitude) - 13}
               textAnchor="middle"
-              fill={HUE_HEX[selected.hue]}
+              fill={HUE_DRAW[selected.hue]}
             >
               {t('graphs.partialValue', {
                 ratio: formatRatio(selected.ratio),

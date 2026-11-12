@@ -35,7 +35,7 @@ import {
 } from 'react';
 import { AutomationCard, AutomationLaneView, type AutomationSelection } from '../components/Automation';
 import { ExportDialog } from '../components/ExportDialog';
-import layout from '../components/layout.module.css';
+import layout from '@theme/components/layout.module.css';
 import { Notice, useNotice, type NoticeMessage } from '../components/Notice';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { Badge, Button, Panel, Segmented, cx, inputClass, selectClass } from '../components/ui';
@@ -95,7 +95,7 @@ import { newId, usePersistentState } from '../lib/storage';
 import { useSynthServer } from '../lib/SynthServer';
 import { useElementSize } from '../lib/useElementSize';
 import type { ScoreRenderInfo } from '../types';
-import styles from './Composer.module.css';
+import styles from '@theme/screens/Composer.module.css';
 
 const CELL = 22; // px per step (sixteenth note)
 const ROW = 16; // px per semitone

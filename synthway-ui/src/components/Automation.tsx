@@ -32,7 +32,7 @@ import {
 import type { AutomationLane, AutomationParam, AutomationPoint, Track } from '../lib/composition';
 import { newGroup, type ChangeOptions } from '../lib/history';
 import { cx } from './ui';
-import styles from './Automation.module.css';
+import styles from '@theme/components/Automation.module.css';
 
 /** The point selected: its side and its index among that side's points */
 export interface AutomationSelection {
@@ -476,7 +476,11 @@ export function AutomationLaneView({
         x2={xOf(step)}
         y1={0}
         y2={height}
-        stroke={step % stepsPerBar === 0 ? 'rgba(255, 155, 47, 0.22)' : 'rgba(255, 155, 47, 0.07)'}
+        stroke={
+          step % stepsPerBar === 0
+            ? 'color-mix(in srgb, var(--neon-orange) 22%, transparent)'
+            : 'color-mix(in srgb, var(--neon-orange) 7%, transparent)'
+        }
       />,
     );
   }
@@ -523,10 +527,10 @@ export function AutomationLaneView({
             onPointerLeave={() => setHover(null)}
           >
             {loop && (
-              <rect x={xOf(loop.start)} y={0} width={xOf(loop.end - loop.start)} height={height} fill="rgba(255, 26, 168, 0.08)" />
+              <rect x={xOf(loop.start)} y={0} width={xOf(loop.end - loop.start)} height={height} fill="color-mix(in srgb, var(--accent) 8%, transparent)" />
             )}
             {beatLines}
-            <line x1={0} x2={width} y1={yOf(base)} y2={yOf(base)} stroke="rgba(255, 155, 47, 0.35)" strokeDasharray="5 6" />
+            <line x1={0} x2={width} y1={yOf(base)} y2={yOf(base)} stroke="color-mix(in srgb, var(--neon-orange) 35%, transparent)" strokeDasharray="5 6" />
             {sides.map((side) => {
               const points = sidePoints(lane, side);
               const d = curvePath(points);
@@ -545,7 +549,7 @@ export function AutomationLaneView({
                         cx={xOf(point.at)}
                         cy={yOf(point.value)}
                         r={chosen ? 6 : 4.5}
-                        fill={chosen ? color : '#000'}
+                        fill={chosen ? color : 'var(--automation-bg)'}
                         stroke={color}
                         strokeWidth={2}
                         onPointerDown={(event) => onHandlePointerDown(event, side, index)}
@@ -567,7 +571,7 @@ export function AutomationLaneView({
                 </g>
               );
             })}
-            <line x1={xOf(playStep)} x2={xOf(playStep)} y1={0} y2={height} stroke="#fff6e8" strokeWidth={1.5} opacity={0.75} />
+            <line x1={xOf(playStep)} x2={xOf(playStep)} y1={0} y2={height} stroke="var(--automation-playhead)" strokeWidth={1.5} opacity={0.75} />
           </svg>
         </div>
         {readout && <span className={styles.readout}>{readout}</span>}

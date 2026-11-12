@@ -1,7 +1,7 @@
 import { AlertTriangle, CheckCircle2, Info, X, XCircle } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import { useI18n } from '../i18n';
-import styles from './Notice.module.css';
+import styles from '@theme/components/Notice.module.css';
 
 export type NoticeTone = 'success' | 'info' | 'warning' | 'error';
 

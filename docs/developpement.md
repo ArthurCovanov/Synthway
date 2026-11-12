@@ -115,7 +115,7 @@ synthway/
         ├── components/         # Barre latérale, contrôles, oscilloscope, clavier
         ├── lib/                # Client API/WebSocket, modèles, état partagé
         ├── i18n/               # Langues de l'interface : textes (locales/en.json, fr.json), t(), useI18n()
-        ├── styles/             # Thème synthwave (couleurs du logo), polices
+        ├── themes/             # Thèmes : default/ (synthwave, couleurs du logo) contient toutes les feuilles de style
         └── assets/             # Logo décliné, polices OFL
 ```
 
@@ -278,6 +278,19 @@ Le sélecteur des Réglages propose alors la nouvelle langue.
 
 ---
 
+## Thèmes de l'interface
+
+Toutes les feuilles de style de l'interface sont dans `synthway-ui/src/themes/default/`, le thème synthwave d'origine. Chaque autre dossier de `src/themes/` est un thème : pour chaque feuille de `default/`, l'interface prend celle du thème s'il en a une au même chemin, sinon celle de `default/`. Trois thèmes sont livrés en plus : `retro-light` (clair, papier et filets orange), `deep-blue` (encre et bleu électrique, plat) et `graphite` (noir et gris). On choisit le thème dans **Settings** (Réglages), carte **Appearance** (Apparence) ; le choix est gardé dans le navigateur (`localStorage`, clé `synthway.theme.v1`) et s'applique sans recharger.
+
+- **Dans le code :** une feuille s'importe par `@theme/<chemin dans le thème>` (`import styles from '@theme/screens/Composer.module.css'`), jamais par un chemin relatif. Une nouvelle feuille se crée dans `default/`.
+- **Couleurs :** uniquement des variables de `theme.css` (rôles `--accent`, `--bg-*`, `--text-*`, `--on-accent`, `--highlight`…), jamais une couleur en dur dans une autre feuille ni dans le code. Une nuance transparente : `color-mix(in srgb, var(--accent) 30%, transparent)`. Un halo (ombre sans décalage) : alpha multiplié par `var(--glow)`. Le code qui dessine lit les variables (`HUE_DRAW`, `themeColor()` de `src/lib/neon.ts`). Une variable ajoutée l'est dans **chaque** `theme.css`.
+- **Fichiers d'un thème :** `theme.css` (variables seulement), `overrides.css` (chargé en dernier, pour les quelques règles que les variables ne changent pas), et, rarement, une feuille de `default/` refaite en entier. `base.css` (règles de la page) est commun.
+- **Noms de classes :** `<fichier>_<classe>` (`Composer_roll`), les mêmes dans tous les thèmes : c'est ce que vise un `overrides.css`. Pas de `composes` : la compilation le refuse.
+- **Mécanique :** plugin `synthway-themes` de `vite.config.ts`, `src/lib/themes.ts` (une balise `<style>` par feuille, dans l'ordre des imports), `src/lib/themeSources.ts` (texte de toutes les feuilles).
+- **Ajouter un thème :** voir [`synthway-ui/src/themes/README.md`](../synthway-ui/src/themes/README.md). Les thèmes sont compilés avec l'interface : pour le lanceur et le zip, il faut reconstruire `synthway-ui/dist`.
+
+---
+
 ## 🤖 Guide pour les Développeurs Humains et Agents IA
 
 L'utilisateur, Claude et Gemini travaillent dans ce même dossier. Les règles de travail communes (journal, conventions, skills partagés) sont dans [`AGENTS.md`](../AGENTS.md).
@@ -295,6 +308,7 @@ Lors de l'ajout de nouvelles fonctionnalités, respectez scrupuleusement les fro
 3. **Règles pour `synthway-ui` (Ergonomie & Contrôle)** :
    - Conserver l'interface réactive et découplée : elle doit afficher l'état de synchronisation avec le serveur.
    - Aucun texte visible écrit en dur dans le code : chaque texte a sa clé dans `src/i18n/locales/en.json` **et** dans `fr.json` (voir [Langues de l'interface](#langues-de-linterface)).
+   - Les feuilles de style vivent dans `src/themes/default/` et s'importent par `@theme/…` (voir [Thèmes de l'interface](#thèmes-de-linterface)).
    - Pour une version application de bureau sans navigateur, préférer **Tauri** à Electron pour sa légèreté.
 4. **Règles pour `synthway-demucs` (facultatif)** :
    - Le serveur n'importe jamais PyTorch ni Demucs : il lance `separate.py` avec le Python de `synthway-demucs/.venv`, dans un processus à part, et lit ses lignes JSON.

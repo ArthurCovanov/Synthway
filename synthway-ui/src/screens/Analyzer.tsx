@@ -21,7 +21,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } fro
 import { AnalysisSpectrum, partialColor } from '../components/AnalysisSpectrum';
 import { ClipWaveform, type ClipSelection } from '../components/ClipWaveform';
 import { KeyboardDock } from '../components/KeyboardDock';
-import layout from '../components/layout.module.css';
+import layout from '@theme/components/layout.module.css';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { Badge, Button, Field, Panel, Section, Segmented, Slider, Toggle, inputClass, selectClass } from '../components/ui';
 import { Tuner } from '../components/Tuner';
@@ -59,7 +59,7 @@ import type {
   ShapeFit,
   WaveformFit,
 } from '../types';
-import styles from './Analyzer.module.css';
+import styles from '@theme/screens/Analyzer.module.css';
 
 /*
  * Analyzer: analyzes the microphone or a loaded audio file.

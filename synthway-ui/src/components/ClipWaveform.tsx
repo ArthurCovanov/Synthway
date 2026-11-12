@@ -3,7 +3,7 @@ import { useI18n } from '../i18n';
 import { frequencyToNote } from '../lib/music';
 import { useElementSize } from '../lib/useElementSize';
 import type { ClipInfo, ClipWaveformPart } from '../types';
-import styles from './ClipWaveform.module.css';
+import styles from '@theme/components/ClipWaveform.module.css';
 
 const PAD = { left: 12, right: 44, top: 18, bottom: 22 };
 /** Track points shown: those clear enough to name a note */

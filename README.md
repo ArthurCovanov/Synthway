@@ -153,6 +153,17 @@ The whole interface switches at once, and keeps this language for the next launc
 
 The interface texts live in `synthway-ui/src/i18n/locales/`: `en.json` for English, `fr.json` for French. To add a language, see the [developer guide](docs/developpement.md#langues-de-linterface) (in French).
 
+### Themes
+
+Not into neon? In **Settings**, the **Appearance** card switches the whole interface between four themes, at once:
+
+- **Synthwave** (the default): neon pink, violet and blue on night, haze and horizon grid.
+- **Retro light**: warm paper, white cards drawn with orange lines, a seventies sunset of amber, orange and rust.
+- **Deep blue**: flat ink with a single electric blue, square and quiet.
+- **Graphite**: black and greys, colour kept for your partials and tracks.
+
+A theme is a folder of `synthway-ui/src/themes/`, mostly one file of colour variables: see [how to make one](synthway-ui/src/themes/README.md) (in French).
+
 ## Project status
 
 Synthway is young: each layer is a first draft, and its APIs may still change. It is developed on Windows, where sound and microphone get tested; the engine also builds and passes its tests on Linux. The engine can already list MIDI ports; playing from a MIDI keyboard is coming.

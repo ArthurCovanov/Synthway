@@ -1,0 +1,104 @@
+/* Retro light: warm paper, white cards drawn with orange hairlines, ink text,
+   and a seventies sunset of orange, amber and rust. No neon halo.
+   Same variables as ../default/theme.css, which explains each of them. */
+
+:root {
+  color-scheme: light;
+
+  /* Surfaces: paper, then white cards */
+  --bg-0: #fbf7f0;
+  --bg-1: #f7f1e6;
+  --bg-2: #fffdf9;
+  --bg-3: #ffffff;
+  --bg-4: #f6ede0;
+  --bg-5: #e9dcc8;
+  --bg-raised: #fff8ee;
+  --bg-float: #fffdf8;
+  --bg-sunken: #f1e9dc;
+  --line: rgba(232, 89, 12, 0.22);
+  --line-strong: rgba(232, 89, 12, 0.4);
+  --grid: #c0683a;
+  --grid-strong: #a4552c;
+
+  /* Seventies sunset, for the gradients */
+  --neon-pink: #d6336c;
+  --neon-magenta: #ae3ec9;
+  --neon-violet: #7048e8;
+  --neon-indigo: #4c3fc8;
+  --neon-blue: #1c7ed6;
+  --neon-pink-soft: #c2255c;
+  --neon-blue-soft: #1971c2;
+  --grad-neon: linear-gradient(90deg, #f4a20c 0%, #e8590c 55%, #b83a14 100%);
+  --grad-neon-v: linear-gradient(180deg, #f4a20c 0%, #e8590c 55%, #b83a14 100%);
+
+  /* Colours of partials, tracks and stems: dark enough to read on white.
+     "White", the first partial, is ink here. */
+  --neon-cyan: #0c8599;
+  --neon-green: #2b8a3e;
+  --neon-yellow: #d49a00;
+  --neon-orange: #e8590c;
+  --neon-red: #c92a2a;
+  --neon-white: #3b3028;
+  --neon-blue-mid: #1c7ed6;
+  --neon-amber: #d9480f;
+  --neon-orange-deep: #c2410c;
+
+  /* Accents: orange, amber, rust */
+  --accent: #e8590c;
+  --accent-soft: #c2410c;
+  --accent-2: #f08c00;
+  --accent-2-mid: #e67700;
+  --accent-2-soft: #b35c00;
+  --accent-3: #b83a14;
+  --on-accent: #ffffff;
+  --highlight: #2b2118;
+  --shadow: #a07850;
+
+  --curve-start: #f4a20c;
+  --curve-mid: #e8590c;
+  --curve-end: #b83a14;
+
+  /* Flat: no halo */
+  --glow: 0;
+  --glow-pink: none;
+  --glow-violet: none;
+  --glow-blue: none;
+
+  /* Ink */
+  --text-0: #2b2118;
+  --text-1: #54463a;
+  --text-2: #85725f;
+  --text-3: #ae9b86;
+
+  --ok: #2b8a3e;
+  --warn: #d97706;
+  --danger: #c92a2a;
+  --danger-soft: #c92a2a;
+  --danger-edge: #e03131;
+
+  /* Plain paper; the stripes are in overrides.css */
+  --app-backdrop: var(--bg-0);
+  --app-grid: none;
+
+  --key-white: linear-gradient(180deg, #ffffff 0%, #fdf9f3 70%, #f3eadc 100%);
+  --key-white-hover: linear-gradient(180deg, #fff8ef 0%, #fcefdf 70%, #f4e2cb 100%);
+  --key-black: linear-gradient(180deg, #3d3128 0%, #2b2118 100%);
+  --key-black-hover: linear-gradient(180deg, #54453a 0%, #3d3128 100%);
+
+  /* Automation: orange on paper */
+  --automation-bg: #fffdf9;
+  --automation-bg-2: #fdf0e1;
+  --automation-text: #8a3c0c;
+  --automation-dim: #b07a4f;
+  --automation-playhead: #2b2118;
+
+  --radius-s: 4px;
+  --radius-m: 7px;
+  --radius-l: 10px;
+
+  --font-display: 'Michroma', 'Eurostile', 'Segoe UI', sans-serif;
+  --font-ui: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Cascadia Mono', ui-monospace, monospace;
+
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+}

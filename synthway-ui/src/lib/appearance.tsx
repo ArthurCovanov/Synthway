@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { usePersistentState } from './storage';
+import { getTheme, setTheme as showTheme } from './themes';
 
 interface Appearance {
   glow: boolean;
@@ -11,6 +12,9 @@ interface AppearanceValue extends Appearance {
   setMotion: (on: boolean) => void;
   /** Motion allowed by both the setting and the OS (prefers-reduced-motion) */
   animate: boolean;
+  /** Folder of the theme, in src/themes (lib/themes.ts keeps it, apart from glow and motion) */
+  theme: string;
+  setTheme: (theme: string) => void;
 }
 
 const AppearanceContext = createContext<AppearanceValue | null>(null);
@@ -33,6 +37,7 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
     motion: true,
   }));
   const reducedMotion = usePrefersReducedMotion();
+  const [theme, setThemeState] = useState(getTheme);
 
   // theme.css reads these attributes
   useEffect(() => {
@@ -47,8 +52,13 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
       animate: appearance.motion && !reducedMotion,
       setGlow: (glow) => setAppearance((current) => ({ ...current, glow })),
       setMotion: (motion) => setAppearance((current) => ({ ...current, motion })),
+      theme,
+      setTheme: (next) => {
+        showTheme(next);
+        setThemeState(getTheme());
+      },
     }),
-    [appearance, reducedMotion, setAppearance],
+    [appearance, reducedMotion, setAppearance, theme],
   );
 
   return <AppearanceContext.Provider value={value}>{children}</AppearanceContext.Provider>;

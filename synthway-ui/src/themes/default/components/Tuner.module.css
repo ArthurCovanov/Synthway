@@ -15,7 +15,7 @@
 }
 
 .tuner[data-tone='off'] {
-  --tone: var(--neon-pink);
+  --tone: var(--accent);
 }
 
 .gauge {
@@ -26,7 +26,7 @@
 
 .track {
   fill: none;
-  stroke: rgba(150, 125, 255, 0.16);
+  stroke: color-mix(in srgb, var(--grid) 16%, transparent);
   stroke-width: 10;
   stroke-linecap: round;
 }
@@ -39,7 +39,7 @@
 }
 
 .tick {
-  stroke: rgba(170, 140, 255, 0.35);
+  stroke: color-mix(in srgb, var(--grid-strong) 35%, transparent);
   stroke-width: 1.2;
 }
 
@@ -58,7 +58,7 @@
   stroke: var(--tone);
   stroke-width: 3;
   stroke-linecap: round;
-  filter: drop-shadow(0 0 5px var(--tone));
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--tone) calc(100% * var(--glow)), transparent));
   /* Turns around the hub (GAUGE.cx, GAUGE.cy in Tuner.tsx) */
   transform-box: view-box;
   transform-origin: 130px 128px;
@@ -89,7 +89,7 @@
   font-size: 46px;
   line-height: 1.1;
   color: var(--text-0);
-  text-shadow: 0 0 22px var(--tone);
+  text-shadow: 0 0 22px color-mix(in srgb, var(--tone) calc(100% * var(--glow)), transparent);
 }
 
 .octave {
@@ -159,7 +159,7 @@
 }
 
 .meter[data-kind='level'] > span {
-  background: linear-gradient(90deg, var(--neon-blue) 0%, var(--neon-cyan) 70%, var(--neon-yellow) 100%);
+  background: linear-gradient(90deg, var(--accent-2) 0%, var(--neon-cyan) 70%, var(--neon-yellow) 100%);
 }
 
 .meterValue {

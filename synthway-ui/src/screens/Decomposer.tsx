@@ -1,6 +1,6 @@
 import { AudioLines, Download, ExternalLink, FileAudio, Pause, Play, Square, Trash2, Upload } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type DragEvent, type MouseEvent } from 'react';
-import layout from '../components/layout.module.css';
+import layout from '@theme/components/layout.module.css';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { Badge, Button, Panel, Section, Segmented } from '../components/ui';
 // translateNow: the module t, for messages made by requests, which must not run
@@ -11,7 +11,7 @@ import { useSpaceBar } from '../lib/keyboard';
 import { saveJson, usePersistentState } from '../lib/storage';
 import { useSynthServer } from '../lib/SynthServer';
 import type { SeparationModel, SeparationStatus } from '../types';
-import styles from './Decomposer.module.css';
+import styles from '@theme/screens/Decomposer.module.css';
 
 /*
  * Decomposer: decomposes a piece of music into its stems (drums, bass, vocals,

@@ -1,8 +1,8 @@
 import { useI18n } from '../i18n';
-import { HUE_HEX, PARTIAL_HUES } from '../lib/neon';
+import { HUE_DRAW, PARTIAL_HUES } from '../lib/neon';
 import { useElementSize } from '../lib/useElementSize';
 import type { Analysis } from '../types';
-import styles from './AnalysisSpectrum.module.css';
+import styles from '@theme/components/AnalysisSpectrum.module.css';
 
 const PAD = { left: 40, right: 14, top: 22, bottom: 24 };
 /** Vertical range, in dBFS */
@@ -16,7 +16,7 @@ const LABEL_GAP = 34;
 
 /** Colour of the partial at this place in the list, as in the partials table */
 export function partialColor(index: number): string {
-  return HUE_HEX[PARTIAL_HUES[index % PARTIAL_HUES.length]];
+  return HUE_DRAW[PARTIAL_HUES[index % PARTIAL_HUES.length]];
 }
 
 function formatHz(hz: number): string {
@@ -84,8 +84,8 @@ export function AnalysisSpectrum({ analysis, noiseGateDb }: { analysis: Analysis
         <svg width={width} height={height} className={styles.svg} role="img" aria-label={t('analyzer.spectrumChart.label')}>
           <defs>
             <linearGradient id="analysis-spectrum-fill" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#a31cff" stopOpacity="0.45" />
-              <stop offset="100%" stopColor="#2e4dff" stopOpacity="0.02" />
+              <stop offset="0%" stopColor="var(--accent-3)" stopOpacity="0.45" />
+              <stop offset="100%" stopColor="var(--accent-2)" stopOpacity="0.02" />
             </linearGradient>
           </defs>
 

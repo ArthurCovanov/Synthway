@@ -36,8 +36,8 @@
   gap: 3px;
   padding: 9px 14px;
   border-radius: var(--radius-m);
-  border: 1px solid rgba(255, 155, 47, 0.35);
-  background: linear-gradient(180deg, rgba(255, 155, 47, 0.12), rgba(255, 100, 15, 0.07));
+  border: 1px solid color-mix(in srgb, var(--neon-orange) 35%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--neon-orange) 12%, transparent), color-mix(in srgb, var(--neon-orange-deep) 7%, transparent));
 }
 
 .creditEyebrow {
@@ -57,7 +57,7 @@
   letter-spacing: 0.08em;
   color: var(--text-0);
   text-decoration: none;
-  text-shadow: 0 0 14px rgba(255, 140, 20, 0.55);
+  text-shadow: 0 0 14px color-mix(in srgb, var(--neon-amber) calc(55% * var(--glow)), transparent);
 }
 
 .creditName:hover {
@@ -81,8 +81,8 @@
 }
 
 .drop[data-dropping] {
-  border-color: var(--neon-pink);
-  background: rgba(255, 26, 168, 0.06);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
 }
 
 .dropHint,
@@ -102,7 +102,7 @@
 
 .dropHint svg,
 .empty svg {
-  color: var(--neon-blue-soft);
+  color: var(--accent-2-soft);
 }
 
 .sourceRow {
@@ -117,7 +117,7 @@
 
 .sourceRow svg {
   flex: none;
-  color: var(--neon-blue-soft);
+  color: var(--accent-2-soft);
 }
 
 .sourceText {

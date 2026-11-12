@@ -35,17 +35,17 @@
   height: 10px;
   border-radius: 50%;
   background: var(--danger);
-  box-shadow: 0 0 10px var(--danger);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--danger) calc(100% * var(--glow)), transparent);
 }
 
 .statusDot[data-state='ok'] {
   background: var(--ok);
-  box-shadow: 0 0 10px var(--ok);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--ok) calc(100% * var(--glow)), transparent);
 }
 
 .statusDot[data-state='pending'] {
   background: var(--warn);
-  box-shadow: 0 0 10px var(--warn);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--warn) calc(100% * var(--glow)), transparent);
 }
 
 .statusText {
@@ -92,7 +92,7 @@
   background: var(--bg-1);
   font-family: var(--font-mono);
   font-size: 12px;
-  color: var(--neon-pink-soft);
+  color: var(--accent-soft);
   white-space: pre-wrap;
 }
 
@@ -108,7 +108,9 @@
 
 .row2 {
   display: grid;
-  grid-template-columns: 2fr 1fr;
+  /* minmax(0, …): a list as wide as its longest option (a device with a long
+     name) would otherwise push the row out of the card */
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
   gap: 14px;
 }
 
@@ -188,7 +190,7 @@
 .license {
   font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--neon-blue-soft);
+  color: var(--accent-2-soft);
 }
 
 @media (max-width: 900px) {

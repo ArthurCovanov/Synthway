@@ -37,24 +37,24 @@
 }
 
 .svg:focus-visible .plot {
-  stroke: var(--neon-pink);
+  stroke: var(--accent);
 }
 
 .plot {
-  fill: rgba(17, 16, 51, 0.5);
+  fill: color-mix(in srgb, var(--bg-3) 50%, transparent);
   stroke: var(--line);
 }
 
 /* The zone played in a loop */
 .selection {
-  fill: rgba(255, 26, 168, 0.14); /* --neon-pink */
-  stroke: var(--neon-pink-soft);
+  fill: color-mix(in srgb, var(--accent) 14%, transparent);
+  stroke: var(--accent-soft);
   stroke-width: 1;
   pointer-events: none;
 }
 
 .gridLine {
-  stroke: rgba(150, 125, 255, 0.07);
+  stroke: color-mix(in srgb, var(--grid) 7%, transparent);
 }
 
 .tick,
@@ -65,13 +65,13 @@
 }
 
 .noteTick {
-  fill: var(--neon-pink-soft);
+  fill: var(--accent-soft);
 }
 
 /* Lowest to highest sample of each pixel column; the stroke keeps a quiet part visible */
 .wave {
-  fill: var(--neon-blue-soft);
-  stroke: var(--neon-blue-soft);
+  fill: var(--accent-2-soft);
+  stroke: var(--accent-2-soft);
   stroke-width: 1;
   stroke-linejoin: round;
   opacity: 0.55;
@@ -80,19 +80,19 @@
 /* Zoomed in to the samples: they are joined, and get a dot once far enough apart */
 .waveLine {
   fill: none;
-  stroke: var(--neon-blue-soft);
+  stroke: var(--accent-2-soft);
   stroke-width: 1.5;
   stroke-linejoin: round;
   opacity: 0.85;
 }
 
 .sample {
-  fill: var(--neon-blue-soft);
+  fill: var(--accent-2-soft);
   pointer-events: none;
 }
 
 .channelDivider {
-  stroke: rgba(150, 125, 255, 0.18);
+  stroke: color-mix(in srgb, var(--grid) 18%, transparent);
   stroke-dasharray: 3 4;
   pointer-events: none;
 }
@@ -108,14 +108,14 @@
 }
 
 .notePoint {
-  fill: var(--neon-pink);
+  fill: var(--accent);
   pointer-events: none;
 }
 
 .cursor {
   stroke: var(--neon-white);
   stroke-width: 1.5;
-  filter: drop-shadow(0 0 4px var(--neon-pink));
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--accent) calc(100% * var(--glow)), transparent));
   pointer-events: none;
 }
 

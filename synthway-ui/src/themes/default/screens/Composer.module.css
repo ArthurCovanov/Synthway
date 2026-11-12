@@ -25,7 +25,7 @@
   font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: 0;
-  color: var(--neon-pink-soft);
+  color: var(--accent-soft);
   white-space: nowrap;
 }
 
@@ -119,7 +119,7 @@
   padding: 10px;
   border-radius: 11px;
   border: 1px solid var(--line);
-  background: rgba(17, 16, 51, 0.55);
+  background: color-mix(in srgb, var(--bg-3) 55%, transparent);
   cursor: pointer;
   transition:
     border-color 0.15s,
@@ -136,17 +136,17 @@
 }
 
 .trackDropTarget {
-  border-color: var(--neon-blue);
-  box-shadow: 0 0 0 1px var(--neon-blue), 0 0 14px rgba(95, 120, 255, 0.28);
+  border-color: var(--accent-2);
+  box-shadow: 0 0 0 1px var(--accent-2), 0 0 14px color-mix(in srgb, var(--accent-2-mid) calc(28% * var(--glow)), transparent);
 }
 
 .trackSelected,
 .trackSelected:hover {
   border-color: transparent;
   background:
-    linear-gradient(rgba(19, 17, 54, 0.96), rgba(19, 17, 54, 0.96)) padding-box,
-    linear-gradient(135deg, var(--hue), var(--neon-blue)) border-box;
-  box-shadow: 0 0 18px color-mix(in srgb, var(--hue) 30%, transparent);
+    linear-gradient(color-mix(in srgb, var(--bg-raised) 96%, transparent), color-mix(in srgb, var(--bg-raised) 96%, transparent)) padding-box,
+    linear-gradient(135deg, var(--hue), var(--accent-2)) border-box;
+  box-shadow: 0 0 18px color-mix(in srgb, var(--hue) calc(30% * var(--glow)), transparent);
 }
 
 .trackMuted {
@@ -165,7 +165,7 @@
   height: 9px;
   border-radius: 50%;
   background: var(--hue);
-  box-shadow: 0 0 8px var(--hue);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--hue) calc(100% * var(--glow)), transparent);
 }
 
 .dragHandle {
@@ -205,7 +205,7 @@
 
 .trackName:focus {
   outline: none;
-  border-color: var(--neon-pink);
+  border-color: var(--accent);
 }
 
 .trackLock {
@@ -222,13 +222,13 @@
 }
 
 .trackLock:hover {
-  color: var(--neon-pink-soft);
+  color: var(--accent-soft);
   background: var(--bg-5);
 }
 
 .trackLock[aria-pressed='true'] {
-  border-color: color-mix(in srgb, var(--neon-pink) 55%, transparent);
-  color: var(--neon-pink-soft);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  color: var(--accent-soft);
 }
 
 .ms {
@@ -255,8 +255,8 @@
 
 .ms[data-kind='mute'][aria-pressed='true'] {
   color: var(--warn);
-  border-color: rgba(255, 176, 46, 0.55);
-  background: rgba(255, 176, 46, 0.14);
+  border-color: color-mix(in srgb, var(--warn) 55%, transparent);
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
 }
 
 .trackVisibility {
@@ -282,9 +282,9 @@
 }
 
 .trackVisibility[aria-pressed='true'] {
-  color: var(--neon-blue);
-  border-color: rgba(95, 120, 255, 0.45);
-  background: rgba(95, 120, 255, 0.1);
+  color: var(--accent-2);
+  border-color: color-mix(in srgb, var(--accent-2-mid) 45%, transparent);
+  background: color-mix(in srgb, var(--accent-2-mid) 10%, transparent);
 }
 
 .trackVisibility[aria-pressed='false'] {
@@ -376,7 +376,7 @@
   font-weight: 400;
   letter-spacing: 0.2em;
   text-transform: uppercase;
-  color: var(--neon-pink-soft);
+  color: var(--accent-soft);
   white-space: nowrap;
   flex: none;
   padding-top: 1px;
@@ -399,10 +399,10 @@
   padding: 6px 12px;
   margin-bottom: 8px;
   border-radius: 9px;
-  border: 1px solid rgba(163, 28, 255, 0.4);
-  background: rgba(22, 17, 44, 0.85);
+  border: 1px solid color-mix(in srgb, var(--accent-3) 40%, transparent);
+  background: color-mix(in srgb, var(--bg-float) 85%, transparent);
   backdrop-filter: blur(8px);
-  box-shadow: 0 0 16px rgba(163, 28, 255, 0.15);
+  box-shadow: 0 0 16px color-mix(in srgb, var(--accent-3) calc(15% * var(--glow)), transparent);
   animation: inspectorFadeIn 0.15s ease-out;
 }
 
@@ -445,7 +445,7 @@
   font-size: 14px;
   font-weight: 600;
   color: var(--text-0);
-  text-shadow: 0 0 10px rgba(255, 255, 255, 0.5);
+  text-shadow: 0 0 10px color-mix(in srgb, var(--highlight) calc(50% * var(--glow)), transparent);
 }
 
 .noteInspectorFreq {
@@ -488,14 +488,14 @@
 }
 
 .deleteNoteBtn {
-  color: #ffb3c9;
-  border-color: rgba(255, 60, 120, 0.4);
+  color: var(--danger-soft);
+  border-color: color-mix(in srgb, var(--danger-edge) 40%, transparent);
 }
 
 .deleteNoteBtn:hover:not(:disabled) {
-  border-color: var(--neon-pink);
-  background: rgba(255, 26, 168, 0.15);
-  box-shadow: 0 0 10px rgba(255, 26, 168, 0.3);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent) calc(30% * var(--glow)), transparent);
 }
 
 .rollScroll {
@@ -556,9 +556,9 @@
   position: absolute;
   top: 0;
   bottom: 0;
-  background: rgba(255, 26, 168, 0.22); /* --neon-pink */
-  border-left: 1px solid var(--neon-pink-soft);
-  border-right: 1px solid var(--neon-pink-soft);
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  border-left: 1px solid var(--accent-soft);
+  border-right: 1px solid var(--accent-soft);
   pointer-events: none;
 }
 
@@ -566,9 +566,9 @@
   position: absolute;
   top: 0;
   bottom: 0;
-  background: rgba(255, 26, 168, 0.06); /* --neon-pink */
-  border-left: 1px solid rgba(255, 26, 168, 0.35);
-  border-right: 1px solid rgba(255, 26, 168, 0.35);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  border-left: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  border-right: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
   pointer-events: none;
 }
 
@@ -576,11 +576,11 @@
   flex: none;
   position: relative;
   padding: 5px 6px;
-  border-left: 1px solid rgba(163, 28, 255, 0.45);
+  border-left: 1px solid color-mix(in srgb, var(--accent-3) 45%, transparent);
   font-family: var(--font-mono);
   font-size: 10px;
   color: var(--text-1);
-  background-image: linear-gradient(90deg, rgba(150, 125, 255, 0.25) 1px, transparent 1px);
+  background-image: linear-gradient(90deg, color-mix(in srgb, var(--grid) 25%, transparent) 1px, transparent 1px);
   background-size: calc(var(--cell) * 4) 6px;
   background-position: 0 100%;
   background-repeat: repeat-x;
@@ -601,7 +601,7 @@
   align-items: center;
   justify-content: flex-end;
   padding-right: 7px;
-  border-bottom: 1px solid rgba(150, 125, 255, 0.4);
+  border-bottom: 1px solid color-mix(in srgb, var(--grid) 40%, transparent);
   font-family: var(--font-mono);
   font-size: 9.5px;
   color: var(--text-3);
@@ -614,13 +614,13 @@
 }
 
 .keyRowBlack {
-  background: rgba(0, 0, 8, 0.65);
+  background: color-mix(in srgb, var(--bg-0) 65%, transparent);
 }
 
 .keyRowC {
-  border-bottom: 1px solid rgba(255, 26, 168, 0.55);
-  box-shadow: 0 1px 3px rgba(255, 26, 168, 0.2);
-  color: var(--neon-pink-soft);
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--accent) 20%, transparent);
+  color: var(--accent-soft);
   font-weight: 600;
 }
 
@@ -638,9 +638,9 @@
   position: relative;
   cursor: default;
   background-image:
-    linear-gradient(90deg, rgba(163, 28, 255, 0.4) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(150, 125, 255, 0.14) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(150, 125, 255, 0.05) 1px, transparent 1px);
+    linear-gradient(90deg, color-mix(in srgb, var(--accent-3) 40%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--grid) 14%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--grid) 5%, transparent) 1px, transparent 1px);
   background-size:
     var(--bar) 100%,
     calc(var(--cell) * 4) 100%,
@@ -653,28 +653,28 @@
   top: 0;
   bottom: 0;
   width: 2px;
-  background: #fff;
-  box-shadow: 0 0 8px var(--neon-pink), 0 0 15px var(--neon-pink);
+  background: var(--highlight);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--accent) calc(100% * var(--glow)), transparent), 0 0 15px color-mix(in srgb, var(--accent) calc(100% * var(--glow)), transparent);
   pointer-events: none;
 }
 
 .laneRow {
   height: var(--row);
-  border-bottom: 1px solid rgba(150, 125, 255, 0.25);
+  border-bottom: 1px solid color-mix(in srgb, var(--grid) 25%, transparent);
   pointer-events: none;
 }
 
 .laneRow:not(.laneRowBlack) {
-  background: rgba(150, 125, 255, 0.03);
+  background: color-mix(in srgb, var(--grid) 3%, transparent);
 }
 
 .laneRowBlack {
-  background: rgba(0, 0, 10, 0.45);
+  background: color-mix(in srgb, var(--bg-sunken) 45%, transparent);
 }
 
 .laneRowC {
-  border-bottom: 1px solid rgba(255, 26, 168, 0.55);
-  box-shadow: 0 1px 3px rgba(255, 26, 168, 0.2);
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--accent) 20%, transparent);
 }
 
 .note {
@@ -684,8 +684,8 @@
   border-radius: 4px;
   background: linear-gradient(90deg, var(--hue), color-mix(in srgb, var(--hue) 55%, #ffffff));
   box-shadow:
-    0 0 10px color-mix(in srgb, var(--hue) 70%, transparent),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.25);
+    0 0 10px color-mix(in srgb, var(--hue) calc(70% * var(--glow)), transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--on-accent) 25%, transparent);
   cursor: grab;
   touch-action: none;
 }
@@ -705,12 +705,12 @@
 }
 
 .noteSelected {
-  outline: 2px solid #ffffff;
+  outline: 2px solid var(--highlight);
   outline-offset: 1px;
   box-shadow:
-    0 0 12px #ffffff,
-    0 0 20px color-mix(in srgb, var(--hue) 90%, #ffffff),
-    inset 0 0 0 1px #ffffff;
+    0 0 12px color-mix(in srgb, var(--highlight) calc(100% * var(--glow)), transparent),
+    0 0 20px color-mix(in srgb, color-mix(in srgb, var(--hue) 90%, #ffffff) calc(100% * var(--glow)), transparent),
+    inset 0 0 0 1px var(--on-accent);
   z-index: 3;
   filter: brightness(1.3);
 }
@@ -724,7 +724,7 @@
   z-index: 2;
   cursor: ew-resize;
   opacity: 0;
-  background: rgba(255, 255, 255, 0.15);
+  background: color-mix(in srgb, var(--on-accent) 15%, transparent);
   transition: opacity 0.12s, background-color 0.12s;
 }
 
@@ -734,7 +734,7 @@
 }
 
 .resizeHandle:hover {
-  background: rgba(255, 255, 255, 0.45);
+  background: color-mix(in srgb, var(--on-accent) 45%, transparent);
 }
 
 /* A locked track's notes cannot be resized */
@@ -760,7 +760,7 @@
   top: 2px;
   bottom: 2px;
   width: 1px;
-  background: rgba(255, 255, 255, 0.85);
+  background: color-mix(in srgb, var(--on-accent) 85%, transparent);
 }
 
 .resizeHandleLeft::after {
@@ -774,7 +774,7 @@
 .noteDraft {
   pointer-events: none;
   opacity: 0.72;
-  outline: 1px dashed rgba(255, 255, 255, 0.75);
+  outline: 1px dashed color-mix(in srgb, var(--highlight) 75%, transparent);
   outline-offset: 2px;
 }
 
@@ -800,11 +800,11 @@
   position: absolute;
   inset: 0;
   overflow: visible;
-  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--hue) 70%, transparent));
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--hue) calc(70% * var(--glow)), transparent));
 }
 
 .bentNoteSelected .ribbon {
-  filter: drop-shadow(0 0 8px #ffffff) brightness(1.3);
+  filter: drop-shadow(0 0 8px color-mix(in srgb, var(--highlight) calc(100% * var(--glow)), transparent)) brightness(1.3);
 }
 
 .ribbonLine {
@@ -831,7 +831,7 @@
 
 .ribbonOutline {
   fill: none;
-  stroke: #ffffff;
+  stroke: var(--highlight);
   stroke-linejoin: round;
   stroke-linecap: butt;
   pointer-events: none;
@@ -847,7 +847,7 @@
 }
 
 .bendPoint {
-  fill: #ffffff;
+  fill: var(--highlight);
   stroke: var(--hue);
   stroke-width: 2;
   cursor: move;
@@ -879,7 +879,7 @@
   height: 46px;
   border-radius: 50%;
   border: none;
-  color: #fff;
+  color: var(--on-accent);
   background: var(--grad-neon);
   box-shadow: var(--glow-pink);
 }
@@ -905,7 +905,7 @@
   font-size: 16px;
   letter-spacing: 0.06em;
   color: var(--text-0);
-  text-shadow: 0 0 12px rgba(163, 28, 255, 0.6);
+  text-shadow: 0 0 12px color-mix(in srgb, var(--accent-3) calc(60% * var(--glow)), transparent);
 }
 
 .positionLabel {
@@ -933,7 +933,7 @@
 
 .overviewStepOn {
   background: var(--grad-neon-v);
-  box-shadow: 0 0 6px rgba(255, 26, 168, 0.35);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--accent) calc(35% * var(--glow)), transparent);
 }
 
 .overviewBar {

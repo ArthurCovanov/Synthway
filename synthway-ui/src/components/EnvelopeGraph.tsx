@@ -40,13 +40,13 @@ export function EnvelopeGraph({ envelope }: { envelope: Envelope }) {
     >
       <defs>
         <linearGradient id={`${id}-stroke`} x1="0" y1="0" x2="1" y2="0">
-          <stop offset="0" stopColor="#ff1aa8" />
-          <stop offset="0.55" stopColor="#c21cff" />
-          <stop offset="1" stopColor="#5f78ff" />
+          <stop offset="0" stopColor="var(--curve-start)" />
+          <stop offset="0.55" stopColor="var(--curve-mid)" />
+          <stop offset="1" stopColor="var(--curve-end)" />
         </linearGradient>
         <linearGradient id={`${id}-fill`} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="#c21cff" stopOpacity="0.32" />
-          <stop offset="1" stopColor="#2e4dff" stopOpacity="0" />
+          <stop offset="0" stopColor="var(--curve-mid)" stopOpacity="0.32" />
+          <stop offset="1" stopColor="var(--accent-2)" stopOpacity="0" />
         </linearGradient>
       </defs>
       {[0.25, 0.5, 0.75].map((level) => (
@@ -56,7 +56,7 @@ export function EnvelopeGraph({ envelope }: { envelope: Envelope }) {
           x2={W - PAD}
           y1={y(level)}
           y2={y(level)}
-          stroke="rgba(150,125,255,0.08)"
+          stroke="color-mix(in srgb, var(--grid) 8%, transparent)"
           vectorEffect="non-scaling-stroke"
         />
       ))}
@@ -68,7 +68,7 @@ export function EnvelopeGraph({ envelope }: { envelope: Envelope }) {
         strokeWidth={2}
         strokeLinejoin="round"
         vectorEffect="non-scaling-stroke"
-        style={{ filter: 'drop-shadow(0 0 4px rgba(255, 26, 168, 0.6))' }}
+        style={{ filter: 'drop-shadow(0 0 4px color-mix(in srgb, var(--curve-start) calc(60% * var(--glow)), transparent))' }}
       />
     </svg>
   );

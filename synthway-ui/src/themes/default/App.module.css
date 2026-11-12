@@ -7,18 +7,14 @@
   min-width: 1024px;
 }
 
-/* Neon haze, like city lights in fog */
+/* The backdrop of the whole window (theme.css: the neon haze) */
 .app::before {
   content: '';
   position: fixed;
   inset: 0;
   z-index: -2;
   pointer-events: none;
-  background:
-    radial-gradient(55% 45% at 88% -8%, rgba(255, 26, 168, 0.17), transparent 70%),
-    radial-gradient(50% 45% at 12% 108%, rgba(46, 77, 255, 0.2), transparent 70%),
-    radial-gradient(40% 35% at 55% 55%, rgba(163, 28, 255, 0.06), transparent 75%),
-    var(--bg-0);
+  background: var(--app-backdrop);
 }
 
 .main {
@@ -30,7 +26,7 @@
   overflow: clip;
 }
 
-/* Synthwave horizon grid fading into the haze */
+/* Horizon grid fading into the backdrop (theme.css: --app-grid, none for no grid) */
 .main::before {
   content: '';
   position: absolute;
@@ -40,9 +36,7 @@
   height: 46%;
   z-index: -1;
   pointer-events: none;
-  background-image:
-    linear-gradient(rgba(163, 28, 255, 0.2) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(46, 77, 255, 0.16) 1px, transparent 1px);
+  background-image: var(--app-grid);
   background-size: 56px 56px;
   transform: perspective(420px) rotateX(64deg);
   transform-origin: bottom;

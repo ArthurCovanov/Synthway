@@ -27,12 +27,12 @@
 
 .power:hover:not(:disabled) {
   color: var(--text-0);
-  border-color: rgba(255, 124, 198, 0.5);
+  border-color: color-mix(in srgb, var(--accent-soft) 50%, transparent);
 }
 
 .powerOn {
   border-color: transparent;
-  color: #fff;
+  color: var(--on-accent);
   background: var(--grad-neon);
   box-shadow: var(--glow-pink);
 }
@@ -68,7 +68,7 @@
 
 .powerStateOn {
   color: var(--ok);
-  text-shadow: 0 0 8px rgba(47, 243, 201, 0.6);
+  text-shadow: 0 0 8px color-mix(in srgb, var(--ok) calc(60% * var(--glow)), transparent);
 }
 
 .readout {
@@ -86,7 +86,7 @@
   font-size: 22px;
   letter-spacing: 0.06em;
   color: var(--text-0);
-  text-shadow: 0 0 14px rgba(255, 26, 168, 0.55);
+  text-shadow: 0 0 14px color-mix(in srgb, var(--accent) calc(55% * var(--glow)), transparent);
 }
 
 .readoutIdle {
@@ -115,14 +115,14 @@
   place-items: center;
   pointer-events: none;
   border-radius: 8px;
-  background: rgba(5, 5, 26, 0.6);
+  background: color-mix(in srgb, var(--bg-1) 60%, transparent);
   backdrop-filter: blur(1.5px);
   font-family: var(--font-display);
   font-size: 10.5px;
   letter-spacing: 0.2em;
   text-transform: uppercase;
   color: var(--text-1);
-  text-shadow: 0 0 10px rgba(163, 28, 255, 0.85);
+  text-shadow: 0 0 10px color-mix(in srgb, var(--accent-3) calc(85% * var(--glow)), transparent);
 }
 
 .octave {

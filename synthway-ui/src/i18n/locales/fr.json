@@ -76,6 +76,9 @@
     },
     "appearance": {
       "title": "Apparence",
+      "theme": "Thème",
+      "defaultTheme": "Synthwave (par défaut)",
+      "themeHint": "L’allure de l’interface. Chaque thème est un dossier de {folder}. Gardé dans ce navigateur.",
       "glow": "Lueurs néon",
       "glowHint": "Halos lumineux autour des éléments actifs.",
       "motion": "Animations",

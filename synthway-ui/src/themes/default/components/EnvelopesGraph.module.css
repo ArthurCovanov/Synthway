@@ -11,12 +11,12 @@
 }
 
 .grid {
-  stroke: rgba(150, 125, 255, 0.08);
+  stroke: color-mix(in srgb, var(--grid) 8%, transparent);
   vector-effect: non-scaling-stroke;
 }
 
 .noteOff {
-  stroke: rgba(170, 140, 255, 0.35);
+  stroke: color-mix(in srgb, var(--grid-strong) 35%, transparent);
   stroke-dasharray: 3 3;
   vector-effect: non-scaling-stroke;
 }

@@ -83,7 +83,7 @@ export function SpectrumGlyph({
   const maxRatio = Math.max(4, ...partials.map((partial) => partial.ratio)) * 1.1;
   return (
     <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} className={className} aria-hidden="true">
-      <path d={`M0 ${height - 0.5}H${width}`} stroke="rgba(150,125,255,0.35)" strokeWidth={1} />
+      <path d={`M0 ${height - 0.5}H${width}`} stroke="color-mix(in srgb, var(--grid) 35%, transparent)" strokeWidth={1} />
       {partials.map((partial, index) => {
         const x = 1.5 + (partial.ratio / maxRatio) * (width - 3);
         return (
@@ -136,9 +136,9 @@ export function NeonDefs() {
     <svg width="0" height="0" style={{ position: 'absolute' }} aria-hidden="true" focusable="false">
       <defs>
         <linearGradient id="sw-neon-stroke" gradientUnits="userSpaceOnUse" x1="2" y1="3" x2="22" y2="21">
-          <stop offset="0" stopColor="#ff1aa8" />
-          <stop offset="0.5" stopColor="#c21cff" />
-          <stop offset="1" stopColor="#5f78ff" />
+          <stop offset="0" stopColor="var(--curve-start)" />
+          <stop offset="0.5" stopColor="var(--curve-mid)" />
+          <stop offset="1" stopColor="var(--curve-end)" />
         </linearGradient>
       </defs>
     </svg>

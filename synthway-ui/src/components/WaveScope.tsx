@@ -1,7 +1,8 @@
 import { useEffect, useRef } from 'react';
 import type { Waveform } from '../types';
 import { sampleWave } from '../lib/music';
-import { HUE_HEX, type NeonHue } from '../lib/neon';
+import { useAppearance } from '../lib/appearance';
+import { HUE_DRAW, themeColor, type NeonHue } from '../lib/neon';
 
 const TWO_PI = Math.PI * 2;
 
@@ -48,10 +49,15 @@ export function WaveScope({
 
     const draw = () => {
       ctx.clearRect(0, 0, width, height);
+      // The theme's colours, read at each drawing: a new theme shows at once
+      const color = (variable: string) => themeColor(canvas, variable);
+      const hueColor = color(HUE_DRAW[hue]);
+      const glow = Number.parseFloat(color('--glow'));
 
       // Graticule
       ctx.lineWidth = 1;
-      ctx.strokeStyle = 'rgba(150, 125, 255, 0.07)';
+      ctx.strokeStyle = color('--grid');
+      ctx.globalAlpha = 0.07;
       for (let x = 0; x < width; x += 24) {
         ctx.beginPath();
         ctx.moveTo(x + 0.5, 0);
@@ -64,11 +70,12 @@ export function WaveScope({
         ctx.lineTo(width, y + 0.5);
         ctx.stroke();
       }
-      ctx.strokeStyle = 'rgba(150, 125, 255, 0.18)';
+      ctx.globalAlpha = 0.18;
       ctx.beginPath();
       ctx.moveTo(0, Math.round(height / 2) + 0.5);
       ctx.lineTo(width, Math.round(height / 2) + 0.5);
       ctx.stroke();
+      ctx.globalAlpha = 1;
 
       // Sum of the voices
       const current = voicesRef.current;
@@ -85,22 +92,24 @@ export function WaveScope({
         else ctx.lineTo(x, y);
       }
       const gradient = ctx.createLinearGradient(0, 0, width, 0);
-      gradient.addColorStop(0, HUE_HEX[hue]);
-      gradient.addColorStop(0.55, '#c21cff');
-      gradient.addColorStop(1, '#5f78ff');
+      gradient.addColorStop(0, hueColor);
+      gradient.addColorStop(0.55, color('--curve-mid'));
+      gradient.addColorStop(1, color('--curve-end'));
       ctx.lineJoin = 'round';
       ctx.lineCap = 'round';
 
-      ctx.shadowColor = HUE_HEX[hue];
-      ctx.shadowBlur = 16;
+      ctx.shadowColor = hueColor;
+      ctx.shadowBlur = 16 * (Number.isNaN(glow) ? 1 : glow);
       ctx.lineWidth = 3;
       ctx.strokeStyle = gradient;
       ctx.stroke();
 
       ctx.shadowBlur = 0;
       ctx.lineWidth = 1.1;
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+      ctx.strokeStyle = color('--on-accent');
+      ctx.globalAlpha = 0.85;
       ctx.stroke();
+      ctx.globalAlpha = 1;
     };
     redrawRef.current = draw;
 
@@ -133,10 +142,11 @@ export function WaveScope({
     };
   }, [hue, animate, cycles]);
 
-  // New voices: the animation picks them up by itself, a still scope is redrawn
+  // New voices or theme: the animation picks them up by itself, a still scope is redrawn
+  const { theme } = useAppearance();
   useEffect(() => {
     if (!animate) redrawRef.current();
-  }, [voices, animate]);
+  }, [voices, animate, theme]);
 
   return <canvas ref={canvasRef} className={className} style={{ display: 'block', width: '100%', height: '100%' }} aria-hidden="true" />;
 }

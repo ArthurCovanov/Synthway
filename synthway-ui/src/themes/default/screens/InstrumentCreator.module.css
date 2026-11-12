@@ -23,7 +23,7 @@
   font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: 0;
-  color: var(--neon-pink-soft);
+  color: var(--accent-soft);
 }
 
 /* ---------- Library ---------- */
@@ -99,7 +99,7 @@
   padding: 14px;
   border-radius: 12px;
   border: 1px solid var(--line);
-  background: rgba(17, 16, 51, 0.6);
+  background: color-mix(in srgb, var(--bg-3) 60%, transparent);
   cursor: pointer;
   user-select: none;
   outline-offset: 3px;
@@ -112,7 +112,7 @@
 
 .card:hover {
   border-color: var(--line-strong);
-  background: rgba(26, 24, 70, 0.72);
+  background: color-mix(in srgb, var(--bg-4) 72%, transparent);
   transform: translateY(-1px);
 }
 
@@ -120,7 +120,7 @@
 .cardSelected:hover {
   border-color: transparent;
   background:
-    linear-gradient(rgba(19, 17, 54, 0.96), rgba(19, 17, 54, 0.96)) padding-box,
+    linear-gradient(color-mix(in srgb, var(--bg-raised) 96%, transparent), color-mix(in srgb, var(--bg-raised) 96%, transparent)) padding-box,
     var(--grad-neon) border-box;
   box-shadow: var(--glow-violet);
 }
@@ -133,7 +133,7 @@
 }
 
 .card.cardDropTarget {
-  border-color: rgba(95, 120, 255, 0.45);
+  border-color: color-mix(in srgb, var(--accent-2-mid) 45%, transparent);
 }
 
 .dropBar {
@@ -141,8 +141,8 @@
   left: 0;
   right: 0;
   height: 3px;
-  background: var(--neon-blue);
-  box-shadow: 0 0 8px var(--neon-blue), 0 0 16px rgba(95, 120, 255, 0.7);
+  background: var(--accent-2);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--accent-2) calc(100% * var(--glow)), transparent), 0 0 16px color-mix(in srgb, var(--accent-2-mid) calc(70% * var(--glow)), transparent);
   border-radius: 2px;
   pointer-events: none;
   z-index: 10;
@@ -158,8 +158,8 @@
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--neon-blue);
-  box-shadow: 0 0 6px var(--neon-blue);
+  background: var(--accent-2);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--accent-2) calc(100% * var(--glow)), transparent);
 }
 
 .dropBar::before {
@@ -180,10 +180,10 @@
 
 @keyframes dropBarGlow {
   from {
-    box-shadow: 0 0 6px var(--neon-blue), 0 0 12px rgba(95, 120, 255, 0.5);
+    box-shadow: 0 0 6px color-mix(in srgb, var(--accent-2) calc(100% * var(--glow)), transparent), 0 0 12px color-mix(in srgb, var(--accent-2-mid) calc(50% * var(--glow)), transparent);
   }
   to {
-    box-shadow: 0 0 10px var(--neon-blue), 0 0 20px rgba(95, 120, 255, 0.85);
+    box-shadow: 0 0 10px color-mix(in srgb, var(--accent-2) calc(100% * var(--glow)), transparent), 0 0 20px color-mix(in srgb, var(--accent-2-mid) calc(85% * var(--glow)), transparent);
   }
 }
 
@@ -232,7 +232,7 @@
 
 .cardGlyph {
   color: var(--hue);
-  filter: drop-shadow(0 0 4px var(--hue));
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--hue) calc(100% * var(--glow)), transparent));
 }
 
 .cardActions {
@@ -308,7 +308,7 @@
 .tagLock {
   display: inline-flex;
   align-items: center;
-  color: var(--neon-pink-soft);
+  color: var(--accent-soft);
 }
 
 .empty {
@@ -354,8 +354,8 @@
 }
 
 .lockChip[aria-pressed='true'] {
-  border-color: color-mix(in srgb, var(--neon-pink) 55%, transparent);
-  color: var(--neon-pink-soft);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  color: var(--accent-soft);
 }
 
 .lockNote {
@@ -364,8 +364,8 @@
   gap: 7px;
   padding: 8px 10px;
   border-radius: var(--radius-m);
-  border: 1px solid color-mix(in srgb, var(--neon-pink) 30%, transparent);
-  background: color-mix(in srgb, var(--neon-pink) 6%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
   font-size: 12px;
   line-height: 1.45;
   color: var(--text-1);
@@ -374,7 +374,7 @@
 .lockNote svg {
   flex: none;
   margin-top: 2px;
-  color: var(--neon-pink-soft);
+  color: var(--accent-soft);
 }
 
 .lockNote > span {
@@ -393,8 +393,8 @@
 
 .nameInput:focus {
   outline: none;
-  border-color: var(--neon-pink);
-  box-shadow: 0 0 0 3px rgba(255, 26, 168, 0.18);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 .descInput {
@@ -408,7 +408,7 @@
   border-radius: 12px;
   border: 1px solid var(--line);
   background:
-    radial-gradient(ellipse at center, rgba(163, 28, 255, 0.12), transparent 70%),
+    radial-gradient(ellipse at center, color-mix(in srgb, var(--accent-3) 12%, transparent), transparent 70%),
     var(--bg-1);
   overflow: hidden;
 }
@@ -430,7 +430,7 @@
 
 .scopeLive {
   color: var(--ok);
-  text-shadow: 0 0 6px rgba(47, 243, 201, 0.7);
+  text-shadow: 0 0 6px color-mix(in srgb, var(--ok) calc(70% * var(--glow)), transparent);
 }
 
 .sections {
@@ -471,7 +471,7 @@
   border-radius: 50%;
   border: 2px solid transparent;
   background: var(--hue);
-  box-shadow: 0 0 10px color-mix(in srgb, var(--hue) 60%, transparent);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--hue) calc(60% * var(--glow)), transparent);
   transition:
     transform 0.15s var(--ease),
     border-color 0.15s;
@@ -489,7 +489,7 @@
   border-color: var(--bg-1);
   box-shadow:
     0 0 0 2px var(--hue),
-    0 0 12px var(--hue);
+    0 0 12px color-mix(in srgb, var(--hue) calc(100% * var(--glow)), transparent);
 }
 
 .swatches {
@@ -547,7 +547,7 @@
   border-radius: 12px;
   border: 1px solid var(--line);
   background:
-    radial-gradient(ellipse at 30% 100%, rgba(46, 77, 255, 0.1), transparent 70%),
+    radial-gradient(ellipse at 30% 100%, color-mix(in srgb, var(--accent-2) 10%, transparent), transparent 70%),
     var(--bg-1);
   overflow: hidden;
 }
@@ -704,12 +704,12 @@
 .partialSwitch[aria-checked='true'] {
   border-color: transparent;
   background: var(--hue);
-  box-shadow: 0 0 8px var(--hue);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--hue) calc(100% * var(--glow)), transparent);
 }
 
 .partialSwitch[aria-checked='true']::after {
   transform: translateX(10px);
-  background: #fff;
+  background: var(--on-accent);
 }
 
 .partialSwitch:disabled {
@@ -740,8 +740,8 @@
 }
 
 .partialLock[aria-pressed='true'] {
-  border-color: color-mix(in srgb, var(--neon-pink) 50%, transparent);
-  color: var(--neon-pink-soft);
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  color: var(--accent-soft);
 }
 
 .partialLock:disabled {
@@ -770,7 +770,7 @@
 
 .partialLockIcon {
   flex: none;
-  color: var(--neon-pink-soft);
+  color: var(--accent-soft);
 }
 
 .partialRatio {

@@ -1,13 +1,14 @@
 import { Languages, Power, RefreshCw } from 'lucide-react';
 import logo from '../assets/brand/logo-640.png';
-import layout from '../components/layout.module.css';
+import layout from '@theme/components/layout.module.css';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { Badge, Button, Field, Panel, Section, Segmented, SoonBadge, Toggle, selectClass } from '../components/ui';
 import { LANGUAGES, useI18n, type MessageKey } from '../i18n';
 import { SERVER_HOST, SERVER_PORT } from '../lib/api';
 import { useAppearance } from '../lib/appearance';
 import { useSynthServer } from '../lib/SynthServer';
-import styles from './Settings.module.css';
+import { DEFAULT_THEME, listThemes, themeName } from '../lib/themes';
+import styles from '@theme/screens/Settings.module.css';
 
 const SAMPLE_RATES = [44100, 48000, 96000];
 
@@ -205,11 +206,23 @@ function MidiCard() {
 }
 
 function AppearanceCard() {
-  const { glow, motion, setGlow, setMotion } = useAppearance();
-  const { t } = useI18n();
+  const { glow, motion, setGlow, setMotion, theme, setTheme } = useAppearance();
+  const { t, tr } = useI18n();
   return (
     <Panel className={styles.card}>
       <Section title={t('settings.appearance.title')}>
+        <Field label={t('settings.appearance.theme')}>
+          <select className={selectClass} value={theme} onChange={(event) => setTheme(event.target.value)}>
+            {listThemes().map((id) => (
+              <option key={id} value={id}>
+                {id === DEFAULT_THEME ? t('settings.appearance.defaultTheme') : themeName(id)}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <p className={styles.note}>
+          {tr('settings.appearance.themeHint', { folder: <code>synthway-ui/src/themes</code> })}
+        </p>
         <div className={styles.toggles}>
           <Toggle
             label={t('settings.appearance.glow')}

@@ -1,0 +1,32 @@
+/* Graphite: what the variables alone cannot change */
+
+/* Screen titles: plain and a little bold, rather than wide capitals */
+.layout_title {
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+/* Small labels: a touch heavier, Inter being thinner than Michroma at this size */
+.ui_sectionTitle {
+  font-weight: 600;
+  letter-spacing: 0.16em;
+}
+
+/* The main button: white with black text, the only bright spot */
+.ui_primary {
+  color: #0a0a0a;
+  background: #f2f2f2;
+}
+
+.ui_primary:hover:not(:disabled) {
+  color: #0a0a0a;
+  background: #ffffff;
+  filter: none;
+}
+
+/* Grey chevron in the drop-down lists */
+.ui_select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23a3a3a3' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+}

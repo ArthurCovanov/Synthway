@@ -2,7 +2,7 @@ import { useRef } from 'react';
 import { useI18n } from '../i18n';
 import { formatCents, frequencyToNote, type NoteReading } from '../lib/music';
 import type { Analysis } from '../types';
-import styles from './Tuner.module.css';
+import styles from '@theme/components/Tuner.module.css';
 
 /** Below this clarity no note is shown, below RELIABLE it is shown as uncertain */
 const MIN_CLARITY = 0.5;

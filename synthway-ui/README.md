@@ -135,17 +135,18 @@ Le bouton **Exporter en audio** (après Enregistrer, dans l'en-tête du Composer
 
 ### Données enregistrées
 
-Instruments, composition, réglages audio, langue, apparence et réglages de l'Analyzer (source, entrée, La de référence, anti-bruit) sont gardés dans le `localStorage` du navigateur : la page les retrouve au rechargement. Pour garder un morceau ou un instrument ailleurs, ou le partager, passe par les fichiers ci-dessus.
+Instruments, composition, réglages audio, langue, apparence (thème compris) et réglages de l'Analyzer (source, entrée, La de référence, anti-bruit) sont gardés dans le `localStorage` du navigateur : la page les retrouve au rechargement. Pour garder un morceau ou un instrument ailleurs, ou le partager, passe par les fichiers ci-dessus.
 
 ---
 
 ## Style
 
-- **Couleurs :** relevées sur le logo `assets/logo/v4.png`. Fond `#000008`, néons du rose `#ff1aa8` au bleu `#2e4dff` en passant par le magenta et le violet. Pour distinguer les partiels, s'y ajoutent le cyan, le vert, le jaune, l'orange, le rouge et le blanc (couleur du premier partiel). Toutes les couleurs sont des variables CSS dans `src/styles/theme.css`, reprises dans `src/lib/neon.ts`.
+- **Couleurs :** relevées sur le logo `assets/logo/v4.png`. Fond `#000008`, néons du rose `#ff1aa8` au bleu `#2e4dff` en passant par le magenta et le violet. Pour distinguer les partiels, s'y ajoutent le cyan, le vert, le jaune, l'orange, le rouge et le blanc (couleur du premier partiel). Toutes les couleurs, y compris celles que dessine le code, sont des variables CSS de `src/themes/default/theme.css` (`src/lib/neon.ts` les lit pour les graphiques).
 - **Ambiance :** synthwave, avec un halo dans la brume et une grille d'horizon en perspective.
 - **Polices :** Michroma pour les titres, qui rappelle le mot « SYNTHWAY » du logo ; Inter pour le texte ; JetBrains Mono pour les valeurs.
 - **Icônes :** Lucide, sauf les quatre de la navigation, dessinées pour Synthway dans `src/components/icons.tsx`. L'Instrument Creator est une sinusoïde sculptée en signal carré, avec une étincelle ; le Composer est un motif de piano roll ; l'Analyzer est une onde qui traverse une loupe révélant ses partiels ; le Decomposer est une onde qui se sépare en trois pistes.
 - **Apparence réglable :** les lueurs et les animations se coupent dans les Réglages. Les animations se coupent aussi quand le système demande moins de mouvement.
+- **Thèmes :** tout ce style est le thème par défaut, `src/themes/default/`. Trois autres sont livrés : **Retro light** (clair, papier et filets orange), **Deep blue** (encre et bleu électrique, plat) et **Graphite** (noir et gris). On choisit dans les Réglages, carte Apparence. Un thème est un dossier de `src/themes/` ; il tient surtout dans son `theme.css`, ses variables de couleurs. Voir [`src/themes/README.md`](src/themes/README.md).
 
 ---
 
@@ -154,7 +155,7 @@ Instruments, composition, réglages audio, langue, apparence et réglages de l'A
 ```text
 synthway-ui/
 ├── index.html
-├── vite.config.ts            # Adresse de synthway-server, polling sous WSL
+├── vite.config.ts            # Adresse de synthway-server, polling sous WSL, imports @theme/ des thèmes
 ├── public/favicon.png        # Généré depuis le logo
 ├── scripts/
 │   ├── make-brand-assets.py  # Régénère emblème, favicon et logo depuis assets/logo
@@ -162,7 +163,12 @@ synthway-ui/
 └── src/
     ├── main.tsx, App.tsx     # Point d'entrée, navigation, état partagé
     ├── types.ts              # Types du serveur et du core (à garder synchronisés)
-    ├── styles/               # theme.css (variables), fonts.css (@font-face)
+    ├── themes/               # Thèmes, un par dossier (voir son README)
+    │   ├── default/          # Synthwave : theme.css (variables), base.css (page), overrides.css (vide),
+    │   │                     # fonts.css, App.module.css, components/ et screens/ (une feuille par composant ou écran)
+    │   ├── retro-light/      # Clair : theme.css, overrides.css
+    │   ├── deep-blue/        # Bleu nuit : theme.css, overrides.css
+    │   └── graphite/         # Noir et gris : theme.css, overrides.css
     ├── i18n/                 # Langues : index.tsx (t, tr, useI18n, LanguageProvider), locales/en.json et fr.json
     ├── assets/
     │   ├── brand/            # Emblème et logo allégés (générés)
@@ -170,7 +176,9 @@ synthway-ui/
     ├── lib/
     │   ├── api.ts            # REST, WebSocket /ws/synth et /ws/analyzer, envoi d'un fichier à analyser ou à décomposer
     │   ├── SynthServer.tsx   # Connexion au serveur, état du moteur, notes
-    │   ├── appearance.tsx    # Lueurs / animations
+    │   ├── appearance.tsx    # Lueurs / animations / thème
+    │   ├── themes.ts         # Thème choisi : feuilles du thème ou du défaut dans la page, noms de classes
+    │   ├── themeSources.ts   # Texte de toutes les feuilles de tous les thèmes
     │   ├── instruments.ts    # Modèle (partiels), préréglages, migration des anciens instruments
     │   ├── instrumentSound.ts # Ce que le moteur joue d'un instrument, envoyé tant que l'audio est actif
     │   ├── partials.ts       # Partiels : harmoniques d'une onde, repliement, génération, envoi au moteur
@@ -183,7 +191,7 @@ synthway-ui/
     │   ├── files.ts          # Enregistrer (dialogue ou téléchargement), choisir des fichiers, outils de lecture
     │   ├── history.ts        # Annuler / rétablir : état enregistré avec son historique (Composer)
     │   ├── music.ts          # Notes MIDI et noms de notes, cents, formes d'onde (mêmes formules que le core)
-    │   ├── neon.ts           # Couleurs d'accent et des partiels
+    │   ├── neon.ts           # Couleurs des partiels (variables du thème), lecture des variables pour un canvas
     │   ├── storage.ts        # localStorage tolérant aux erreurs
     │   └── useElementSize.ts # Taille d'un élément, pour les graphiques en pixels
     ├── components/           # Barre latérale, contrôles, spectre, enveloppes, oscilloscope, clavier,
@@ -192,7 +200,7 @@ synthway-ui/
     └── screens/              # InstrumentCreator, Composer, Analyzer, Decomposer, Settings
 ```
 
-Les styles sont des modules CSS (`*.module.css`), un par composant ou écran.
+Les styles sont des modules CSS (`*.module.css`), un par composant ou écran, rangés dans `src/themes/default/` et importés par `@theme/…` (`import styles from '@theme/components/Sidebar.module.css'`). Une nouvelle feuille se crée là, jamais à côté du composant : voir [`src/themes/README.md`](src/themes/README.md).
 
 ---
 

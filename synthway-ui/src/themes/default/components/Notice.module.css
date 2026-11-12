@@ -18,11 +18,11 @@
   padding: 12px 12px 12px 14px;
   border-radius: var(--radius-m);
   border: 1px solid color-mix(in srgb, var(--tone) 45%, transparent);
-  background: linear-gradient(180deg, rgba(17, 16, 51, 0.96), rgba(10, 10, 36, 0.97));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--bg-3) 96%, transparent), color-mix(in srgb, var(--bg-2) 97%, transparent));
   box-shadow:
-    0 0 0 1px rgba(0, 0, 0, 0.3),
-    0 0 22px color-mix(in srgb, var(--tone) 18%, transparent),
-    0 18px 40px rgba(0, 0, 0, 0.5);
+    0 0 0 1px color-mix(in srgb, var(--shadow) 30%, transparent),
+    0 0 22px color-mix(in srgb, var(--tone) calc(18% * var(--glow)), transparent),
+    0 18px 40px color-mix(in srgb, var(--shadow) 50%, transparent);
   animation: rise 0.22s var(--ease);
 }
 

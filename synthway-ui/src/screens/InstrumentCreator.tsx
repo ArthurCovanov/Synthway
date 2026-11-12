@@ -12,7 +12,7 @@ import { EnvelopeGraph } from '../components/EnvelopeGraph';
 import { EnvelopesGraph } from '../components/EnvelopesGraph';
 import { SpectrumGlyph, WaveGlyph } from '../components/icons';
 import { HIGHEST_MIDI, KeyboardDock } from '../components/KeyboardDock';
-import layout from '../components/layout.module.css';
+import layout from '@theme/components/layout.module.css';
 import { Notice, useNotice } from '../components/Notice';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { SpectrumGraph } from '../components/SpectrumGraph';
@@ -54,7 +54,7 @@ import {
   unisonOf,
 } from '../lib/instruments';
 import { midiToName, WAVEFORM_OPTIONS } from '../lib/music';
-import { HUE_HEX, HUE_VAR, HUES, PARTIAL_HUES, type NeonHue } from '../lib/neon';
+import { HUE_DRAW, HUE_VAR, HUES, PARTIAL_HUES, type NeonHue } from '../lib/neon';
 import {
   activePartials,
   aliasingFrom,
@@ -76,7 +76,7 @@ import {
   type UnisonParams,
   type Waveform,
 } from '../types';
-import styles from './InstrumentCreator.module.css';
+import styles from '@theme/screens/InstrumentCreator.module.css';
 
 function formatSeconds(seconds: number): string {
   return seconds < 1 ? `${Math.round(seconds * 1000)} ms` : `${seconds.toFixed(2)} s`;
@@ -413,7 +413,7 @@ function InstrumentCard({
               partials={active.map((partial) => ({
                 ratio: partial.ratio,
                 amplitude: partial.amplitude,
-                color: HUE_HEX[partial.hue],
+                color: HUE_DRAW[partial.hue],
               }))}
               width={34}
               height={16}

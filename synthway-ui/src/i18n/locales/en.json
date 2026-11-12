@@ -76,6 +76,9 @@
     },
     "appearance": {
       "title": "Appearance",
+      "theme": "Theme",
+      "defaultTheme": "Synthwave (default)",
+      "themeHint": "The look of the interface. Each theme is a folder of {folder}. Saved in this browser.",
       "glow": "Neon glow",
       "glowHint": "Light halos around active elements.",
       "motion": "Animations",
