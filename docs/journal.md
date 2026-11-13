@@ -1,5 +1,27 @@
 # Journal de travail
 
+## 2026-11-13 23:53 · Claude · terminé
+**Tâche :** (demande de l'utilisateur) les thèmes, cachés dans la section « Language » des README, deviennent une section à part, dans le menu du haut, avec une capture de chaque thème
+**Fichiers :** README.md, README.fr.md, docs/images/{theme-default, theme-retro-light, theme-deep-blue, theme-graphite}.png (nouvelles), docs/journal.md
+**Résultat :**
+- **README :** « Themes » / « Thèmes » passe de sous-titre de « Language » / « Langue » à section à part (`##`), juste après, avec son lien dans le menu du haut (`#themes`, `#thèmes`). Comment choisir (Réglages, liste Theme de la carte Appearance), puis un tableau HTML 2 × 2 : chaque capture, cliquable vers sa taille réelle, avec le nom et la phrase du thème ; texte de remplacement en anglais ou en français selon le README. Le lien vers `src/themes/README.md` reste.
+- **Captures :** 1600 × 1000, comme les autres de `docs/images/`, par Chrome sans fenêtre piloté par le protocole de débogage (script dans le dossier temporaire de la session), face au serveur factice et à un build de l'interface pour lui (`/tmp/synthway-ui-dist`) : Instrument Creator sur le préréglage Neon Bell, interface en anglais, un thème par capture (posé dans `synthway.theme.v1`, vérifié par `data-theme`). 270 à 460 Ko chacune.
+- **Vérifié :** rendu de la section dans une page faite à la main avec `github-markdown-css` (pas le vrai GitHub) : à 830 px, tableau à la largeur du README, images de 388 px, sans défilement ; à 375 px, images de 119 px, rien ne déborde. Les deux README, même résultat.
+- **Ménage :** serveur factice, aperçu (4174), page d'essai (4177) et Chrome arrêtés. Aucun son joué, micro jamais ouvert, port 5173 jamais touché.
+- **Non fait :** rien n'est commité.
+
+## 2026-11-12 13:08 · Claude · terminé
+**Tâche :** (demande de l'utilisateur, son serveur arrêté) recompiler la DLL du moteur en 0.5.0 et refaire le zip Windows 0.5.0
+**Fichiers :** synthway-core/build (ignoré par git), dist/ (ignoré par git), docs/journal.md
+**Résultat :**
+- **Moteur :** `build.ps1 -Test` dans le dépôt (18741 libre) : sans avertissement, les deux tests passent, CLI « v0.5.0 ». La DLL ne dépend que de DLL système.
+- **Paquet :** `packaging/build_windows.py` (Python MSYS2 ; `synthway-ui/dist` déjà reconstruit à 12:53) a fait `dist/Synthway-0.5.0-windows-x64` et son zip (18,6 Mo).
+  - Lancé depuis son dossier (`.\synthway.bat --no-browser --port 18753`), avec un PATH limité à Windows : prêt en 2,4 s.
+  - `/health` donne `core_version` 0.5.0, l'API 0.5.0 ; la page sert un paquet qui contient 0.5.0 et plus 0.4.0, avec les thèmes `retro-light`, `deep-blue` et `graphite`.
+  - Arrêté par `taskkill /T` ; aucun processus restant, 18753 libre. Moteur jamais démarré, aucun son.
+- **Ancien paquet :** `dist/Synthway-0.4.0-windows-x64` et son zip supprimés, à la demande de l'utilisateur. `dist/` ne garde que le 0.5.0 et `cache/`.
+- Rien de neuf à commiter (`build/` et `dist/` sont ignorés), sauf ce journal.
+
 ## 2026-11-12 12:53 · Claude · terminé
 **Tâche :** version 0.5.0 partout (demande de l'utilisateur) : interface, serveur, moteur ; puis un commit sur `main` du travail sur les thèmes (entrées de 10:40, 11:09 et 11:42) et de la version. README racine : rien de plus, la section « Themes » / « Thèmes » suffit (réponse de l'utilisateur).
 **Fichiers :** synthway-ui/{package.json, package-lock.json}, synthway-ui/dist (reconstruit), synthway-server/{pyproject.toml, src/main.py}, synthway-core/{src/synthway.c, CMakeLists.txt}, docs/journal.md

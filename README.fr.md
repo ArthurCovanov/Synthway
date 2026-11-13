@@ -16,6 +16,7 @@
   <a href="#architecture">Architecture</a> ·
   <a href="#démarrage-rapide">Démarrage rapide</a> ·
   <a href="#langue">Langue</a> ·
+  <a href="#thèmes">Thèmes</a> ·
   <a href="docs/developpement.md">Guide de développement</a>
 </p>
 
@@ -151,14 +152,32 @@ Toute l'interface change aussitôt, et garde cette langue aux lancements suivant
 
 Les textes de l'interface sont dans `synthway-ui/src/i18n/locales/` : `en.json` pour l'anglais, `fr.json` pour le français. Pour ajouter une langue, voir le [guide de développement](docs/developpement.md#langues-de-linterface).
 
-### Thèmes
+## Thèmes
 
-Pas fan des néons ? Dans les **Réglages**, la carte **Appearance** (Apparence) fait passer toute l'interface d'un thème à l'autre, aussitôt :
+Pas fan des néons ? Synthway existe en quatre thèmes. Dans les **Réglages** (**Settings**, l'engrenage ⚙ en bas de la barre de gauche), la liste **Theme** (Thème) de la carte **Appearance** (Apparence) fait passer toute l'interface d'un thème à l'autre, aussitôt, et garde ce choix aux lancements suivants.
 
-- **Synthwave** (par défaut) : néons rose, violet et bleu sur la nuit, brume et grille d'horizon.
-- **Retro light** : papier chaud, cartes blanches tracées de filets orange, coucher de soleil années 70 en ambre, orange et rouille.
-- **Deep blue** : encre plate et un seul bleu électrique, carré et calme.
-- **Graphite** : noir et gris, la couleur gardée pour vos partiels et vos pistes.
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="docs/images/theme-default.png"><img src="docs/images/theme-default.png" alt="Instrument Creator dans le thème Synthwave : partiels néon sur fond de nuit"></a><br>
+      <strong>Synthwave</strong> (par défaut) : néons rose, violet et bleu sur la nuit, brume et grille d'horizon.
+    </td>
+    <td width="50%" valign="top">
+      <a href="docs/images/theme-retro-light.png"><img src="docs/images/theme-retro-light.png" alt="Instrument Creator dans le thème Retro light : cartes blanches et filets orange sur papier chaud"></a><br>
+      <strong>Retro light</strong> : papier chaud, cartes blanches tracées de filets orange, coucher de soleil années 70 en ambre, orange et rouille.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="docs/images/theme-deep-blue.png"><img src="docs/images/theme-deep-blue.png" alt="Instrument Creator dans le thème Deep blue : encre sombre et plate, cadre bleu électrique"></a><br>
+      <strong>Deep blue</strong> : encre plate et un seul bleu électrique, carré et calme.
+    </td>
+    <td width="50%" valign="top">
+      <a href="docs/images/theme-graphite.png"><img src="docs/images/theme-graphite.png" alt="Instrument Creator dans le thème Graphite : noir et gris, partiels en couleur"></a><br>
+      <strong>Graphite</strong> : noir et gris, la couleur gardée pour vos partiels et vos pistes.
+    </td>
+  </tr>
+</table>
 
 Un thème est un dossier de `synthway-ui/src/themes/`, surtout un fichier de variables de couleurs : voir [comment en faire un](synthway-ui/src/themes/README.md).
 
